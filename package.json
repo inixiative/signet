@@ -30,15 +30,15 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "jose": "^6.2.3",
-    "zod": "^4.3.6"
+    "jose": "^6.2.3"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.2",
     "@inixiative/config": "^0.5.49",
     "@types/bun": "1.4.2",
     "lefthook": "2.1.9",
-    "typescript": "6.0.3"
+    "typescript": "6.0.3",
+    "zod": "^4.3.6"
   },
   "packageManager": "bun@1.4.2",
   "engines": {
@@ -50,5 +50,8 @@
   },
   "publishConfig": {
     "access": "public"
+  },
+  "peerDependencies": {
+    "zod": "^4.3.6"
   }
 }

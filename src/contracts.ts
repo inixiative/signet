@@ -32,11 +32,11 @@ export const publicClientKeySchema = z.strictObject({
   x: z.string().regex(token43),
   y: z.string().regex(token43),
 });
-export const privateClientKeySchema = publicClientKeySchema.extend({
+export const signetKeySchema = publicClientKeySchema.extend({
   d: z.string().regex(token43),
 });
 export type PublicClientKey = z.infer<typeof publicClientKeySchema>;
-export type PrivateClientKey = z.infer<typeof privateClientKeySchema>;
+export type SignetKey = z.infer<typeof signetKeySchema>;
 
 export const signetLensSchema = z.strictObject({
   documentIds: z.array(archiveDocumentIdSchema).max(1000).optional(),
@@ -102,23 +102,35 @@ export const signetProposalSchema = z.strictObject({
   integrationId: z.uuid(),
   resources: z.array(signetResourceSchema).min(1).max(100),
 });
-export const integrationPairingProposalSchema = z.strictObject({
-  ...signetTerms,
-  provider: pairableProviderSchema,
-  resources: z.array(signetResourceSchema).max(100),
-  lifecycle: z.literal('ongoing'),
-});
+/** A local Archive names its sourceId; Kingdom binds every write through its Signets to it. */
+const deviceIdentity = (value: { provider?: PairableProvider; deviceId?: string }) =>
+  value.provider !== 'archive' || z.uuid().safeParse(value.deviceId).success;
+const deviceIdentityMessage = { message: 'A local Archive pairs with its sourceId as deviceId' };
+export const integrationPairingProposalSchema = z
+  .strictObject({
+    ...signetTerms,
+    provider: pairableProviderSchema,
+    deviceId: z.string().min(1).max(256).optional(),
+    resources: z.array(signetResourceSchema).max(100),
+    lifecycle: z.literal('ongoing'),
+  })
+  .refine(deviceIdentity, deviceIdentityMessage);
 export const signetRequestSchema = z
   .strictObject({
     ...signetTerms,
     integrationId: z.uuid().optional(),
     provider: pairableProviderSchema.optional(),
+    deviceId: z.string().min(1).max(256).optional(),
     resources: z.array(signetResourceSchema).max(100),
     publicKey: publicClientKeySchema,
   })
   .refine((value) => Boolean(value.integrationId) !== Boolean(value.provider), {
     message: 'Name the host integration, or the kind of integration to pair',
-  });
+  })
+  .refine((value) => Boolean(value.provider) || !value.deviceId, {
+    message: 'Only integration pairing names a device',
+  })
+  .refine(deviceIdentity, deviceIdentityMessage);
 export const signetRequestResponseSchema = z.object({
   requestId: z.uuid(),
   reviewCode: z.string(),

@@ -4,13 +4,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   collectPairing,
-  generateClientKey,
+  generateSignetKey,
   keyThumbprint,
-  publicKeyOf,
   requestPairing,
   SignetClient,
   SignetHttpError,
   saveCollectedSignet,
+  signetPublicKey,
   verifySignetProof,
   writePrivateJson,
 } from '../src';
@@ -109,11 +109,11 @@ afterAll(() => server.stop(true));
 
 describe('proofs', () => {
   test('a proof verifies against its own key and binds the access token', async () => {
-    const key = generateClientKey();
+    const key = generateSignetKey();
     const { createSignetProof } = await import('../src/proof');
     const proof = await createSignetProof({
       privateKey: key,
-      publicKey: publicKeyOf(key),
+      publicKey: signetPublicKey(key),
       nonce: nonce(),
       url: 'https://kingdom.test/api/v1/access/execute',
       method: 'POST',
@@ -125,9 +125,9 @@ describe('proofs', () => {
       method: 'POST',
       now: new Date(),
       token: 'kingdom_x',
-      keyThumbprint: await keyThumbprint(publicKeyOf(key)),
+      keyThumbprint: await keyThumbprint(signetPublicKey(key)),
     });
-    expect(verified.publicKey).toEqual(publicKeyOf(key));
+    expect(verified.publicKey).toEqual(signetPublicKey(key));
     await expect(
       verifySignetProof({
         proof,
@@ -144,9 +144,10 @@ describe('pairing and presentation', () => {
   test('pairs, waits for approval, then renews and executes with DPoP', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'signet-'));
     const keyFile = join(directory, 'key.json');
-    await writePrivateJson(keyFile, generateClientKey());
+    await writePrivateJson(keyFile, generateSignetKey());
     const pending = await requestPairing(url, keyFile, {
       provider: 'archive',
+      deviceId: crypto.randomUUID(),
       name: 'Laptop Archive',
       resources: [],
       expiresAt: null,
@@ -161,7 +162,7 @@ describe('pairing and presentation', () => {
     const credentialFile = join(directory, 'signet.json');
     await saveCollectedSignet(credentialFile, url, keyFile, collected!);
 
-    const client = new SignetClient(credentialFile, { url, signetId });
+    const client = await SignetClient.fromFile(credentialFile);
     const result = await client.execute({
       integrationId: uuid(),
       operation: 'sessions.write',
@@ -177,7 +178,7 @@ describe('pairing and presentation', () => {
   test('a denied pairing throws with the status and Kingdom message', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'signet-'));
     const keyFile = join(directory, 'key.json');
-    await writePrivateJson(keyFile, generateClientKey());
+    await writePrivateJson(keyFile, generateSignetKey());
     denied = true;
     const error = await collectPairing(url, keyFile, 'd'.repeat(43)).catch(
       (caught: unknown) => caught,
