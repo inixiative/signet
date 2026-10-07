@@ -1,0 +1,184 @@
+import { z } from 'zod';
+
+const token43 = /^[A-Za-z0-9_-]{43}$/;
+
+export const accessTokenPattern = /^kingdom_[A-Za-z0-9_-]{43}$/;
+export const renewalCredentialPattern = /^signet_renew_[A-Za-z0-9_-]{43}$/;
+export const nonceSchema = z.string().regex(token43);
+export const deviceCodeSchema = z.string().regex(token43);
+
+export const archiveDocumentIdSchema = z.string().regex(/^[a-f0-9]{64}$/);
+export const archiveFieldSchema = z.enum(['id', 'title', 'content', 'tags', 'createdAt']);
+export type ArchiveField = z.infer<typeof archiveFieldSchema>;
+
+export const ownerModelSchema = z.enum([
+  'User',
+  'OrganizationUser',
+  'Organization',
+  'Space',
+  'SpaceUser',
+]);
+export const ownerRefSchema = z.object({
+  ownerModel: ownerModelSchema,
+  userId: z.uuid().nullable(),
+  organizationId: z.uuid().nullable(),
+  spaceId: z.uuid().nullable(),
+});
+export type OwnerRef = z.infer<typeof ownerRefSchema>;
+
+export const publicClientKeySchema = z.strictObject({
+  kty: z.literal('EC'),
+  crv: z.literal('P-256'),
+  x: z.string().regex(token43),
+  y: z.string().regex(token43),
+});
+export const privateClientKeySchema = publicClientKeySchema.extend({
+  d: z.string().regex(token43),
+});
+export type PublicClientKey = z.infer<typeof publicClientKeySchema>;
+export type PrivateClientKey = z.infer<typeof privateClientKeySchema>;
+
+export const signetLensSchema = z.strictObject({
+  documentIds: z.array(archiveDocumentIdSchema).max(1000).optional(),
+  fields: z.array(archiveFieldSchema).max(6).optional(),
+});
+export const signetResourceSchema = z.strictObject({
+  resourceId: z.uuid(),
+  operations: z.array(z.string().min(1).max(80)).min(1).max(100),
+  lens: signetLensSchema.default({}),
+});
+export const signetRecipientSchema = z.discriminatedUnion('recipientModel', [
+  z.strictObject({ recipientModel: z.literal('User'), userId: z.uuid() }),
+  z.strictObject({ recipientModel: z.literal('Integration'), integrationId: z.uuid() }),
+]);
+export const signetLifecycleSchema = z.enum(['request', 'task', 'ongoing']);
+export type SignetLens = z.infer<typeof signetLensSchema>;
+export type SignetRecipient = z.infer<typeof signetRecipientSchema>;
+export type SignetResource = z.infer<typeof signetResourceSchema>;
+
+export const signetEnrollmentSchema = z.strictObject({
+  signetId: z.uuid(),
+  runtimeInstallationId: z.uuid().optional(),
+  expectedRevision: z.number().int().min(1),
+  name: z.string().trim().min(1).max(120),
+  publicKey: publicClientKeySchema,
+});
+export const signetRenewSchema = z.strictObject({
+  renewalCredential: z.string().regex(renewalCredentialPattern),
+});
+export const signetCredentialsSchema = z.object({
+  enrollmentId: z.uuid(),
+  lifecycle: signetLifecycleSchema,
+  taskId: z.uuid().nullable(),
+  accessToken: z.string().regex(accessTokenPattern),
+  renewalCredential: z.string().regex(renewalCredentialPattern).optional(),
+  expiresAt: z.iso.datetime(),
+  renewalExpiresAt: z.iso.datetime(),
+  idleExpiresAt: z.iso.datetime(),
+  tokenType: z.literal('DPoP'),
+});
+export const collectedSignetSchema = signetCredentialsSchema.extend({
+  renewalCredential: z.string().regex(renewalCredentialPattern),
+  signetId: z.uuid(),
+  integrationId: z.uuid(),
+  owner: ownerRefSchema,
+});
+export type SignetCredentials = z.infer<typeof signetCredentialsSchema>;
+export type CollectedSignet = z.infer<typeof collectedSignetSchema>;
+
+const signetTerms = {
+  name: z.string().trim().min(1).max(120),
+  lifecycle: signetLifecycleSchema,
+  taskId: z.uuid().optional(),
+  expiresAt: z.iso.datetime().nullable(),
+  maxRequests: z.number().int().min(1).max(100000).nullable(),
+  maxConcurrent: z.number().int().min(1).max(20),
+};
+/** Kinds of integration a device can pair as; approval creates one and issues it a Signet. */
+export const pairableProviderSchema = z.enum(['foundry', 'archive']);
+export type PairableProvider = z.infer<typeof pairableProviderSchema>;
+export const signetProposalSchema = z.strictObject({
+  ...signetTerms,
+  integrationId: z.uuid(),
+  resources: z.array(signetResourceSchema).min(1).max(100),
+});
+export const integrationPairingProposalSchema = z.strictObject({
+  ...signetTerms,
+  provider: pairableProviderSchema,
+  resources: z.array(signetResourceSchema).max(100),
+  lifecycle: z.literal('ongoing'),
+});
+export const signetRequestSchema = z
+  .strictObject({
+    ...signetTerms,
+    integrationId: z.uuid().optional(),
+    provider: pairableProviderSchema.optional(),
+    resources: z.array(signetResourceSchema).max(100),
+    publicKey: publicClientKeySchema,
+  })
+  .refine((value) => Boolean(value.integrationId) !== Boolean(value.provider), {
+    message: 'Name the host integration, or the kind of integration to pair',
+  });
+export const signetRequestResponseSchema = z.object({
+  requestId: z.uuid(),
+  reviewCode: z.string(),
+  deviceCode: deviceCodeSchema,
+  expiresAt: z.iso.datetime(),
+});
+export const signetReviewProposalSchema = z.strictObject({
+  ...signetTerms,
+  resources: z.array(signetResourceSchema).max(100),
+});
+export type SignetProposal = z.infer<typeof signetProposalSchema>;
+export type IntegrationPairingProposal = z.infer<typeof integrationPairingProposalSchema>;
+export type SignetRequest = z.infer<typeof signetRequestSchema>;
+export type SignetRequestResponse = z.infer<typeof signetRequestResponseSchema>;
+
+export const signetDescriptionSchema = z.object({
+  signetId: z.uuid(),
+  integrationId: z.uuid(),
+  provider: z.string().nullable(),
+  name: z.string(),
+  expiresAt: z.coerce.date().nullable(),
+  lifecycle: signetLifecycleSchema,
+  taskId: z.uuid().nullable(),
+  currentRevision: z.number().int(),
+  remainingRequests: z.number().nullable(),
+  operations: z.array(
+    z.object({
+      key: z.string(),
+      name: z.string(),
+      resources: z.array(
+        z.object({ id: z.uuid(), name: z.string(), kind: z.string(), integrationId: z.uuid() }),
+      ),
+    }),
+  ),
+});
+export type SignetDescription = z.infer<typeof signetDescriptionSchema>;
+
+/** Operation-specific fields; Kingdom validates each against the operation it names. */
+export const accessInputSchema = z.strictObject({
+  resourceId: z.uuid(),
+  documentId: archiveDocumentIdSchema.optional(),
+  fields: z.array(archiveFieldSchema).min(1).max(5).optional(),
+  limit: z.number().int().min(1).max(50).default(20),
+  query: z.string().max(1000).optional(),
+  budget: z.number().int().min(16).max(32768).optional(),
+  snapshot: z.record(z.string(), z.unknown()).optional(),
+  previousDigest: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .nullable()
+    .optional(),
+});
+export const accessRequestSchema = z.strictObject({
+  requestId: z.uuid(),
+  taskId: z.uuid().optional(),
+  runId: z.uuid().optional(),
+  integrationId: z.uuid(),
+  signetId: z.uuid(),
+  operation: z.string().min(1).max(80),
+  input: accessInputSchema,
+});
+export type AccessRequest = z.infer<typeof accessRequestSchema>;
+export const accessResultSchema = z.object({ executionId: z.uuid(), result: z.unknown() });
