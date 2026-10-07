@@ -151,7 +151,7 @@ export const signetDescriptionSchema = z.object({
   integrationId: z.uuid(),
   provider: z.string().nullable(),
   name: z.string(),
-  expiresAt: z.coerce.date().nullable(),
+  expiresAt: z.iso.datetime().nullable(),
   lifecycle: signetLifecycleSchema,
   taskId: z.uuid().nullable(),
   currentRevision: z.number().int(),
