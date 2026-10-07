@@ -274,7 +274,7 @@ const signetActions: SignetAction[] = [
 /** Presents one enrolled Signet: renews its access token and signs each call with the device key. */
 export class SignetClient {
   constructor(
-    private url: string,
+    readonly url: string,
     private credentialFile: string,
     private signetId: string,
   ) {
