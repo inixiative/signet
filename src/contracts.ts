@@ -175,6 +175,8 @@ export const accessInputSchema = z.strictObject({
   fields: z.array(archiveFieldSchema).min(1).max(5).optional(),
   limit: z.number().int().min(1).max(50).default(20),
   query: z.string().max(1000).optional(),
+  projectId: z.string().min(1).max(256).optional(),
+  tag: z.string().min(1).max(120).optional(),
   budget: z.number().int().min(16).max(32768).optional(),
   snapshot: z.record(z.string(), z.unknown()).optional(),
   previousDigest: z
