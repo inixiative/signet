@@ -1,6 +1,6 @@
 {
   "name": "@inixiative/signet",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Present Kingdom Signets: the wire contracts, DPoP proofs, device pairing and a renewing client shared by Kingdom, Archive, Foundry and Oracle.",
   "type": "module",
   "main": "src/index.ts",

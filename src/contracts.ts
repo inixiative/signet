@@ -230,3 +230,9 @@ export const accessRequestSchema = z.strictObject({
 });
 export type AccessRequest = z.infer<typeof accessRequestSchema>;
 export const accessResultSchema = z.object({ executionId: z.uuid(), result: z.unknown() });
+/** What Kingdom pushes over the Installation socket, and what a poll of both reads assembles. */
+export const installationSnapshotSchema = installationInquiriesResponseSchema.extend(
+  installationSignetsResponseSchema.shape,
+);
+/** The path a socket proof is bound to (POST), though the socket itself opens at the API origin. */
+export const installationSocketAction = 'installationSocket';
