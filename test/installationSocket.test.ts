@@ -100,12 +100,17 @@ test('proves its key, takes snapshots, polls while down and stops when revoked',
     },
     retryBaseMs: 20,
     pollMs: 10_000,
+    pingMs: 30,
+    sessionCount: () => 2,
   });
   socket.start();
   await waitFor(() => snapshots.length === 1);
   expect(snapshots[0]!.signets).toEqual([signet]);
   await waitFor(() => frames.some((frame) => frame.action === 'advertise'));
   expect(socket.connected).toBe(true);
+  await waitFor(() => frames.some((frame) => frame.action === 'ping' && frame.sessionCount === 2));
+  socket.start();
+  expect(sockets.size).toBe(1);
 
   for (const ws of sockets) ws.close();
   await waitFor(() => polls.length === 2);

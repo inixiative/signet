@@ -13,6 +13,8 @@ export type InstallationSocketOptions = {
   onError?: (error: unknown) => void;
   /** Where Kingdom can reach this installation's viewer (Foundry's tunnel); re-advertised on every connect. */
   viewerUrl?: string | null;
+  /** Reported on every ping so Kingdom can show how busy this installation is. */
+  sessionCount?: () => number;
   pingMs?: number;
   pollMs?: number;
   retryBaseMs?: number;
@@ -48,6 +50,7 @@ export class InstallationSocket {
   }
 
   start() {
+    if (this.socket || this.retryTimer) return;
     this.stopped = false;
     this.connect();
   }
@@ -72,6 +75,7 @@ export class InstallationSocket {
   }
 
   private connect() {
+    this.retryTimer = null;
     if (this.stopped) return;
     const Socket = this.options.WebSocket ?? WebSocket;
     const socket = new Socket(kingdomUrl(this.options.url).replace(/^http/, 'ws'));
@@ -107,7 +111,7 @@ export class InstallationSocket {
           this.attempts = 0;
           this.stopPolling();
           this.pingTimer ??= setInterval(
-            () => this.send({ action: 'ping' }),
+            () => this.send({ action: 'ping', sessionCount: this.options.sessionCount?.() }),
             this.options.pingMs ?? 20_000,
           );
           if (this.viewerUrl) this.send({ action: 'advertise', viewerUrl: this.viewerUrl });
@@ -136,7 +140,12 @@ export class InstallationSocket {
   }
 
   private send(frame: Record<string, unknown>) {
-    if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(JSON.stringify(frame));
+    if (this.socket) this.sendOn(this.socket, frame);
+  }
+
+  private sendOn(socket: WebSocket, frame: Record<string, unknown>) {
+    if (socket === this.socket && socket.readyState === WebSocket.OPEN)
+      socket.send(JSON.stringify(frame));
   }
 
   private disconnected(socket: WebSocket) {
