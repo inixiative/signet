@@ -6,15 +6,19 @@ import {
   accessResultSchema,
   accessTokenPattern,
   collectedSignetSchema,
-  type IntegrationPairingProposal,
+  type InstallationKind,
+  installationInquiriesResponseSchema,
+  installationSignetsResponseSchema,
   nonceSchema,
   ownerRefSchema,
   publicClientKeySchema,
+  type RegistrationTerms,
+  registerInstallationResponseSchema,
   renewalCredentialPattern,
+  requestRegistrationResponseSchema,
   signetDescriptionSchema,
   signetKeySchema,
   signetLifecycleSchema,
-  signetRequestResponseSchema,
 } from './contracts';
 import { readPrivateJson, writePrivateJson } from './files';
 import { createSignetProof } from './proof';
@@ -201,48 +205,109 @@ export async function signetProof(
   });
 }
 
-export type PairingTerms = Omit<IntegrationPairingProposal, 'lifecycle' | 'taskId'>;
-
-/** Ask Kingdom to pair this device as an integration; the owner approves the review code. */
-export async function requestPairing(
+/** A call an Installation makes as itself: no access token, a DPoP proof by its key. */
+async function installationPost<T>(
   url: string,
   keyFile: string,
-  terms: PairingTerms,
+  action: string,
+  body: unknown,
+  schema: z.ZodType<T>,
   options: SignetRequestOptions = {},
-) {
-  const publicKey = signetPublicKey(await readPrivateJson(keyFile));
-  return signetRequestResponseSchema.parse(
+): Promise<T> {
+  return schema.parse(
     await signetPost(
       url,
-      'requestSignet',
-      { ...terms, lifecycle: 'ongoing', publicKey },
-      { DPoP: await signetProof(url, 'requestSignet', keyFile, undefined, options) },
+      action,
+      body,
+      { DPoP: await signetProof(url, action, keyFile, undefined, options) },
       undefined,
       options,
     ),
   );
 }
 
-/**
- * Collect an approved pairing. Returns null while it awaits review (Kingdom answers 409; stop
- * polling at the request's expiresAt) and throws once it is denied (403).
- */
-export async function collectPairing(
+/** Make this installation known to Kingdom. Idempotent for the same key. */
+export const registerInstallation = (
   url: string,
   keyFile: string,
-  deviceCode: string,
+  installation: { kind: InstallationKind; name: string; sourceId?: string },
+  options: SignetRequestOptions = {},
+) =>
+  readPrivateJson(keyFile).then((key) =>
+    installationPost(
+      url,
+      keyFile,
+      'registerInstallation',
+      { ...installation, publicKey: signetPublicKey(key) },
+      registerInstallationResponseSchema,
+      options,
+    ),
+  );
+
+/** Ask to be registered as an integration; a person claims the review code in Kingdom. */
+export const requestRegistration = (
+  url: string,
+  keyFile: string,
+  terms: RegistrationTerms,
+  options: SignetRequestOptions = {},
+) =>
+  installationPost(
+    url,
+    keyFile,
+    'requestRegistration',
+    { terms },
+    requestRegistrationResponseSchema,
+    options,
+  );
+
+/** This installation's pending request and its inquiries. */
+export const installationInquiries = (
+  url: string,
+  keyFile: string,
+  options: SignetRequestOptions = {},
+) =>
+  installationPost(
+    url,
+    keyFile,
+    'installationInquiries',
+    {},
+    installationInquiriesResponseSchema,
+    options,
+  );
+
+export const cancelInstallationInquiry = (
+  url: string,
+  keyFile: string,
+  inquiryId: string,
+  options: SignetRequestOptions = {},
+) =>
+  installationPost(
+    url,
+    keyFile,
+    'cancelInstallationInquiry',
+    { inquiryId },
+    z.object({ id: z.uuid() }),
+    options,
+  );
+
+/**
+ * Collect the Signet an approved inquiry minted. Returns null while it awaits review (Kingdom
+ * answers 409) and throws once it is declined, denied or past its delivery deadline (403).
+ */
+export async function collectSignet(
+  url: string,
+  keyFile: string,
+  inquiryId: string,
   options: SignetRequestOptions = {},
 ) {
   try {
-    return collectedSignetSchema.parse(
-      await signetPost(
-        url,
-        'collectSignet',
-        { deviceCode },
-        { DPoP: await signetProof(url, 'collectSignet', keyFile, undefined, options) },
-        undefined,
-        options,
-      ),
+    return await installationPost(
+      url,
+      keyFile,
+      'collectSignet',
+      { inquiryId },
+      collectedSignetSchema,
+      options,
     );
   } catch (error) {
     if (error instanceof SignetHttpError && error.status === 409) return null;
@@ -250,7 +315,57 @@ export async function collectPairing(
   }
 }
 
-/** Write a collected pairing next to its key; the file is what a SignetClient presents. */
+/** The Signets held by this installation's integrations. */
+export const installationSignets = (
+  url: string,
+  keyFile: string,
+  options: SignetRequestOptions = {},
+) =>
+  installationPost(
+    url,
+    keyFile,
+    'installationSignets',
+    {},
+    installationSignetsResponseSchema,
+    options,
+  );
+
+/** Enroll this installation's key on a Signet one of its integrations holds. */
+export const enrollInstallationSignet = (
+  url: string,
+  keyFile: string,
+  signetId: string,
+  options: SignetRequestOptions = {},
+) =>
+  installationPost(
+    url,
+    keyFile,
+    'enrollInstallationSignet',
+    { signetId },
+    collectedSignetSchema,
+    options,
+  );
+
+/** Move this installation to a new key; both keys sign. Re-enroll its Signets afterwards. */
+export async function rotateInstallationKey(
+  url: string,
+  keyFile: string,
+  newKeyFile: string,
+  options: SignetRequestOptions = {},
+) {
+  const publicKey = signetPublicKey(await readPrivateJson(newKeyFile));
+  const proof = await signetProof(url, 'rotateInstallationKey', newKeyFile, undefined, options);
+  return installationPost(
+    url,
+    keyFile,
+    'rotateInstallationKey',
+    { publicKey, proof },
+    registerInstallationResponseSchema,
+    options,
+  );
+}
+
+/** Write a collected Signet next to its key; the file is what a SignetClient presents. */
 export async function saveCollectedSignet(
   credentialFile: string,
   url: string,

@@ -5,7 +5,6 @@ const token43 = /^[A-Za-z0-9_-]{43}$/;
 export const accessTokenPattern = /^kingdom_[A-Za-z0-9_-]{43}$/;
 export const renewalCredentialPattern = /^signet_renew_[A-Za-z0-9_-]{43}$/;
 export const nonceSchema = z.string().regex(token43);
-export const deviceCodeSchema = z.string().regex(token43);
 
 export const archiveDocumentIdSchema = z.string().regex(/^[a-f0-9]{64}$/);
 export const archiveFieldSchema = z.enum(['id', 'title', 'content', 'tags', 'createdAt']);
@@ -94,57 +93,90 @@ const signetTerms = {
   maxRequests: z.number().int().min(1).max(100000).nullable(),
   maxConcurrent: z.number().int().min(1).max(20),
 };
-/** Kinds of integration a device can pair as; approval creates one and issues it a Signet. */
-export const pairableProviderSchema = z.enum(['foundry', 'archive']);
-export type PairableProvider = z.infer<typeof pairableProviderSchema>;
+/** A local Foundry, Archive or Oracle known to Kingdom by its key. */
+export const installationKindSchema = z.enum(['foundry', 'archive', 'oracle']);
+export type InstallationKind = z.infer<typeof installationKindSchema>;
 export const signetProposalSchema = z.strictObject({
   ...signetTerms,
   integrationId: z.uuid(),
   resources: z.array(signetResourceSchema).min(1).max(100),
 });
-/** A local Archive names its sourceId; Kingdom binds every write through its Signets to it. */
-const deviceIdentity = (value: { provider?: PairableProvider; deviceId?: string }) =>
-  value.provider !== 'archive' || z.uuid().safeParse(value.deviceId).success;
-const deviceIdentityMessage = { message: 'A local Archive pairs with its sourceId as deviceId' };
-export const integrationPairingProposalSchema = z
-  .strictObject({
-    ...signetTerms,
-    provider: pairableProviderSchema,
-    deviceId: z.string().min(1).max(256).optional(),
-    resources: z.array(signetResourceSchema).max(100),
-    lifecycle: z.literal('ongoing'),
-  })
-  .refine(deviceIdentity, deviceIdentityMessage);
-export const signetRequestSchema = z
-  .strictObject({
-    ...signetTerms,
-    integrationId: z.uuid().optional(),
-    provider: pairableProviderSchema.optional(),
-    deviceId: z.string().min(1).max(256).optional(),
-    resources: z.array(signetResourceSchema).max(100),
-    publicKey: publicClientKeySchema,
-  })
-  .refine((value) => Boolean(value.integrationId) !== Boolean(value.provider), {
-    message: 'Name the host integration, or the kind of integration to pair',
-  })
-  .refine((value) => Boolean(value.provider) || !value.deviceId, {
-    message: 'Only integration pairing names a device',
-  })
-  .refine(deviceIdentity, deviceIdentityMessage);
-export const signetRequestResponseSchema = z.object({
-  requestId: z.uuid(),
-  reviewCode: z.string(),
-  deviceCode: deviceCodeSchema,
-  expiresAt: z.iso.datetime(),
-});
 export const signetReviewProposalSchema = z.strictObject({
   ...signetTerms,
   resources: z.array(signetResourceSchema).max(100),
 });
+/** What an Installation asks for when it asks to be registered as an owner's integration. */
+export const registrationTermsSchema = z.strictObject({
+  ...signetTerms,
+  lifecycle: z.literal('ongoing'),
+  resources: z.array(signetResourceSchema).max(100),
+});
+/** A person asks for a Signet on an integration, to be presented with `publicKey`. */
+export const signetRequestSchema = z.strictObject({
+  ...signetTerms,
+  integrationId: z.uuid(),
+  resources: z.array(signetResourceSchema).min(1).max(100),
+  publicKey: publicClientKeySchema,
+});
+export const signetRequestResponseSchema = z.object({
+  requestId: z.uuid(),
+  reviewCode: z.string(),
+  expiresAt: z.iso.datetime(),
+});
 export type SignetProposal = z.infer<typeof signetProposalSchema>;
-export type IntegrationPairingProposal = z.infer<typeof integrationPairingProposalSchema>;
+export type RegistrationTerms = z.infer<typeof registrationTermsSchema>;
 export type SignetRequest = z.infer<typeof signetRequestSchema>;
 export type SignetRequestResponse = z.infer<typeof signetRequestResponseSchema>;
+
+/** A local Archive names its sourceId; Kingdom binds every write through its Signets to it. */
+export const registerInstallationSchema = z
+  .strictObject({
+    kind: installationKindSchema,
+    name: z.string().trim().min(1).max(120),
+    sourceId: z.uuid().optional(),
+    publicKey: publicClientKeySchema,
+  })
+  .refine((value) => value.kind !== 'archive' || Boolean(value.sourceId), {
+    message: 'A local Archive registers with its sourceId',
+  });
+export const registerInstallationResponseSchema = z.object({ installationId: z.uuid() });
+export const requestRegistrationSchema = z.strictObject({ terms: registrationTermsSchema });
+export const requestRegistrationResponseSchema = z.object({
+  reviewCode: z.string(),
+  expiresAt: z.iso.datetime(),
+});
+export const installationInquirySchema = z.object({
+  id: z.uuid(),
+  type: z.string(),
+  status: z.enum(['draft', 'sent', 'changesRequested', 'approved', 'denied', 'canceled']),
+  createdAt: z.iso.datetime(),
+  expiresAt: z.iso.datetime().nullable(),
+  owner: ownerRefSchema.nullable(),
+  integrationId: z.uuid().nullable(),
+  signetId: z.uuid().nullable(),
+  deliverBefore: z.iso.datetime().nullable(),
+});
+export const installationInquiriesResponseSchema = z.object({
+  pending: z.object({ reviewCode: z.string(), expiresAt: z.iso.datetime() }).nullable(),
+  inquiries: z.array(installationInquirySchema),
+});
+export const inquiryReferenceSchema = z.strictObject({ inquiryId: z.uuid() });
+export const installationSignetsResponseSchema = z.object({
+  signets: z.array(
+    z.object({
+      signetId: z.uuid(),
+      integrationId: z.uuid(),
+      name: z.string(),
+      owner: ownerRefSchema,
+    }),
+  ),
+});
+export const enrollInstallationSignetSchema = z.strictObject({ signetId: z.uuid() });
+export const rotateInstallationKeySchema = z.strictObject({
+  publicKey: publicClientKeySchema,
+  proof: z.string().max(8192),
+});
+export type InstallationInquiry = z.infer<typeof installationInquirySchema>;
 
 export const signetDescriptionSchema = z.object({
   signetId: z.uuid(),

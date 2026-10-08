@@ -3,10 +3,12 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  collectPairing,
+  collectSignet,
   generateSignetKey,
+  installationInquiries,
   keyThumbprint,
-  requestPairing,
+  registerInstallation,
+  requestRegistration,
   SignetClient,
   SignetHttpError,
   saveCollectedSignet,
@@ -29,6 +31,8 @@ let url: string;
 const signetId = uuid();
 const integrationId = uuid();
 const enrollmentId = uuid();
+const installationId = uuid();
+const inquiryId = uuid();
 const credentials = (minutes: number) => ({
   enrollmentId,
   lifecycle: 'ongoing',
@@ -66,14 +70,20 @@ beforeAll(() => {
         return ok({ nonce: value, expiresAt: new Date().toISOString() });
       }
       try {
-        if (action === 'requestSignet') {
+        if (action === 'registerInstallation') {
+          await verify(request, action);
+          return ok({ installationId });
+        }
+        if (action === 'requestRegistration') {
           await verify(request, action);
           return ok({
-            requestId: uuid(),
-            reviewCode: 'ABC123',
-            deviceCode: 'd'.repeat(43),
+            reviewCode: 'ABC123ABC123',
             expiresAt: new Date(Date.now() + 600000).toISOString(),
           });
+        }
+        if (action === 'installationInquiries') {
+          await verify(request, action);
+          return ok({ pending: null, inquiries: [] });
         }
         if (action === 'collectSignet') {
           await verify(request, action);
@@ -141,23 +151,31 @@ describe('proofs', () => {
 });
 
 describe('pairing and presentation', () => {
-  test('pairs, waits for approval, then renews and executes with DPoP', async () => {
+  test('registers, asks, waits for approval, then renews and executes with DPoP', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'signet-'));
     const keyFile = join(directory, 'key.json');
     await writePrivateJson(keyFile, generateSignetKey());
-    const pending = await requestPairing(url, keyFile, {
-      provider: 'archive',
-      deviceId: crypto.randomUUID(),
+    expect(
+      await registerInstallation(url, keyFile, {
+        kind: 'archive',
+        name: 'Laptop Archive',
+        sourceId: crypto.randomUUID(),
+      }),
+    ).toEqual({ installationId });
+    expect(calls.at(-1)?.body).toMatchObject({ kind: 'archive', publicKey: { kty: 'EC' } });
+    const pending = await requestRegistration(url, keyFile, {
       name: 'Laptop Archive',
+      lifecycle: 'ongoing',
       resources: [],
       expiresAt: null,
       maxRequests: null,
       maxConcurrent: 4,
     });
-    expect(calls.at(-1)?.body).toMatchObject({ provider: 'archive', lifecycle: 'ongoing' });
-    expect(await collectPairing(url, keyFile, pending.deviceCode)).toBeNull();
+    expect(pending.reviewCode).toBe('ABC123ABC123');
+    expect(await installationInquiries(url, keyFile)).toEqual({ pending: null, inquiries: [] });
+    expect(await collectSignet(url, keyFile, inquiryId)).toBeNull();
     approved = true;
-    const collected = await collectPairing(url, keyFile, pending.deviceCode);
+    const collected = await collectSignet(url, keyFile, inquiryId);
     expect(collected?.integrationId).toBe(integrationId);
     const credentialFile = join(directory, 'signet.json');
     await saveCollectedSignet(credentialFile, url, keyFile, collected!);
@@ -175,14 +193,12 @@ describe('pairing and presentation', () => {
     expect(execute.body.signetId).toBe(signetId);
   });
 
-  test('a denied pairing throws with the status and Kingdom message', async () => {
+  test('a denied registration throws with the status and Kingdom message', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'signet-'));
     const keyFile = join(directory, 'key.json');
     await writePrivateJson(keyFile, generateSignetKey());
     denied = true;
-    const error = await collectPairing(url, keyFile, 'd'.repeat(43)).catch(
-      (caught: unknown) => caught,
-    );
+    const error = await collectSignet(url, keyFile, inquiryId).catch((caught: unknown) => caught);
     denied = false;
     expect(error).toBeInstanceOf(SignetHttpError);
     expect((error as SignetHttpError).status).toBe(403);
