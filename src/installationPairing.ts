@@ -77,6 +77,8 @@ export type InstallationPairing = {
   terms: RegistrationTerms;
   onReview: (review: { reviewCode: string; review: string; expiresAt: string }) => void;
   confirmOwner?: (owner: { ownerName: string | null; owner: OwnerRef | null }) => Promise<boolean>;
+  /** Failures while waiting (a poll Kingdom refused, a dropped socket); waiting continues. */
+  onError?: (error: unknown) => void;
   signal?: AbortSignal;
   socketOptions?: { pollMs?: number; retryBaseMs?: number; authTimeoutMs?: number };
 };
@@ -107,6 +109,7 @@ export async function pairInstallation(input: InstallationPairing) {
         url,
         keyFile,
         ...input.socketOptions,
+        onError: input.onError,
         onSnapshot: (snapshot) => {
           const settled = settledInquiry(snapshot, askedAt);
           if (!settled) return;
