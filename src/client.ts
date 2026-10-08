@@ -21,7 +21,7 @@ import {
   signetLifecycleSchema,
 } from './contracts';
 import { readPrivateJson, writePrivateJson } from './files';
-import { createSignetProof } from './proof';
+import { createSignetProof, keyThumbprint } from './proof';
 
 /** A Kingdom API origin: HTTPS, or HTTP on loopback, with no path or credentials. */
 export const kingdomUrl = (value: string) => {
@@ -346,7 +346,7 @@ export const enrollInstallationSignet = (
     options,
   );
 
-/** Move this installation to a new key; both keys sign. Re-enroll its Signets afterwards. */
+/** Move this installation to a new key; both keys sign, the new proof bound to the current key. */
 export async function rotateInstallationKey(
   url: string,
   keyFile: string,
@@ -354,7 +354,14 @@ export async function rotateInstallationKey(
   options: SignetRequestOptions = {},
 ) {
   const publicKey = signetPublicKey(await readPrivateJson(newKeyFile));
-  const proof = await signetProof(url, 'rotateInstallationKey', newKeyFile, undefined, options);
+  const currentThumbprint = await keyThumbprint(signetPublicKey(await readPrivateJson(keyFile)));
+  const proof = await signetProof(
+    url,
+    'rotateInstallationKey',
+    newKeyFile,
+    currentThumbprint,
+    options,
+  );
   return installationPost(
     url,
     keyFile,
