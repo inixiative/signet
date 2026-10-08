@@ -83,7 +83,7 @@ beforeAll(() => {
         }
         if (action === 'installationInquiries') {
           await verify(request, action);
-          return ok({ pending: null, inquiries: [] });
+          return ok({ pending: null, declinedAt: null, inquiries: [] });
         }
         if (action === 'collectSignet') {
           await verify(request, action);
@@ -172,7 +172,11 @@ describe('pairing and presentation', () => {
       maxConcurrent: 4,
     });
     expect(pending.reviewCode).toBe('ABC123ABC123');
-    expect(await installationInquiries(url, keyFile)).toEqual({ pending: null, inquiries: [] });
+    expect(await installationInquiries(url, keyFile)).toEqual({
+      pending: null,
+      declinedAt: null,
+      inquiries: [],
+    });
     expect(await collectSignet(url, keyFile, inquiryId)).toBeNull();
     approved = true;
     const collected = await collectSignet(url, keyFile, inquiryId);

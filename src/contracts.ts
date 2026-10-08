@@ -158,6 +158,7 @@ export const installationInquirySchema = z.object({
 });
 export const installationInquiriesResponseSchema = z.object({
   pending: z.object({ reviewCode: z.string(), expiresAt: z.iso.datetime() }).nullable(),
+  declinedAt: z.iso.datetime().nullable(),
   inquiries: z.array(installationInquirySchema),
 });
 export const inquiryReferenceSchema = z.strictObject({ inquiryId: z.uuid() });
