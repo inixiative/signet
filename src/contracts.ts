@@ -152,6 +152,7 @@ export const installationInquirySchema = z.object({
   createdAt: z.iso.datetime(),
   expiresAt: z.iso.datetime().nullable(),
   owner: ownerRefSchema.nullable(),
+  ownerName: z.string().nullable(),
   integrationId: z.uuid().nullable(),
   signetId: z.uuid().nullable(),
   deliverBefore: z.iso.datetime().nullable(),
