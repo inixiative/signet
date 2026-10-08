@@ -384,13 +384,26 @@ export async function saveCollectedSignet(
   return credential;
 }
 
-export type SignetAction = 'describe' | 'execute' | 'closeTask' | 'verifyAuthority' | 'settleTask';
+export type SignetAction =
+  | 'describe'
+  | 'execute'
+  | 'closeTask'
+  | 'verifyAuthority'
+  | 'settleTask'
+  | 'resolveRun'
+  | 'delegateRun'
+  | 'renewRun'
+  | 'revokeRun';
 const signetActions: SignetAction[] = [
   'describe',
   'execute',
   'closeTask',
   'verifyAuthority',
   'settleTask',
+  'resolveRun',
+  'delegateRun',
+  'renewRun',
+  'revokeRun',
 ];
 
 /** Presents one enrolled Signet: renews its access token and signs each call with the device key. */

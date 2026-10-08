@@ -11,33 +11,27 @@ This package is the one implementation of that protocol, shared by Kingdom (whic
 - `files`: private 0600 JSON files for keys and credentials.
 - `client`:
   - an **Installation** (a local Foundry, Archive or Oracle) is an actor known to Kingdom by its key: `registerInstallation`, then `requestRegistration` returns a review code a person claims in Kingdom (a `registerIntegration` Inquiry), then `collectSignet` and `saveCollectedSignet`. `installationInquiries`, `installationSignets`, `cancelInstallationInquiry`, `enrollInstallationSignet` and `rotateInstallationKey` act as the installation;
+  - `pairInstallation` does the whole pairing (register, request, wait on the socket, confirm the owner, collect) and `holdInstallationSignets` keeps one credential file per Signet the installation's integrations hold, enrolling later grants and dropping revoked ones;
   - `InstallationSocket`, Kingdom's live line to an installation: it proves the key, receives a snapshot of the installation's inquiries and Signets on connect and on every change, keeps the installation's integrations marked online, advertises its viewer URL, and polls the same reads while the socket is down;
-  - `SignetClient`, which renews its access token and signs each `describe` / `execute` call.
+  - `SignetClient`, which renews its access token and signs each call: `describe`, `execute`, task settlement, and the run actions a Foundry uses for inference (`resolveRun`, `delegateRun`, `renewRun`, `revokeRun`).
 
 ```ts
-import {
-  collectSignet, generateSignetKey, InstallationSocket, registerInstallation, requestRegistration,
-  saveCollectedSignet, SignetClient, writePrivateJson,
-} from '@inixiative/signet';
+import { holdInstallationSignets, InstallationSocket, pairInstallation, SignetClient } from '@inixiative/signet';
 
-await writePrivateJson(keyFile, generateSignetKey());
-await registerInstallation(kingdom, keyFile, { kind: 'archive', name: 'Laptop Archive', sourceId });
-const { reviewCode } = await requestRegistration(kingdom, keyFile, {
-  name: 'Laptop Archive', lifecycle: 'ongoing', resources: [], expiresAt: null, maxRequests: null, maxConcurrent: 4,
+const paired = await pairInstallation({
+  url: kingdom, root: dataDir, kind: 'archive', name: 'Laptop Archive', sourceId,
+  terms: { name: 'Laptop Archive', lifecycle: 'ongoing', resources: [], expiresAt: null, maxRequests: null, maxConcurrent: 4 },
+  onReview: ({ review }) => console.log(`Approve in Kingdom: ${review}`),
+  confirmOwner: async ({ ownerName }) => confirm(`Pair with ${ownerName}?`),
 });
-// Show reviewCode; someone claims it in Kingdom. The socket tells you when the inquiry resolves.
-const socket = new InstallationSocket({
+
+new InstallationSocket({
   url: kingdom,
-  keyFile,
-  onSnapshot: async ({ inquiries }) => {
-    const approved = inquiries.find((inquiry) => inquiry.status === 'approved' && inquiry.signetId);
-    const collected = approved && (await collectSignet(kingdom, keyFile, approved.id));
-    if (collected) await saveCollectedSignet(credentialFile, kingdom, keyFile, collected);
-  },
-});
-socket.start();
+  keyFile: paired.keyFile,
+  onSnapshot: ({ signets }) => holdInstallationSignets(kingdom, paired.keyFile, paired.directory, signets),
+}).start();
 
-const signet = new SignetClient(kingdom, credentialFile, signetId);
+const signet = await SignetClient.fromFile(paired.credentialFile);
 await signet.execute({ integrationId, operation: 'sessions.write', input: { resourceId, snapshot, previousDigest: null } });
 ```
 

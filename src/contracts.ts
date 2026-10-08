@@ -57,7 +57,6 @@ export type SignetResource = z.infer<typeof signetResourceSchema>;
 
 export const signetEnrollmentSchema = z.strictObject({
   signetId: z.uuid(),
-  runtimeInstallationId: z.uuid().optional(),
   expectedRevision: z.number().int().min(1),
   name: z.string().trim().min(1).max(120),
   publicKey: publicClientKeySchema,

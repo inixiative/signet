@@ -19,6 +19,8 @@ export type InstallationSocketOptions = {
   pollMs?: number;
   retryBaseMs?: number;
   retryMaxMs?: number;
+  /** A Kingdom that never answers the proof (one without Installation sockets) is treated as down. */
+  authTimeoutMs?: number;
   WebSocket?: typeof WebSocket;
 };
 
@@ -36,6 +38,7 @@ export class InstallationSocket {
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private authTimer: ReturnType<typeof setTimeout> | null = null;
   private authenticated = false;
   private polling = false;
   private pollGeneration = 0;
@@ -97,7 +100,8 @@ export class InstallationSocket {
     try {
       switch (frame.type) {
         case 'connected':
-          this.send({
+          this.authTimer = setTimeout(() => socket.close(), this.options.authTimeoutMs ?? 10_000);
+          this.sendOn(socket, {
             action: 'authenticateInstallation',
             proof: await signetProof(
               this.options.url,
@@ -107,6 +111,8 @@ export class InstallationSocket {
           });
           return;
         case 'installation':
+          if (this.authTimer) clearTimeout(this.authTimer);
+          this.authTimer = null;
           this.authenticated = true;
           this.attempts = 0;
           this.stopPolling();
@@ -152,6 +158,8 @@ export class InstallationSocket {
     if (socket !== this.socket) return;
     this.socket = null;
     this.authenticated = false;
+    if (this.authTimer) clearTimeout(this.authTimer);
+    this.authTimer = null;
     if (this.pingTimer) clearInterval(this.pingTimer);
     this.pingTimer = null;
     if (this.stopped) return;
@@ -186,6 +194,8 @@ export class InstallationSocket {
 
   private clearTimers() {
     this.stopPolling();
+    if (this.authTimer) clearTimeout(this.authTimer);
+    this.authTimer = null;
     if (this.pingTimer) clearInterval(this.pingTimer);
     if (this.retryTimer) clearTimeout(this.retryTimer);
     this.pingTimer = null;
