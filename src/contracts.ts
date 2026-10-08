@@ -235,3 +235,9 @@ export const installationSnapshotSchema = installationInquiriesResponseSchema.ex
 );
 /** The path a socket proof is bound to (POST), though the socket itself opens at the API origin. */
 export const installationSocketAction = 'installationSocket';
+/** An installation hands Kingdom the credential Kingdom uses to reach it (a Foundry's tunnel token). */
+export const setInstallationCredentialSchema = z.strictObject({
+  integrationId: z.uuid(),
+  token: z.string().min(16).max(4096),
+});
+export const setInstallationCredentialResponseSchema = z.object({ credentialId: z.uuid() });
