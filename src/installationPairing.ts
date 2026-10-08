@@ -1,17 +1,19 @@
 import { existsSync } from 'node:fs';
-import { readdir, unlink } from 'node:fs/promises';
+import { mkdir, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   collectSignet,
   enrollInstallationSignet,
   generateSignetKey,
+  installationInquiries,
   kingdomUrl,
   registerInstallation,
   requestRegistration,
   saveCollectedSignet,
+  signetCredentialSchema,
 } from './client';
 import type { InstallationKind, OwnerRef, RegistrationTerms } from './contracts';
-import { writePrivateJson } from './files';
+import { readPrivateJson, writePrivateJson } from './files';
 import { type InstallationSnapshot, InstallationSocket } from './installationSocket';
 
 /** Where an installation keeps what it holds for one Kingdom: its key and one file per Signet. */
@@ -32,10 +34,45 @@ export type HeldSignet = {
   credentialFile: string;
 };
 
+const heldEnrollment = async (credentialFile: string) => {
+  if (!existsSync(credentialFile)) return null;
+  const parsed = signetCredentialSchema.safeParse(
+    await readPrivateJson(credentialFile).catch(() => null),
+  );
+  return parsed.success ? parsed.data.enrollmentId : null;
+};
+
+const lockStaleMs = 60_000;
+
+/** One holder at a time per directory, so two processes never enroll over each other. */
+async function withHoldLock<T>(directory: string, fn: () => Promise<T>): Promise<T> {
+  const lock = join(directory, '.hold-lock');
+  for (const started = Date.now(); ; ) {
+    try {
+      await mkdir(lock);
+      break;
+    } catch {
+      const age = await stat(lock).then(
+        (info) => Date.now() - info.mtimeMs,
+        () => 0,
+      );
+      if (age > lockStaleMs) await rm(lock, { recursive: true, force: true });
+      else if (Date.now() - started > lockStaleMs) throw Error('Signet holder lock busy');
+      else await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+  try {
+    return await fn();
+  } finally {
+    await rm(lock, { recursive: true, force: true });
+  }
+}
+
 /**
- * Makes the local Signet files match a snapshot: enrolls this installation's key on every Signet
- * its integrations hold that it has no file for (later grants included), and deletes the files of
- * Signets Kingdom no longer lists.
+ * Keeps a credential file for every Signet a snapshot lists: enrolls this installation's key when
+ * Kingdom reports no current enrollment for it, or when the file holds an enrollment Kingdom no
+ * longer reports as current (a key rotation, a revoked or expired enrollment). Files are never
+ * deleted here: a Signet missing from a snapshot (a paused integration) keeps its file.
  */
 export async function holdInstallationSignets(
   url: string,
@@ -43,29 +80,27 @@ export async function holdInstallationSignets(
   directory: string,
   signets: InstallationSnapshot['signets'],
 ): Promise<HeldSignet[]> {
-  const listed = new Set(signets.map((signet) => signet.signetId));
-  for (const file of await readdir(directory)) {
-    const match = /^signet-([0-9a-f-]{36})\.json$/.exec(file);
-    if (match && !listed.has(match[1]!)) await unlink(join(directory, file)).catch(() => {});
-  }
-  const held: HeldSignet[] = [];
-  for (const signet of signets) {
-    const credentialFile = signetCredentialFile(directory, signet.signetId);
-    if (!existsSync(credentialFile))
-      await saveCollectedSignet(
+  return withHoldLock(directory, async () => {
+    const held: HeldSignet[] = [];
+    for (const signet of signets) {
+      const credentialFile = signetCredentialFile(directory, signet.signetId);
+      const enrollmentId = await heldEnrollment(credentialFile);
+      if (!enrollmentId || !signet.enrollmentId || enrollmentId !== signet.enrollmentId)
+        await saveCollectedSignet(
+          credentialFile,
+          url,
+          keyFile,
+          await enrollInstallationSignet(url, keyFile, signet.signetId),
+        );
+      held.push({
+        signetId: signet.signetId,
+        integrationId: signet.integrationId,
+        owner: signet.owner,
         credentialFile,
-        url,
-        keyFile,
-        await enrollInstallationSignet(url, keyFile, signet.signetId),
-      );
-    held.push({
-      signetId: signet.signetId,
-      integrationId: signet.integrationId,
-      owner: signet.owner,
-      credentialFile,
-    });
-  }
-  return held;
+      });
+    }
+    return held;
+  });
 }
 
 export type InstallationPairing = {
@@ -96,7 +131,9 @@ export async function pairInstallation(input: InstallationPairing) {
     name: input.name,
     ...(input.sourceId ? { sourceId: input.sourceId } : {}),
   });
-  const askedAt = Date.now();
+  input.signal?.throwIfAborted();
+  const baseline = await installationInquiries(url, keyFile);
+  const earlier = new Set(baseline.inquiries.map((inquiry) => inquiry.id));
   const pending = await requestRegistration(url, keyFile, input.terms);
   input.onReview({
     reviewCode: pending.reviewCode,
@@ -111,7 +148,7 @@ export async function pairInstallation(input: InstallationPairing) {
         ...input.socketOptions,
         onError: input.onError,
         onSnapshot: (snapshot) => {
-          const settled = settledInquiry(snapshot, askedAt);
+          const settled = settledInquiry(snapshot, earlier, baseline.declinedAt);
           if (!settled) return;
           socket.close();
           if (settled instanceof Error) reject(settled);
@@ -119,6 +156,7 @@ export async function pairInstallation(input: InstallationPairing) {
         },
         onRevoked: () => reject(Error('Kingdom revoked this installation')),
       });
+      if (input.signal?.aborted) return reject(input.signal.reason);
       input.signal?.addEventListener('abort', () => {
         socket.close();
         reject(input.signal!.reason);
@@ -144,11 +182,15 @@ export async function pairInstallation(input: InstallationPairing) {
   };
 }
 
-const settledInquiry = (snapshot: InstallationSnapshot, askedAt: number) => {
-  if (snapshot.declinedAt && Date.parse(snapshot.declinedAt) >= askedAt)
+const settledInquiry = (
+  snapshot: InstallationSnapshot,
+  earlier: Set<string>,
+  earlierDeclinedAt: string | null,
+) => {
+  if (snapshot.declinedAt && snapshot.declinedAt !== earlierDeclinedAt)
     return Error('The registration was declined in Kingdom');
   const inquiry = snapshot.inquiries.find(
-    (item) => item.type === 'registerIntegration' && Date.parse(item.createdAt) >= askedAt,
+    (item) => item.type === 'registerIntegration' && !earlier.has(item.id),
   );
   if (inquiry?.status === 'approved') return inquiry;
   if (inquiry && inquiry.status !== 'sent')

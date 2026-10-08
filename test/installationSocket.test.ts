@@ -18,6 +18,7 @@ const signet = {
   signetId: crypto.randomUUID(),
   integrationId: crypto.randomUUID(),
   name: 'Studio Foundry',
+  enrollmentId: null,
   owner: {
     ownerModel: 'User' as const,
     userId: crypto.randomUUID(),

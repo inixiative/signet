@@ -3,11 +3,13 @@ import { existsSync } from 'node:fs';
 import { mkdtemp, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { z } from 'zod';
 import {
   holdInstallationSignets,
   InstallationSocket,
   installationDirectory,
   pairInstallation,
+  readPrivateJson,
   signetCredentialFile,
 } from '../src';
 
@@ -135,14 +137,34 @@ test('pairs through polling when the socket is refused, confirming the owner bef
   expect(existsSync(paired.credentialFile)).toBe(true);
   expect(existsSync(paired.keyFile)).toBe(true);
 
-  await writeFile(signetCredentialFile(paired.directory, crypto.randomUUID()), '{}');
+  const stray = signetCredentialFile(paired.directory, crypto.randomUUID());
+  await writeFile(stray, '{}');
+  const enrolls = () => calls.filter((call) => call === 'enrollInstallationSignet').length;
+  const later = { signetId: laterSignetId, integrationId, name: 'Later grant', owner };
   const held = await holdInstallationSignets(url, paired.keyFile, paired.directory, [
-    { signetId: laterSignetId, integrationId, name: 'Later grant', owner },
+    { ...later, enrollmentId: null },
   ]);
   expect(held.map((signet) => signet.signetId)).toEqual([laterSignetId]);
-  expect(calls).toContain('enrollInstallationSignet');
+  expect(enrolls()).toBe(1);
+  expect(existsSync(stray)).toBe(true);
+  const current = z
+    .object({ enrollmentId: z.uuid() })
+    .parse(await readPrivateJson(signetCredentialFile(paired.directory, laterSignetId)));
+  await holdInstallationSignets(url, paired.keyFile, paired.directory, [
+    { ...later, enrollmentId: current.enrollmentId },
+  ]);
+  expect(enrolls()).toBe(1);
+  await holdInstallationSignets(url, paired.keyFile, paired.directory, [
+    { ...later, enrollmentId: crypto.randomUUID() },
+  ]);
+  expect(enrolls()).toBe(2);
   expect((await readdir(paired.directory)).sort()).toEqual(
-    ['installation-key.json', `signet-${laterSignetId}.json`].sort(),
+    [
+      'installation-key.json',
+      `signet-${signetId}.json`,
+      `signet-${laterSignetId}.json`,
+      stray.split('/').at(-1)!,
+    ].sort(),
   );
 });
 

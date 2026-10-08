@@ -168,6 +168,8 @@ export const installationSignetsResponseSchema = z.object({
       signetId: z.uuid(),
       integrationId: z.uuid(),
       name: z.string(),
+      /** The enrollment that is current for this installation's key, if any. */
+      enrollmentId: z.uuid().nullable(),
       owner: ownerRefSchema,
     }),
   ),
