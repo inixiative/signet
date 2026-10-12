@@ -12,6 +12,7 @@ import {
   readPrivateJson,
   signetCredentialFile,
 } from '../src';
+import { requestRegistrationSchema } from '../src/contracts';
 
 const nonce = () => Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url');
 const owner = {
@@ -24,6 +25,7 @@ const inquiryId = crypto.randomUUID();
 const signetId = crypto.randomUUID();
 const integrationId = crypto.randomUUID();
 const laterSignetId = crypto.randomUUID();
+const libraryId = crypto.randomUUID();
 const collected = (id: string) => ({
   enrollmentId: crypto.randomUUID(),
   lifecycle: 'ongoing',
@@ -39,6 +41,7 @@ const collected = (id: string) => ({
   owner,
 });
 const calls: string[] = [];
+const registrationRequests: unknown[] = [];
 let claimed = false;
 let server: ReturnType<typeof Bun.serve>;
 let url: string;
@@ -46,10 +49,11 @@ let url: string;
 beforeAll(() => {
   server = Bun.serve({
     port: 0,
-    fetch(req) {
+    async fetch(req) {
       if (req.headers.get('upgrade') === 'websocket') return new Response(null, { status: 426 });
       const action = new URL(req.url).pathname.split('/').at(-1)!;
       calls.push(action);
+      if (action === 'requestRegistration') registrationRequests.push(await req.json());
       const data = (value: unknown) => Response.json({ data: value });
       switch (action) {
         case 'nonce':
@@ -118,7 +122,11 @@ test('pairs through polling when the socket is refused, confirming the owner bef
     terms: {
       name: 'Studio Foundry',
       lifecycle: 'ongoing',
-      resources: [],
+      owner: { ownerModel: 'Organization', organization: 'inixiative' },
+      resources: [
+        { resourceKind: 'model', operations: ['inference.create'] },
+        { resourceId: libraryId, operations: ['sessions.write'] },
+      ],
       expiresAt: null,
       maxRequests: null,
       maxConcurrent: 2,
@@ -131,6 +139,13 @@ test('pairs through polling when the socket is refused, confirming the owner bef
     socketOptions: { pollMs: 20, retryBaseMs: 1000 },
   });
   expect(reviews).toEqual(['ABCDEF123456', `${url}/dashboard?reviewSignet=ABCDEF123456`]);
+  expect(requestRegistrationSchema.parse(registrationRequests[0]).terms).toMatchObject({
+    owner: { ownerModel: 'Organization', organization: 'inixiative' },
+    resources: [
+      { resourceKind: 'model', operations: ['inference.create'], lens: {} },
+      { resourceId: libraryId, operations: ['sessions.write'], lens: {} },
+    ],
+  });
   expect(confirmed).toEqual(['Aron']);
   expect(paired.signetId).toBe(signetId);
   expect(paired.owner).toEqual(owner);

@@ -104,11 +104,32 @@ export const signetReviewProposalSchema = z.strictObject({
   ...signetTerms,
   resources: z.array(signetResourceSchema).max(100),
 });
-/** What an Installation asks for when it asks to be registered as an owner's integration. */
+/** The terms a person approves when registering an Installation as an owner's integration. */
 export const registrationTermsSchema = z.strictObject({
   ...signetTerms,
   lifecycle: z.literal('ongoing'),
   resources: z.array(signetResourceSchema).max(100),
+});
+/** The owner an Installation asks to belong to; `organization` is the organization's id or slug. */
+export const requestedOwnerSchema = z.strictObject({
+  ownerModel: ownerModelSchema,
+  organization: z.string().trim().min(1).max(120).optional(),
+  spaceId: z.uuid().optional(),
+});
+/** A resource asked for by kind, and optionally name, when the Installation does not know its id. */
+export const requestedResourceKindSchema = z.strictObject({
+  resourceKind: z.string().min(1).max(80),
+  resourceName: z.string().trim().min(1).max(120).optional(),
+  operations: z.array(z.string().min(1).max(80)).min(1).max(100),
+  lens: signetLensSchema.default({}),
+});
+export const requestedResourceSchema = z.union([signetResourceSchema, requestedResourceKindSchema]);
+/** What an Installation asks for: the owner it expects and the resources and operations it needs. */
+export const registrationRequestSchema = z.strictObject({
+  ...signetTerms,
+  lifecycle: z.literal('ongoing'),
+  owner: requestedOwnerSchema.optional(),
+  resources: z.array(requestedResourceSchema).max(100),
 });
 /** A person asks for a Signet on an integration, to be presented with `publicKey`. */
 export const signetRequestSchema = z.strictObject({
@@ -124,6 +145,9 @@ export const signetRequestResponseSchema = z.object({
 });
 export type SignetProposal = z.infer<typeof signetProposalSchema>;
 export type RegistrationTerms = z.infer<typeof registrationTermsSchema>;
+export type RequestedOwner = z.infer<typeof requestedOwnerSchema>;
+export type RequestedResource = z.input<typeof requestedResourceSchema>;
+export type RegistrationRequest = z.input<typeof registrationRequestSchema>;
 export type SignetRequest = z.infer<typeof signetRequestSchema>;
 export type SignetRequestResponse = z.infer<typeof signetRequestResponseSchema>;
 
@@ -139,7 +163,7 @@ export const registerInstallationSchema = z
     message: 'A local Archive registers with its sourceId',
   });
 export const registerInstallationResponseSchema = z.object({ installationId: z.uuid() });
-export const requestRegistrationSchema = z.strictObject({ terms: registrationTermsSchema });
+export const requestRegistrationSchema = z.strictObject({ terms: registrationRequestSchema });
 export const requestRegistrationResponseSchema = z.object({
   reviewCode: z.string(),
   expiresAt: z.iso.datetime(),
