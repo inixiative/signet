@@ -12,7 +12,7 @@ import {
   saveCollectedSignet,
   signetCredentialSchema,
 } from './client';
-import type { InstallationKind, OwnerRef, RegistrationTerms } from './contracts';
+import type { InstallationKind, OwnerRef, RegistrationRequest } from './contracts';
 import { readPrivateJson, writePrivateJson } from './files';
 import { type InstallationSnapshot, InstallationSocket } from './installationSocket';
 
@@ -109,7 +109,7 @@ export type InstallationPairing = {
   kind: InstallationKind;
   name: string;
   sourceId?: string;
-  terms: RegistrationTerms;
+  terms: RegistrationRequest;
   onReview: (review: { reviewCode: string; review: string; expiresAt: string }) => void;
   confirmOwner?: (owner: { ownerName: string | null; owner: OwnerRef | null }) => Promise<boolean>;
   /** Failures while waiting (a poll Kingdom refused, a dropped socket); waiting continues. */

@@ -12,7 +12,7 @@ import {
   nonceSchema,
   ownerRefSchema,
   publicClientKeySchema,
-  type RegistrationTerms,
+  type RegistrationRequest,
   registerInstallationResponseSchema,
   renewalCredentialPattern,
   requestRegistrationResponseSchema,
@@ -249,7 +249,7 @@ export const registerInstallation = (
 export const requestRegistration = (
   url: string,
   keyFile: string,
-  terms: RegistrationTerms,
+  terms: RegistrationRequest,
   options: SignetRequestOptions = {},
 ) =>
   installationPost(

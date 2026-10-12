@@ -10,7 +10,7 @@ This package is the one implementation of that protocol, shared by Kingdom (whic
 - `proof`: create and verify DPoP proofs (ES256, nonce-bound, access-token-bound).
 - `files`: private 0600 JSON files for keys and credentials.
 - `client`:
-  - an **Installation** (a local Foundry, Archive or Oracle) is an actor known to Kingdom by its key: `registerInstallation`, then `requestRegistration` returns a review code a person claims in Kingdom (a `registerIntegration` Inquiry), then `collectSignet` and `saveCollectedSignet`. `installationInquiries`, `installationSignets`, `cancelInstallationInquiry`, `enrollInstallationSignet` and `rotateInstallationKey` act as the installation;
+  - an **Installation** (a local Foundry, Archive or Oracle) is an actor known to Kingdom by its key: `registerInstallation`, then `requestRegistration` asks for what it needs (the owner it expects, by organization id or slug, and resources by id or by kind and name, with their operations) and returns a review code a person claims in Kingdom (a `registerIntegration` Inquiry), where the review opens with that owner and those resources selected, then `collectSignet` and `saveCollectedSignet`. `installationInquiries`, `installationSignets`, `cancelInstallationInquiry`, `enrollInstallationSignet` and `rotateInstallationKey` act as the installation;
   - `pairInstallation` does the whole pairing (register, request, wait on the socket, confirm the owner, collect) and `holdInstallationSignets` keeps one credential file per Signet the installation's integrations hold, enrolling later grants and dropping revoked ones;
   - `InstallationSocket`, Kingdom's live line to an installation: it proves the key, receives a snapshot of the installation's inquiries and Signets on connect and on every change, keeps the installation's integrations marked online, advertises its viewer URL, and polls the same reads while the socket is down;
   - `SignetClient`, which renews its access token and signs each call: `describe`, `execute`, task settlement, and the run actions a Foundry uses for inference (`resolveRun`, `delegateRun`, `renewRun`, `revokeRun`), and for a subscription run `releaseSubscription` and `reportSubscriptionLimits`.
@@ -20,7 +20,11 @@ import { holdInstallationSignets, InstallationSocket, pairInstallation, SignetCl
 
 const paired = await pairInstallation({
   url: kingdom, root: dataDir, kind: 'archive', name: 'Laptop Archive', sourceId,
-  terms: { name: 'Laptop Archive', lifecycle: 'ongoing', resources: [], expiresAt: null, maxRequests: null, maxConcurrent: 4 },
+  terms: {
+    name: 'Laptop Archive', lifecycle: 'ongoing', expiresAt: null, maxRequests: null, maxConcurrent: 4,
+    owner: { ownerModel: 'Organization', organization: 'inixiative' },
+    resources: [{ resourceKind: 'archiveLibrary', operations: ['sessions.write'] }],
+  },
   onReview: ({ review }) => console.log(`Approve in Kingdom: ${review}`),
   confirmOwner: async ({ ownerName }) => confirm(`Pair with ${ownerName}?`),
 });
