@@ -12,6 +12,7 @@ import {
   SignetClient,
   SignetHttpError,
   saveCollectedSignet,
+  signetPost,
   signetPublicKey,
   verifySignetProof,
   writePrivateJson,
@@ -207,5 +208,25 @@ describe('pairing and presentation', () => {
     expect(error).toBeInstanceOf(SignetHttpError);
     expect((error as SignetHttpError).status).toBe(403);
     expect((error as SignetHttpError).message).toContain('Approval not available');
+  });
+
+  test('a refusal from a proxy in front of Kingdom keeps its page', async () => {
+    const proxy = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response('<html>\n  <title>Blocked</title>\n</html>', {
+          status: 403,
+          headers: { 'content-type': 'text/html' },
+        }),
+    });
+    try {
+      const error = await signetPost(proxy.url.href, 'nonce', {}).catch(
+        (caught: unknown) => caught,
+      );
+      expect(error).toBeInstanceOf(SignetHttpError);
+      expect((error as SignetHttpError).detail).toBe('<html> <title>Blocked</title> </html>');
+    } finally {
+      proxy.stop(true);
+    }
   });
 });

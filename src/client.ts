@@ -111,17 +111,16 @@ function abortable<T>(pending: Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 
+/** Kingdom's JSON reason, else the start of the raw body (a proxy's page). */
 const errorDetail = async (response: Response) => {
+  const text = (await response.text().catch(() => '')).slice(0, 65_536).trim();
   try {
-    const body = JSON.parse((await response.text()).slice(0, 4096)) as {
-      message?: unknown;
-      error?: { message?: unknown };
-    };
-    const message = body.error?.message ?? body.message;
-    return typeof message === 'string' ? message.slice(0, 500) : undefined;
-  } catch {
-    return undefined;
-  }
+    const body = JSON.parse(text) as { message?: unknown; error?: unknown };
+    const error = body.error as { message?: unknown } | string | undefined;
+    const message = typeof error === 'string' ? error : (error?.message ?? body.message);
+    if (typeof message === 'string') return message.slice(0, 500);
+  } catch {}
+  return text.replace(/\s+/g, ' ').slice(0, 500) || undefined;
 };
 
 /** POST to Kingdom's access API and return the response's `data`. */
