@@ -13,6 +13,7 @@ This package is the one implementation of that protocol, shared by Kingdom (whic
   - an **Installation** (a local Foundry, Archive or Oracle) is an actor known to Kingdom by its key: `registerInstallation`, then `requestRegistration` asks for what it needs (the owner it expects, by organization id or slug, and resources by id or by kind and name, with their operations) and returns a review code a person claims in Kingdom (a `registerIntegration` Inquiry), where the review opens with that owner and those resources selected, then `collectSignet` and `saveCollectedSignet`. `installationInquiries`, `installationSignets`, `cancelInstallationInquiry`, `enrollInstallationSignet` and `rotateInstallationKey` act as the installation;
   - `pairInstallation` does the whole pairing (register, request, wait on the socket, confirm the owner, collect) and `holdInstallationSignets` keeps one credential file per Signet the installation's integrations hold, enrolling later grants and dropping revoked ones;
   - `InstallationSocket`, Kingdom's live line to an installation: it proves the key, receives a snapshot of the installation's inquiries and Signets on connect and on every change, keeps the installation's integrations marked online, advertises its viewer URL, and polls the same reads while the socket is down;
+  - a **person or their agent** acts as themselves with a Kingdom API token plus a proof from its key: `requestSignet` asks for a Signet on an integration (a `signetRequest` Inquiry, approved at once when the caller manages the integration), `awaitSignet` polls `collectSignet` until it is approved, and `enrollSignet` enrolls the key on a Signet an owner granted directly (`owner/grant`). `saveCollectedSignet` writes either result next to the key;
   - `SignetClient`, which renews its access token and signs each call: `describe`, `execute`, task settlement, and the run actions a Foundry uses for inference (`resolveRun`, `delegateRun`, `renewRun`, `revokeRun`), and for a subscription run `releaseSubscription` and `reportSubscriptionLimits`.
 
 ```ts
@@ -38,5 +39,24 @@ new InstallationSocket({
 const signet = await SignetClient.fromFile(paired.credentialFile);
 await signet.execute({ integrationId, operation: 'sessions.write', input: { resourceId, snapshot, previousDigest: null } });
 ```
+
+A person's agent, with an API token minted in Kingdom:
+
+```ts
+import { awaitSignet, enrollSignet, generateSignetKey, requestSignet, saveCollectedSignet, SignetClient, writePrivateJson } from '@inixiative/signet';
+
+await writePrivateJson(keyFile, generateSignetKey());
+const { requestId, reviewCode } = await requestSignet(kingdom, keyFile, apiToken, {
+  name: 'Research agent', integrationId, lifecycle: 'ongoing', expiresAt: null, maxRequests: null, maxConcurrent: 1,
+  resources: [{ resourceId, operations: ['documents.read'] }],
+});
+const collected = await awaitSignet(kingdom, keyFile, requestId); // or, for a granted Signet:
+// const collected = await enrollSignet(kingdom, keyFile, apiToken, { signetId, expectedRevision, name: 'Research agent' });
+await saveCollectedSignet(credentialFile, kingdom, keyFile, collected);
+const signet = await SignetClient.fromFile(credentialFile);
+await signet.describe();
+```
+
+Kingdom's OpenAPI spec (`/openapi/docs`) publishes each step's raw HTTP call and credentials.
 
 MIT
