@@ -88,7 +88,16 @@ beforeAll(() => {
         }
         if (action === 'collectSignet') {
           await verify(request, action);
-          if (denied) return Response.json({ message: 'Approval not available' }, { status: 403 });
+          if (denied)
+            return Response.json(
+              {
+                error: 'PERMISSION_DENIED',
+                message: 'Approval not available',
+                guidance: 'requestPermission',
+                requestId: 'request-1',
+              },
+              { status: 403 },
+            );
           if (!approved)
             return Response.json({ message: 'Approval not available' }, { status: 409 });
           return ok({
@@ -207,7 +216,7 @@ describe('pairing and presentation', () => {
     denied = false;
     expect(error).toBeInstanceOf(SignetHttpError);
     expect((error as SignetHttpError).status).toBe(403);
-    expect((error as SignetHttpError).message).toContain('Approval not available');
+    expect((error as SignetHttpError).detail).toBe('Approval not available');
   });
 
   test('a refusal from a proxy in front of Kingdom keeps its page', async () => {
