@@ -16,10 +16,14 @@ import {
   registerInstallationResponseSchema,
   renewalCredentialPattern,
   requestRegistrationResponseSchema,
+  type SignetRequestResponse,
   setInstallationCredentialResponseSchema,
+  signetCredentialsSchema,
   signetDescriptionSchema,
   signetKeySchema,
   signetLifecycleSchema,
+  signetProposalSchema,
+  signetRequestResponseSchema,
 } from './contracts';
 import { readPrivateJson, writePrivateJson } from './files';
 import { createSignetProof, keyThumbprint } from './proof';
@@ -60,7 +64,12 @@ export const signetCredentialSchema = z
   })
   .strict();
 export type SignetCredential = z.infer<typeof signetCredentialSchema>;
+/** A collected or enrolled Signet, as `saveCollectedSignet` writes it next to its key. */
 export const deliveredSignetSchema = signetCredentialSchema.omit({ url: true, keyFile: true });
+export type DeliveredSignet = z.infer<typeof deliveredSignetSchema>;
+const enrolledCredentialsSchema = signetCredentialsSchema.required({ renewalCredential: true });
+/** What `enrollSignet` returns: the enrollment's credentials and the Signet they present. */
+export type EnrolledSignet = z.infer<typeof enrolledCredentialsSchema> & { signetId: string };
 const renewalResponseSchema = deliveredSignetSchema.omit({
   signetId: true,
   integrationId: true,
@@ -205,21 +214,25 @@ export async function signetProof(
   });
 }
 
-/** A call an Installation makes as itself: no access token, a DPoP proof by its key. */
-async function installationPost<T>(
+/**
+ * A call signed by the caller's key with no access token: an Installation acting as itself, or a
+ * person acting through `headers` (their Kingdom API token).
+ */
+async function keyPost<T>(
   url: string,
   keyFile: string,
   action: string,
   body: unknown,
   schema: z.ZodType<T>,
   options: SignetRequestOptions = {},
+  headers: Record<string, string> = {},
 ): Promise<T> {
   return schema.parse(
     await signetPost(
       url,
       action,
       body,
-      { DPoP: await signetProof(url, action, keyFile, undefined, options) },
+      { ...headers, DPoP: await signetProof(url, action, keyFile, undefined, options) },
       undefined,
       options,
     ),
@@ -234,7 +247,7 @@ export const registerInstallation = (
   options: SignetRequestOptions = {},
 ) =>
   readPrivateJson(keyFile).then((key) =>
-    installationPost(
+    keyPost(
       url,
       keyFile,
       'registerInstallation',
@@ -251,7 +264,7 @@ export const requestRegistration = (
   terms: RegistrationRequest,
   options: SignetRequestOptions = {},
 ) =>
-  installationPost(
+  keyPost(
     url,
     keyFile,
     'requestRegistration',
@@ -266,14 +279,7 @@ export const installationInquiries = (
   keyFile: string,
   options: SignetRequestOptions = {},
 ) =>
-  installationPost(
-    url,
-    keyFile,
-    'installationInquiries',
-    {},
-    installationInquiriesResponseSchema,
-    options,
-  );
+  keyPost(url, keyFile, 'installationInquiries', {}, installationInquiriesResponseSchema, options);
 
 export const cancelInstallationInquiry = (
   url: string,
@@ -281,7 +287,7 @@ export const cancelInstallationInquiry = (
   inquiryId: string,
   options: SignetRequestOptions = {},
 ) =>
-  installationPost(
+  keyPost(
     url,
     keyFile,
     'cancelInstallationInquiry',
@@ -301,7 +307,7 @@ export async function collectSignet(
   options: SignetRequestOptions = {},
 ) {
   try {
-    return await installationPost(
+    return await keyPost(
       url,
       keyFile,
       'collectSignet',
@@ -315,20 +321,86 @@ export async function collectSignet(
   }
 }
 
+/** Poll `collectSignet` until the request is approved; throws once it is declined or expires. */
+export async function awaitSignet(
+  url: string,
+  keyFile: string,
+  inquiryId: string,
+  { intervalMs = 5000, signal }: { intervalMs?: number; signal?: AbortSignal } = {},
+) {
+  for (;;) {
+    signal?.throwIfAborted();
+    const collected = await collectSignet(url, keyFile, inquiryId, { signal });
+    if (collected) return collected;
+    await new Promise<void>((resolve, reject) => {
+      const done = () => {
+        signal?.removeEventListener('abort', aborted);
+        resolve();
+      };
+      const timer = setTimeout(done, intervalMs);
+      const aborted = () => {
+        clearTimeout(timer);
+        reject(signal?.reason);
+      };
+      signal?.addEventListener('abort', aborted, { once: true });
+    });
+  }
+}
+
+/**
+ * Ask for a Signet on an integration, to be presented with this key. Kingdom records a
+ * `signetRequest` Inquiry (approved at once when the caller manages the integration); pass the
+ * returned `requestId` to `collectSignet` or `awaitSignet`.
+ */
+export const requestSignet = async (
+  url: string,
+  keyFile: string,
+  apiToken: string,
+  request: z.input<typeof signetProposalSchema>,
+  options: SignetRequestOptions = {},
+): Promise<SignetRequestResponse> =>
+  keyPost(
+    url,
+    keyFile,
+    'requestSignet',
+    {
+      ...signetProposalSchema.parse(request),
+      publicKey: signetPublicKey(await readPrivateJson(keyFile)),
+    },
+    signetRequestResponseSchema,
+    options,
+    { authorization: `Bearer ${apiToken}` },
+  );
+
+/**
+ * Enroll this key on a Signet issued to the caller (an owner's `owner/grant`), or re-enroll after
+ * the enrollment or its idle window expired. `expectedRevision` is the Signet's current revision.
+ */
+export const enrollSignet = async (
+  url: string,
+  keyFile: string,
+  apiToken: string,
+  enrollment: { signetId: string; expectedRevision: number; name: string },
+  options: SignetRequestOptions = {},
+): Promise<EnrolledSignet> => ({
+  ...(await keyPost(
+    url,
+    keyFile,
+    'enrollSignet',
+    { ...enrollment, publicKey: signetPublicKey(await readPrivateJson(keyFile)) },
+    enrolledCredentialsSchema,
+    options,
+    { authorization: `Bearer ${apiToken}` },
+  )),
+  signetId: enrollment.signetId,
+});
+
 /** The Signets held by this installation's integrations. */
 export const installationSignets = (
   url: string,
   keyFile: string,
   options: SignetRequestOptions = {},
-) =>
-  installationPost(
-    url,
-    keyFile,
-    'installationSignets',
-    {},
-    installationSignetsResponseSchema,
-    options,
-  );
+) => keyPost(url, keyFile, 'installationSignets', {}, installationSignetsResponseSchema, options);
 
 /** Enroll this installation's key on a Signet one of its integrations holds. */
 export const enrollInstallationSignet = (
@@ -337,14 +409,7 @@ export const enrollInstallationSignet = (
   signetId: string,
   options: SignetRequestOptions = {},
 ) =>
-  installationPost(
-    url,
-    keyFile,
-    'enrollInstallationSignet',
-    { signetId },
-    collectedSignetSchema,
-    options,
-  );
+  keyPost(url, keyFile, 'enrollInstallationSignet', { signetId }, collectedSignetSchema, options);
 
 /** Give Kingdom the credential it uses to reach this installation's integration (Foundry's tunnel token). */
 export const setInstallationCredential = (
@@ -354,7 +419,7 @@ export const setInstallationCredential = (
   token: string,
   options: SignetRequestOptions = {},
 ) =>
-  installationPost(
+  keyPost(
     url,
     keyFile,
     'setInstallationCredential',
@@ -379,7 +444,7 @@ export async function rotateInstallationKey(
     currentThumbprint,
     options,
   );
-  return installationPost(
+  return keyPost(
     url,
     keyFile,
     'rotateInstallationKey',
@@ -394,7 +459,7 @@ export async function saveCollectedSignet(
   credentialFile: string,
   url: string,
   keyFile: string,
-  collected: z.infer<typeof collectedSignetSchema>,
+  collected: DeliveredSignet,
 ) {
   const credential = signetCredentialSchema.parse({ ...collected, url, keyFile });
   await writePrivateJson(credentialFile, credential);
