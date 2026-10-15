@@ -126,7 +126,12 @@ const errorDetail = async (response: Response) => {
   try {
     const body = JSON.parse(text) as { message?: unknown; error?: unknown };
     const error = body.error as { message?: unknown } | string | undefined;
-    const message = typeof error === 'string' ? error : (error?.message ?? body.message);
+    const message =
+      typeof body.message === 'string'
+        ? body.message
+        : typeof error === 'string'
+          ? error
+          : error?.message;
     if (typeof message === 'string') return message.slice(0, 500);
   } catch {}
   return text.replace(/\s+/g, ' ').slice(0, 500) || undefined;
