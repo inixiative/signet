@@ -137,7 +137,7 @@ export async function pairInstallation(input: InstallationPairing) {
   const pending = await requestRegistration(url, keyFile, input.terms);
   input.onReview({
     reviewCode: pending.reviewCode,
-    review: `${url}/dashboard?reviewSignet=${pending.reviewCode}`,
+    review: pending.reviewUrl ?? `${url}/dashboard?reviewSignet=${pending.reviewCode}`,
     expiresAt: pending.expiresAt,
   });
   const inquiry = await new Promise<InstallationSnapshot['inquiries'][number]>(

@@ -43,6 +43,7 @@ const collected = (id: string) => ({
 const calls: string[] = [];
 const registrationRequests: unknown[] = [];
 let claimed = false;
+let reviewUrl: string | undefined;
 let server: ReturnType<typeof Bun.serve>;
 let url: string;
 
@@ -67,6 +68,7 @@ beforeAll(() => {
           return data({
             reviewCode: 'ABCDEF123456',
             expiresAt: new Date(Date.now() + 600000).toISOString(),
+            ...(reviewUrl ? { reviewUrl } : {}),
           });
         case 'installationInquiries':
           return data({
@@ -181,6 +183,34 @@ test('pairs through polling when the socket is refused, confirming the owner bef
       stray.split('/').at(-1)!,
     ].sort(),
   );
+});
+
+test('shows the review link Kingdom sends instead of deriving one from the API url', async () => {
+  claimed = false;
+  reviewUrl = 'https://kingdom.example/dashboard?reviewSignet=ABCDEF123456';
+  const root = await mkdtemp(join(tmpdir(), 'signet-pair-'));
+  const reviews: string[] = [];
+  try {
+    await pairInstallation({
+      url,
+      root,
+      kind: 'foundry',
+      name: 'Studio Foundry',
+      terms: {
+        name: 'Studio Foundry',
+        lifecycle: 'ongoing',
+        resources: [],
+        expiresAt: null,
+        maxRequests: null,
+        maxConcurrent: 1,
+      },
+      onReview: ({ review }) => void reviews.push(review),
+      socketOptions: { pollMs: 20, retryBaseMs: 1000 },
+    });
+  } finally {
+    reviewUrl = undefined;
+  }
+  expect(reviews).toEqual(['https://kingdom.example/dashboard?reviewSignet=ABCDEF123456']);
 });
 
 test('refuses to collect when the owner is not confirmed', async () => {
