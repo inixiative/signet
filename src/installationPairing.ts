@@ -142,23 +142,37 @@ export async function pairInstallation(input: InstallationPairing) {
   });
   const inquiry = await new Promise<InstallationSnapshot['inquiries'][number]>(
     (resolve, reject) => {
+      const stop = () => {
+        clearTimeout(deadline);
+        socket.close();
+      };
+      const finish = (settled: ReturnType<typeof settledInquiry>) => {
+        if (!settled) return;
+        stop();
+        if (settled instanceof Error) reject(settled);
+        else resolve(settled);
+      };
       const socket = new InstallationSocket({
         url,
         keyFile,
         ...input.socketOptions,
         onError: input.onError,
-        onSnapshot: (snapshot) => {
-          const settled = settledInquiry(snapshot, earlier, baseline.declinedAt);
-          if (!settled) return;
-          socket.close();
-          if (settled instanceof Error) reject(settled);
-          else resolve(settled);
-        },
-        onRevoked: () => reject(Error('Kingdom revoked this installation')),
+        onSnapshot: (snapshot) => finish(settledInquiry(snapshot, earlier, baseline.declinedAt)),
+        onRevoked: () => finish(Error('Kingdom revoked this installation')),
       });
-      if (input.signal?.aborted) return reject(input.signal.reason);
+      const deadline = setTimeout(
+        async () => {
+          const last = await installationInquiries(url, keyFile).catch(() => null);
+          finish((last && settledInquiry(last, earlier, baseline.declinedAt)) || expired());
+        },
+        Math.max(0, Date.parse(pending.expiresAt) - Date.now()),
+      );
+      if (input.signal?.aborted) {
+        stop();
+        return reject(input.signal.reason);
+      }
       input.signal?.addEventListener('abort', () => {
-        socket.close();
+        stop();
         reject(input.signal!.reason);
       });
       socket.start();
@@ -182,8 +196,10 @@ export async function pairInstallation(input: InstallationPairing) {
   };
 }
 
+const expired = () => Error('The review code expired before it was claimed; pair again');
+
 const settledInquiry = (
-  snapshot: InstallationSnapshot,
+  snapshot: Pick<InstallationSnapshot, 'pending' | 'declinedAt' | 'inquiries'>,
   earlier: Set<string>,
   earlierDeclinedAt: string | null,
 ) => {
@@ -195,7 +211,6 @@ const settledInquiry = (
   if (inquiry?.status === 'approved') return inquiry;
   if (inquiry && inquiry.status !== 'sent')
     return Error(`The registration was ${inquiry.status} in Kingdom`);
-  if (!inquiry && !snapshot.pending)
-    return Error('The review code expired before it was claimed; pair again');
+  if (!inquiry && !snapshot.pending) return expired();
   return null;
 };

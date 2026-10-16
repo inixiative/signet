@@ -274,3 +274,53 @@ test('treats a Kingdom that never answers the socket proof as down and polls ins
   silent.stop(true);
   expect(snapshots).toHaveLength(1);
 });
+
+test('gives up when the review code expires, even if Kingdom still reports it pending', async () => {
+  const stuck = Bun.serve({
+    port: 0,
+    fetch(req) {
+      if (req.headers.get('upgrade') === 'websocket') return new Response(null, { status: 426 });
+      const action = new URL(req.url).pathname.split('/').at(-1)!;
+      const data = (value: unknown) => Response.json({ data: value });
+      const expiresAt = new Date(Date.now() + 100).toISOString();
+      if (action === 'nonce') return data({ nonce: nonce() });
+      if (action === 'registerInstallation') return data({ installationId: crypto.randomUUID() });
+      if (action === 'requestRegistration') return data({ reviewCode: 'ABCDEF123456', expiresAt });
+      if (action === 'installationInquiries')
+        return data({
+          pending: {
+            reviewCode: 'ABCDEF123456',
+            expiresAt: new Date(Date.now() + 600000).toISOString(),
+          },
+          declinedAt: null,
+          inquiries: [],
+        });
+      return new Response(null, { status: 404 });
+    },
+  });
+  const root = await mkdtemp(join(tmpdir(), 'signet-expired-'));
+  const start = Date.now();
+  try {
+    await expect(
+      pairInstallation({
+        url: `http://localhost:${stuck.port}`,
+        root,
+        kind: 'archive',
+        name: 'Laptop Archive',
+        terms: {
+          name: 'Laptop Archive',
+          lifecycle: 'ongoing',
+          resources: [],
+          expiresAt: null,
+          maxRequests: null,
+          maxConcurrent: 4,
+        },
+        onReview: () => {},
+        socketOptions: { pollMs: 20, retryBaseMs: 1000 },
+      }),
+    ).rejects.toThrow('review code expired');
+  } finally {
+    stuck.stop(true);
+  }
+  expect(Date.now() - start).toBeLessThan(3000);
+});
