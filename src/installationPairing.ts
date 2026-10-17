@@ -115,6 +115,8 @@ export type InstallationPairing = {
   /** Failures while waiting (a poll Kingdom refused, a dropped socket); waiting continues. */
   onError?: (error: unknown) => void;
   signal?: AbortSignal;
+  /** Slack past an expiry (clock skew, a claim in its last second) before giving up. */
+  expiryGraceMs?: number;
   socketOptions?: { pollMs?: number; retryBaseMs?: number; authTimeoutMs?: number };
 };
 
@@ -137,44 +139,79 @@ export async function pairInstallation(input: InstallationPairing) {
   const pending = await requestRegistration(url, keyFile, input.terms);
   input.onReview({
     reviewCode: pending.reviewCode,
-    review: pending.reviewUrl ?? `${url}/dashboard?reviewSignet=${pending.reviewCode}`,
+    review: pending.reviewUrl,
     expiresAt: pending.expiresAt,
   });
+  const graceMs = input.expiryGraceMs ?? 5_000;
+  const retryBaseMs = input.socketOptions?.retryBaseMs ?? 1_000;
   const inquiry = await new Promise<InstallationSnapshot['inquiries'][number]>(
     (resolve, reject) => {
+      let deadline: ReturnType<typeof setTimeout> | undefined;
+      let done = false;
+      // The review code's expiry until a claim creates the inquiry; then the inquiry's own.
+      let waitUntil: string | null = pending.expiresAt;
+      const onAbort = () => {
+        stop();
+        reject(input.signal?.reason);
+      };
       const stop = () => {
+        done = true;
         clearTimeout(deadline);
+        input.signal?.removeEventListener('abort', onAbort);
         socket.close();
       };
       const finish = (settled: ReturnType<typeof settledInquiry>) => {
-        if (!settled) return;
+        if (!settled || done) return;
         stop();
         if (settled instanceof Error) reject(settled);
         else resolve(settled);
+      };
+      const arm = (until: string | null) => {
+        clearTimeout(deadline);
+        waitUntil = until;
+        if (!until || done) return;
+        const delay = Math.max(0, Date.parse(until) + graceMs - Date.now());
+        deadline =
+          delay > maxTimerMs
+            ? setTimeout(() => arm(until), maxTimerMs)
+            : setTimeout(() => void check(until), delay);
+      };
+      const follow = (snapshot: Snapshot) => {
+        const settled = settledInquiry(snapshot, earlier, baseline.declinedAt);
+        if (settled) return finish(settled);
+        const claimed = newInquiry(snapshot, earlier);
+        if (claimed && claimed.expiresAt !== waitUntil) arm(claimed.expiresAt);
+      };
+      const check = async (until: string) => {
+        let last: Snapshot | null = null;
+        for (let attempt = 0; !last && attempt < 3; attempt++) {
+          if (attempt) await new Promise((wake) => setTimeout(wake, retryBaseMs * 2 ** attempt));
+          if (done) return;
+          last = await installationInquiries(url, keyFile).catch((error) => {
+            input.onError?.(error);
+            return null;
+          });
+        }
+        if (done || waitUntil !== until) return;
+        if (!last) return finish(unconfirmed());
+        follow(last);
+        if (done || waitUntil !== until) return;
+        finish(newInquiry(last, earlier) ? unapproved() : expired());
       };
       const socket = new InstallationSocket({
         url,
         keyFile,
         ...input.socketOptions,
         onError: input.onError,
-        onSnapshot: (snapshot) => finish(settledInquiry(snapshot, earlier, baseline.declinedAt)),
+        onSnapshot: follow,
         onRevoked: () => finish(Error('Kingdom revoked this installation')),
       });
-      const deadline = setTimeout(
-        async () => {
-          const last = await installationInquiries(url, keyFile).catch(() => null);
-          finish((last && settledInquiry(last, earlier, baseline.declinedAt)) || expired());
-        },
-        Math.max(0, Date.parse(pending.expiresAt) - Date.now()),
-      );
       if (input.signal?.aborted) {
         stop();
         return reject(input.signal.reason);
       }
-      input.signal?.addEventListener('abort', () => {
-        stop();
-        reject(input.signal!.reason);
-      });
+      input.signal?.addEventListener('abort', onAbort, { once: true });
+      arm(waitUntil);
       socket.start();
     },
   );
@@ -196,18 +233,27 @@ export async function pairInstallation(input: InstallationPairing) {
   };
 }
 
+/** setTimeout fires at once past this delay (~24.8 days). */
+const maxTimerMs = 2 ** 31 - 1;
+
+type Snapshot = Pick<InstallationSnapshot, 'pending' | 'declinedAt' | 'inquiries'>;
+
 const expired = () => Error('The review code expired before it was claimed; pair again');
+const unapproved = () => Error('The registration expired in Kingdom before it was approved');
+const unconfirmed = () =>
+  Error('Could not reach Kingdom to confirm the registration; check Kingdom before pairing again');
+
+const newInquiry = (snapshot: Snapshot, earlier: Set<string>) =>
+  snapshot.inquiries.find((item) => item.type === 'registerIntegration' && !earlier.has(item.id));
 
 const settledInquiry = (
-  snapshot: Pick<InstallationSnapshot, 'pending' | 'declinedAt' | 'inquiries'>,
+  snapshot: Snapshot,
   earlier: Set<string>,
   earlierDeclinedAt: string | null,
 ) => {
   if (snapshot.declinedAt && snapshot.declinedAt !== earlierDeclinedAt)
     return Error('The registration was declined in Kingdom');
-  const inquiry = snapshot.inquiries.find(
-    (item) => item.type === 'registerIntegration' && !earlier.has(item.id),
-  );
+  const inquiry = newInquiry(snapshot, earlier);
   if (inquiry?.status === 'approved') return inquiry;
   if (inquiry && inquiry.status !== 'sent')
     return Error(`The registration was ${inquiry.status} in Kingdom`);
