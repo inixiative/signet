@@ -9,6 +9,7 @@ import {
   kingdomUrl,
   registerInstallation,
   requestRegistration,
+  SignetHttpError,
   saveCollectedSignet,
   signetCredentialSchema,
 } from './client';
@@ -112,11 +113,12 @@ export type InstallationPairing = {
   terms: RegistrationRequest;
   onReview: (review: { reviewCode: string; review: string; expiresAt: string }) => void;
   confirmOwner?: (owner: { ownerName: string | null; owner: OwnerRef | null }) => Promise<boolean>;
-  /** Failures while waiting (a poll Kingdom refused, a dropped socket); waiting continues. */
+  /**
+   * Failures while waiting (a poll Kingdom refused, a dropped socket); waiting continues, except
+   * at the deadline, where repeated failures end it.
+   */
   onError?: (error: unknown) => void;
   signal?: AbortSignal;
-  /** Slack past an expiry (clock skew, a claim in its last second) before giving up. */
-  expiryGraceMs?: number;
   socketOptions?: { pollMs?: number; retryBaseMs?: number; authTimeoutMs?: number };
 };
 
@@ -142,12 +144,13 @@ export async function pairInstallation(input: InstallationPairing) {
     review: pending.reviewUrl,
     expiresAt: pending.expiresAt,
   });
-  const graceMs = input.expiryGraceMs ?? 5_000;
   const retryBaseMs = input.socketOptions?.retryBaseMs ?? 1_000;
   const inquiry = await new Promise<InstallationSnapshot['inquiries'][number]>(
     (resolve, reject) => {
       let deadline: ReturnType<typeof setTimeout> | undefined;
+      let retry: ReturnType<typeof setTimeout> | undefined;
       let done = false;
+      let claimed = false;
       // The review code's expiry until a claim creates the inquiry; then the inquiry's own.
       let waitUntil: string | null = pending.expiresAt;
       const onAbort = () => {
@@ -157,6 +160,7 @@ export async function pairInstallation(input: InstallationPairing) {
       const stop = () => {
         done = true;
         clearTimeout(deadline);
+        clearTimeout(retry);
         input.signal?.removeEventListener('abort', onAbort);
         socket.close();
       };
@@ -170,25 +174,36 @@ export async function pairInstallation(input: InstallationPairing) {
         clearTimeout(deadline);
         waitUntil = until;
         if (!until || done) return;
-        const delay = Math.max(0, Date.parse(until) + graceMs - Date.now());
+        const delay = Math.max(0, Date.parse(until) + expiryGraceMs - Date.now());
         deadline =
           delay > maxTimerMs
             ? setTimeout(() => arm(until), maxTimerMs)
             : setTimeout(() => void check(until), delay);
       };
       const follow = (snapshot: Snapshot) => {
-        const settled = settledInquiry(snapshot, earlier, baseline.declinedAt);
+        const settled = settledInquiry(snapshot, earlier, baseline.declinedAt, claimed);
         if (settled) return finish(settled);
-        const claimed = newInquiry(snapshot, earlier);
-        if (claimed && claimed.expiresAt !== waitUntil) arm(claimed.expiresAt);
+        const inquiry = newInquiry(snapshot, earlier);
+        if (!inquiry) return;
+        claimed = true;
+        if (inquiry.expiresAt !== waitUntil) arm(inquiry.expiresAt);
+      };
+      // Kingdom refuses a revoked installation's key; the revoke frame only reaches a live socket.
+      const refused = (error: unknown) => {
+        if (error instanceof SignetHttpError && (error.status === 401 || error.status === 403))
+          finish(revoked());
+        else input.onError?.(error);
       };
       const check = async (until: string) => {
         let last: Snapshot | null = null;
         for (let attempt = 0; !last && attempt < 3; attempt++) {
-          if (attempt) await new Promise((wake) => setTimeout(wake, retryBaseMs * 2 ** attempt));
+          if (attempt)
+            await new Promise((wake) => {
+              retry = setTimeout(wake, retryBaseMs * 2 ** attempt);
+            });
           if (done) return;
           last = await installationInquiries(url, keyFile).catch((error) => {
-            input.onError?.(error);
+            refused(error);
             return null;
           });
         }
@@ -202,9 +217,9 @@ export async function pairInstallation(input: InstallationPairing) {
         url,
         keyFile,
         ...input.socketOptions,
-        onError: input.onError,
+        onError: refused,
         onSnapshot: follow,
-        onRevoked: () => finish(Error('Kingdom revoked this installation')),
+        onRevoked: () => finish(revoked()),
       });
       if (input.signal?.aborted) {
         stop();
@@ -235,10 +250,16 @@ export async function pairInstallation(input: InstallationPairing) {
 
 /** setTimeout fires at once past this delay (~24.8 days). */
 const maxTimerMs = 2 ** 31 - 1;
+/** Slack past an expiry (clock skew, a claim in its last second) before giving up. */
+const expiryGraceMs = 5_000;
+/** Kingdom can still approve these. */
+const openStatuses = new Set(['sent', 'changesRequested']);
 
 type Snapshot = Pick<InstallationSnapshot, 'pending' | 'declinedAt' | 'inquiries'>;
 
 const expired = () => Error('The review code expired before it was claimed; pair again');
+const revoked = () => Error('Kingdom revoked this installation');
+const withdrawn = () => Error('The registration was withdrawn in Kingdom');
 const unapproved = () => Error('The registration expired in Kingdom before it was approved');
 const unconfirmed = () =>
   Error('Could not reach Kingdom to confirm the registration; check Kingdom before pairing again');
@@ -250,13 +271,16 @@ const settledInquiry = (
   snapshot: Snapshot,
   earlier: Set<string>,
   earlierDeclinedAt: string | null,
+  claimed: boolean,
 ) => {
   if (snapshot.declinedAt && snapshot.declinedAt !== earlierDeclinedAt)
     return Error('The registration was declined in Kingdom');
   const inquiry = newInquiry(snapshot, earlier);
   if (inquiry?.status === 'approved') return inquiry;
-  if (inquiry && inquiry.status !== 'sent')
+  if (inquiry && !openStatuses.has(inquiry.status))
     return Error(`The registration was ${inquiry.status} in Kingdom`);
+  // A canceled inquiry is soft-deleted, so it drops out of the snapshot.
+  if (!inquiry && claimed) return withdrawn();
   if (!inquiry && !snapshot.pending) return expired();
   return null;
 };

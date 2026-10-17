@@ -167,8 +167,8 @@ export const requestRegistrationSchema = z.strictObject({ terms: registrationReq
 export const requestRegistrationResponseSchema = z.object({
   reviewCode: z.string(),
   expiresAt: z.iso.datetime(),
-  /** Where a person reviews the registration in Kingdom's web app. */
-  reviewUrl: z.url(),
+  /** Where a person reviews the registration in Kingdom's web app; callers open it, so http(s) only. */
+  reviewUrl: z.url({ protocol: /^https?$/ }),
 });
 export const installationInquirySchema = z.object({
   id: z.uuid(),
