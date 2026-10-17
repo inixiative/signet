@@ -80,6 +80,7 @@ beforeAll(() => {
           return ok({
             reviewCode: 'ABC123ABC123',
             expiresAt: new Date(Date.now() + 600000).toISOString(),
+            reviewUrl: 'https://kingdom.example/dashboard?reviewSignet=ABC123ABC123',
           });
         }
         if (action === 'installationInquiries') {
@@ -182,6 +183,7 @@ describe('pairing and presentation', () => {
       maxConcurrent: 4,
     });
     expect(pending.reviewCode).toBe('ABC123ABC123');
+    expect(pending.reviewUrl).toBe('https://kingdom.example/dashboard?reviewSignet=ABC123ABC123');
     expect(await installationInquiries(url, keyFile)).toEqual({
       pending: null,
       declinedAt: null,

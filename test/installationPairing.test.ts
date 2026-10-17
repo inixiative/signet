@@ -12,7 +12,11 @@ import {
   readPrivateJson,
   signetCredentialFile,
 } from '../src';
-import { requestRegistrationSchema } from '../src/contracts';
+import {
+  requestRegistrationResponseSchema,
+  requestRegistrationSchema,
+  signetHolderSchema,
+} from '../src/contracts';
 
 const nonce = () => Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url');
 const owner = {
@@ -40,10 +44,12 @@ const collected = (id: string) => ({
   integrationId,
   owner,
 });
+/** installationPairing's expiryGraceMs: expiries are dated this far back so deadlines fire in ms. */
+const graceMs = 5_000;
 const calls: string[] = [];
 const registrationRequests: unknown[] = [];
 let claimed = false;
-let reviewUrl: string | undefined;
+const reviewUrl = 'https://kingdom.example/dashboard?reviewSignet=ABCDEF123456';
 let server: ReturnType<typeof Bun.serve>;
 let url: string;
 
@@ -68,7 +74,7 @@ beforeAll(() => {
           return data({
             reviewCode: 'ABCDEF123456',
             expiresAt: new Date(Date.now() + 600000).toISOString(),
-            ...(reviewUrl ? { reviewUrl } : {}),
+            reviewUrl,
           });
         case 'installationInquiries':
           return data({
@@ -112,7 +118,7 @@ beforeAll(() => {
 
 afterAll(() => server.stop(true));
 
-test('pairs through polling when the socket is refused, confirming the owner before collecting', async () => {
+test("pairs through polling when the socket is refused, showing Kingdom's review link and confirming the owner", async () => {
   const root = await mkdtemp(join(tmpdir(), 'signet-pair-'));
   const reviews: string[] = [];
   const confirmed: (string | null)[] = [];
@@ -140,7 +146,7 @@ test('pairs through polling when the socket is refused, confirming the owner bef
     },
     socketOptions: { pollMs: 20, retryBaseMs: 1000 },
   });
-  expect(reviews).toEqual(['ABCDEF123456', `${url}/dashboard?reviewSignet=ABCDEF123456`]);
+  expect(reviews).toEqual(['ABCDEF123456', reviewUrl]);
   expect(requestRegistrationSchema.parse(registrationRequests[0]).terms).toMatchObject({
     owner: { ownerModel: 'Organization', organization: 'inixiative' },
     resources: [
@@ -183,34 +189,6 @@ test('pairs through polling when the socket is refused, confirming the owner bef
       stray.split('/').at(-1)!,
     ].sort(),
   );
-});
-
-test('shows the review link Kingdom sends instead of deriving one from the API url', async () => {
-  claimed = false;
-  reviewUrl = 'https://kingdom.example/dashboard?reviewSignet=ABCDEF123456';
-  const root = await mkdtemp(join(tmpdir(), 'signet-pair-'));
-  const reviews: string[] = [];
-  try {
-    await pairInstallation({
-      url,
-      root,
-      kind: 'foundry',
-      name: 'Studio Foundry',
-      terms: {
-        name: 'Studio Foundry',
-        lifecycle: 'ongoing',
-        resources: [],
-        expiresAt: null,
-        maxRequests: null,
-        maxConcurrent: 1,
-      },
-      onReview: ({ review }) => void reviews.push(review),
-      socketOptions: { pollMs: 20, retryBaseMs: 1000 },
-    });
-  } finally {
-    reviewUrl = undefined;
-  }
-  expect(reviews).toEqual(['https://kingdom.example/dashboard?reviewSignet=ABCDEF123456']);
 });
 
 test('refuses to collect when the owner is not confirmed', async () => {
@@ -282,10 +260,11 @@ test('gives up when the review code expires, even if Kingdom still reports it pe
       if (req.headers.get('upgrade') === 'websocket') return new Response(null, { status: 426 });
       const action = new URL(req.url).pathname.split('/').at(-1)!;
       const data = (value: unknown) => Response.json({ data: value });
-      const expiresAt = new Date(Date.now() + 100).toISOString();
+      const expiresAt = new Date(Date.now() + 100 - graceMs).toISOString();
       if (action === 'nonce') return data({ nonce: nonce() });
       if (action === 'registerInstallation') return data({ installationId: crypto.randomUUID() });
-      if (action === 'requestRegistration') return data({ reviewCode: 'ABCDEF123456', expiresAt });
+      if (action === 'requestRegistration')
+        return data({ reviewCode: 'ABCDEF123456', expiresAt, reviewUrl });
       if (action === 'installationInquiries')
         return data({
           pending: {
@@ -323,4 +302,355 @@ test('gives up when the review code expires, even if Kingdom still reports it pe
     stuck.stop(true);
   }
   expect(Date.now() - start).toBeLessThan(3000);
+});
+
+const terms = {
+  name: 'Studio Foundry',
+  lifecycle: 'ongoing' as const,
+  resources: [],
+  expiresAt: null,
+  maxRequests: null,
+  maxConcurrent: 1,
+};
+const sentInquiry = (id: string, status: string, expiresAt: string | null) => ({
+  id,
+  type: 'registerIntegration',
+  status,
+  createdAt: new Date().toISOString(),
+  expiresAt,
+  owner: status === 'approved' ? owner : null,
+  ownerName: status === 'approved' ? 'Aron' : null,
+  integrationId: status === 'approved' ? integrationId : null,
+  signetId: status === 'approved' ? signetId : null,
+  deliverBefore: null,
+});
+
+/** A Kingdom whose review code lives `codeMs`; `inquiries(n)` answers the nth inquiry read. */
+const stubKingdom = (codeMs: number, inquiries: (read: number) => Response | object) => {
+  let reads = 0;
+  const kingdom = Bun.serve({
+    port: 0,
+    fetch(req) {
+      if (req.headers.get('upgrade') === 'websocket') return new Response(null, { status: 426 });
+      const action = new URL(req.url).pathname.split('/').at(-1)!;
+      const data = (value: unknown) => Response.json({ data: value });
+      if (action === 'nonce') return data({ nonce: nonce() });
+      if (action === 'registerInstallation') return data({ installationId: crypto.randomUUID() });
+      if (action === 'requestRegistration')
+        return data({
+          reviewCode: 'ABCDEF123456',
+          expiresAt: new Date(Date.now() + codeMs).toISOString(),
+          reviewUrl,
+        });
+      if (action === 'installationInquiries') {
+        const answer = inquiries(reads++);
+        return answer instanceof Response ? answer : data(answer);
+      }
+      if (action === 'installationSignets') return data({ signets: [] });
+      if (action === 'collectSignet') return data(collected(signetId));
+      return new Response(null, { status: 404 });
+    },
+  });
+  return { url: `http://localhost:${kingdom.port}`, stop: () => kingdom.stop(true) };
+};
+
+const outcome = (promise: Promise<unknown>, ms: number) =>
+  Promise.race([
+    promise.then(
+      () => 'resolved',
+      (error: Error) => `rejected: ${error.message}`,
+    ),
+    Bun.sleep(ms).then(() => 'still waiting'),
+  ]);
+
+test('a claimed registration waiting for approval outlives the review code, then collects', async () => {
+  const id = crypto.randomUUID();
+  const started = Date.now();
+  const kingdom = stubKingdom(100 - graceMs, (read) => ({
+    pending: null,
+    declinedAt: null,
+    inquiries:
+      read === 0 ? [] : [sentInquiry(id, Date.now() - started < 600 ? 'sent' : 'approved', null)],
+  }));
+  const root = await mkdtemp(join(tmpdir(), 'signet-awaiting-'));
+  try {
+    const paired = await pairInstallation({
+      url: kingdom.url,
+      root,
+      kind: 'foundry',
+      name: 'Studio Foundry',
+      terms,
+      onReview: () => {},
+      socketOptions: { pollMs: 20, retryBaseMs: 1000 },
+    });
+    expect(paired.signetId).toBe(signetId);
+    expect(Date.now() - started).toBeGreaterThan(500);
+  } finally {
+    kingdom.stop();
+  }
+});
+
+test('a claimed registration still unapproved when its inquiry expires gives up', async () => {
+  const id = crypto.randomUUID();
+  const inquiryExpiresAt = new Date(Date.now() + 300 - graceMs).toISOString();
+  const kingdom = stubKingdom(100 - graceMs, (read) => ({
+    pending: null,
+    declinedAt: null,
+    inquiries: read === 0 ? [] : [sentInquiry(id, 'sent', inquiryExpiresAt)],
+  }));
+  const root = await mkdtemp(join(tmpdir(), 'signet-unapproved-'));
+  const controller = new AbortController();
+  try {
+    const result = await outcome(
+      pairInstallation({
+        url: kingdom.url,
+        root,
+        kind: 'foundry',
+        name: 'Studio Foundry',
+        terms,
+        onReview: () => {},
+        signal: controller.signal,
+        socketOptions: { pollMs: 20, retryBaseMs: 1000 },
+      }),
+      2000,
+    );
+    expect(result).toBe('rejected: The registration expired in Kingdom before it was approved');
+  } finally {
+    controller.abort();
+    kingdom.stop();
+  }
+});
+
+test('a Kingdom unreachable at the deadline is reported as such, not as an expired code', async () => {
+  const kingdom = stubKingdom(100 - graceMs, (read) =>
+    read === 0
+      ? { pending: null, declinedAt: null, inquiries: [] }
+      : new Response(null, { status: 503 }),
+  );
+  const root = await mkdtemp(join(tmpdir(), 'signet-unreachable-'));
+  const errors: unknown[] = [];
+  try {
+    await expect(
+      pairInstallation({
+        url: kingdom.url,
+        root,
+        kind: 'foundry',
+        name: 'Studio Foundry',
+        terms,
+        onReview: () => {},
+        onError: (error) => void errors.push(error),
+        socketOptions: { pollMs: 10_000, retryBaseMs: 10 },
+      }),
+    ).rejects.toThrow('Could not reach Kingdom to confirm the registration');
+  } finally {
+    kingdom.stop();
+  }
+  expect(errors.length).toBeGreaterThanOrEqual(3);
+});
+
+test('a review code expiring past the timer limit does not fire early, and abort releases the signal', async () => {
+  const kingdom = stubKingdom(40 * 86_400_000, () => ({
+    pending: { reviewCode: 'ABCDEF123456', expiresAt: new Date(Date.now() + 600000).toISOString() },
+    declinedAt: null,
+    inquiries: [],
+  }));
+  const root = await mkdtemp(join(tmpdir(), 'signet-far-'));
+  const controller = new AbortController();
+  const listeners = { added: 0, removed: 0 };
+  const { signal } = controller;
+  const add = signal.addEventListener.bind(signal);
+  const remove = signal.removeEventListener.bind(signal);
+  signal.addEventListener = ((...args: Parameters<typeof add>) => {
+    listeners.added++;
+    add(...args);
+  }) as typeof signal.addEventListener;
+  signal.removeEventListener = ((...args: Parameters<typeof remove>) => {
+    listeners.removed++;
+    remove(...args);
+  }) as typeof signal.removeEventListener;
+  const pairing = pairInstallation({
+    url: kingdom.url,
+    root,
+    kind: 'foundry',
+    name: 'Studio Foundry',
+    terms,
+    onReview: () => {},
+    signal,
+    socketOptions: { pollMs: 20, retryBaseMs: 1000 },
+  });
+  try {
+    expect(await outcome(pairing, 300)).toBe('still waiting');
+    controller.abort(Error('done waiting'));
+    expect(await outcome(pairing, 300)).toBe('rejected: done waiting');
+    expect(listeners).toEqual({ added: 1, removed: 1 });
+  } finally {
+    kingdom.stop();
+  }
+});
+
+test('a registration response without reviewUrl is refused', () => {
+  expect(
+    requestRegistrationResponseSchema.safeParse({
+      reviewCode: 'ABCDEF123456',
+      expiresAt: new Date().toISOString(),
+    }).success,
+  ).toBe(false);
+});
+
+const pair = (url: string, root: string, extra: Partial<Parameters<typeof pairInstallation>[0]>) =>
+  pairInstallation({
+    url,
+    root,
+    kind: 'foundry',
+    name: 'Studio Foundry',
+    terms,
+    onReview: () => {},
+    socketOptions: { pollMs: 20, retryBaseMs: 1000 },
+    ...extra,
+  });
+const pendingCode = () => ({
+  pending: { reviewCode: 'ABCDEF123456', expiresAt: new Date(Date.now() + 60_000).toISOString() },
+  declinedAt: null,
+  inquiries: [],
+});
+const week = () => new Date(Date.now() + 7 * 86_400_000).toISOString();
+
+test('a claim seen while the deadline check retries keeps the wait on the inquiry', async () => {
+  const id = crypto.randomUUID();
+  const started = Date.now();
+  const kingdom = stubKingdom(150 - graceMs, (read) => {
+    const elapsed = Date.now() - started;
+    if (read === 0) return { pending: null, declinedAt: null, inquiries: [] };
+    if (elapsed < 140) return pendingCode();
+    if (elapsed < 200) return new Response(null, { status: 503 });
+    return { pending: null, declinedAt: null, inquiries: [sentInquiry(id, 'sent', week())] };
+  });
+  const root = await mkdtemp(join(tmpdir(), 'signet-race-'));
+  const controller = new AbortController();
+  try {
+    const result = await outcome(
+      pair(kingdom.url, root, {
+        signal: controller.signal,
+        socketOptions: { pollMs: 20, retryBaseMs: 200 },
+      }),
+      1200,
+    );
+    expect(result).toBe('still waiting');
+  } finally {
+    controller.abort();
+    kingdom.stop();
+  }
+});
+
+test('changes requested keeps waiting, and a later approval collects', async () => {
+  const id = crypto.randomUUID();
+  const started = Date.now();
+  const kingdom = stubKingdom(100 - graceMs, (read) => ({
+    pending: null,
+    declinedAt: null,
+    inquiries:
+      read === 0
+        ? []
+        : [
+            Date.now() - started < 400
+              ? sentInquiry(id, 'changesRequested', week())
+              : sentInquiry(id, 'approved', null),
+          ],
+  }));
+  const root = await mkdtemp(join(tmpdir(), 'signet-changes-'));
+  try {
+    expect((await pair(kingdom.url, root, {})).signetId).toBe(signetId);
+    expect(Date.now() - started).toBeGreaterThan(300);
+  } finally {
+    kingdom.stop();
+  }
+});
+
+test('a claimed inquiry that vanishes (canceled) is reported as withdrawn', async () => {
+  const id = crypto.randomUUID();
+  const started = Date.now();
+  const kingdom = stubKingdom(600_000, (read) => ({
+    pending: null,
+    declinedAt: null,
+    inquiries: read > 0 && Date.now() - started < 200 ? [sentInquiry(id, 'sent', week())] : [],
+  }));
+  const root = await mkdtemp(join(tmpdir(), 'signet-withdrawn-'));
+  try {
+    await expect(pair(kingdom.url, root, {})).rejects.toThrow(
+      'The registration was withdrawn in Kingdom',
+    );
+  } finally {
+    kingdom.stop();
+  }
+});
+
+test('Kingdom refusing the key three times in a row, a backoff apart, ends the wait as revoked', async () => {
+  const errors: unknown[] = [];
+  const kingdom = stubKingdom(600_000, (read) =>
+    read === 0 ? pendingCode() : new Response(null, { status: 401 }),
+  );
+  const root = await mkdtemp(join(tmpdir(), 'signet-refused-'));
+  const started = Date.now();
+  try {
+    await expect(
+      pair(kingdom.url, root, {
+        onError: (error) => void errors.push(error),
+        socketOptions: { pollMs: 20, retryBaseMs: 50 },
+      }),
+    ).rejects.toThrow('Kingdom revoked this installation');
+  } finally {
+    kingdom.stop();
+  }
+  // Counted refusals at 0, >=100 and >=200 ms later (retryBaseMs * 2 ** n).
+  expect(Date.now() - started).toBeGreaterThanOrEqual(300);
+  expect(errors.length).toBeGreaterThanOrEqual(2);
+});
+
+test('a single refusal between good snapshots keeps waiting', async () => {
+  const kingdom = stubKingdom(600_000, (read) =>
+    read % 3 === 2 ? new Response(null, { status: 401 }) : pendingCode(),
+  );
+  const root = await mkdtemp(join(tmpdir(), 'signet-blip-'));
+  const controller = new AbortController();
+  try {
+    const result = await outcome(
+      pair(kingdom.url, root, {
+        signal: controller.signal,
+        socketOptions: { pollMs: 60, retryBaseMs: 10 },
+      }),
+      1000,
+    );
+    expect(result).toBe('still waiting');
+  } finally {
+    controller.abort();
+    kingdom.stop();
+  }
+});
+
+test('reviewUrl must be http(s), since callers open it', () => {
+  const response = (reviewUrl: string) =>
+    requestRegistrationResponseSchema.safeParse({
+      reviewCode: 'ABCDEF123456',
+      expiresAt: new Date().toISOString(),
+      reviewUrl,
+    }).success;
+  expect(response('https://kingdom.example/dashboard?reviewSignet=X')).toBe(true);
+  expect(response('http://localhost:3200/dashboard?reviewSignet=X')).toBe(true);
+  expect(response('javascript:alert(1)')).toBe(false);
+  expect(response('file:///Applications/Calculator.app')).toBe(false);
+  expect(response('x-foo://bar')).toBe(false);
+});
+
+test("a Signet holder's Kingdom links must be http(s)", () => {
+  const holder = (manageUrl: string) =>
+    signetHolderSchema.safeParse({
+      integration: { id: integrationId, name: 'Studio Foundry', provider: 'foundry' },
+      owner: { ownerModel: 'User', name: 'Aron', organization: null, space: null, user: null },
+      issuedBy: null,
+      webUrl: 'https://kingdom.example',
+      manageUrl,
+    }).success;
+  expect(holder(`https://kingdom.example/dashboard?integration=${integrationId}`)).toBe(true);
+  expect(holder('javascript:alert(1)')).toBe(false);
+  expect(holder('file:///Applications/Calculator.app')).toBe(false);
 });

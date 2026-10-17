@@ -164,11 +164,13 @@ export const registerInstallationSchema = z
   });
 export const registerInstallationResponseSchema = z.object({ installationId: z.uuid() });
 export const requestRegistrationSchema = z.strictObject({ terms: registrationRequestSchema });
+/** A link into Kingdom's web app that callers open, so http(s) only. */
+const kingdomLinkSchema = z.url({ protocol: /^https?$/ });
 export const requestRegistrationResponseSchema = z.object({
   reviewCode: z.string(),
   expiresAt: z.iso.datetime(),
-  /** Where a person reviews the registration in Kingdom's web app; older Kingdoms omit it. */
-  reviewUrl: z.url().optional(),
+  /** Where a person reviews the registration in Kingdom's web app. */
+  reviewUrl: kingdomLinkSchema,
 });
 export const installationInquirySchema = z.object({
   id: z.uuid(),
@@ -228,6 +230,30 @@ export const signetDescriptionSchema = z.object({
   ),
 });
 export type SignetDescription = z.infer<typeof signetDescriptionSchema>;
+
+const holderPersonSchema = z.object({
+  id: z.uuid(),
+  name: z.string().nullable(),
+  email: z.string(),
+});
+/**
+ * `access/describe`'s `holder` for an Integration-held Signet (an Installation such as a Foundry):
+ * the integration, its owner, who issued the Signet, and where to manage it in Kingdom.
+ */
+export const signetHolderSchema = z.object({
+  integration: z.object({ id: z.uuid(), name: z.string(), provider: z.string().nullable() }),
+  owner: z.object({
+    ownerModel: ownerModelSchema,
+    name: z.string().nullable(),
+    organization: z.object({ id: z.uuid(), name: z.string(), slug: z.string() }).nullable(),
+    space: z.object({ id: z.uuid(), name: z.string() }).nullable(),
+    user: holderPersonSchema.nullable(),
+  }),
+  issuedBy: holderPersonSchema.nullable(),
+  webUrl: kingdomLinkSchema,
+  manageUrl: kingdomLinkSchema,
+});
+export type SignetHolder = z.infer<typeof signetHolderSchema>;
 
 /** Operation-specific fields; Kingdom validates each against the operation it names. */
 export const accessInputSchema = z.strictObject({
