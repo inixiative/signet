@@ -151,6 +151,8 @@ export async function pairInstallation(input: InstallationPairing) {
       let retry: ReturnType<typeof setTimeout> | undefined;
       let done = false;
       let claimed = false;
+      // Refusals that count toward revocation, each at least a backoff step after the last.
+      const refusals: number[] = [];
       // The review code's expiry until a claim creates the inquiry; then the inquiry's own.
       let waitUntil: string | null = pending.expiresAt;
       const onAbort = () => {
@@ -181,6 +183,7 @@ export async function pairInstallation(input: InstallationPairing) {
             : setTimeout(() => void check(until), delay);
       };
       const follow = (snapshot: Snapshot) => {
+        refusals.length = 0;
         const settled = settledInquiry(snapshot, earlier, baseline.declinedAt, claimed);
         if (settled) return finish(settled);
         const inquiry = newInquiry(snapshot, earlier);
@@ -188,11 +191,19 @@ export async function pairInstallation(input: InstallationPairing) {
         claimed = true;
         if (inquiry.expiresAt !== waitUntil) arm(inquiry.expiresAt);
       };
-      // Kingdom refuses a revoked installation's key; the revoke frame only reaches a live socket.
+      // Kingdom refuses a revoked installation's key (the revoke frame only reaches a live socket),
+      // but a 401 can also be a passing failure; only a refusal that persists ends the wait.
       const refused = (error: unknown) => {
-        if (error instanceof SignetHttpError && (error.status === 401 || error.status === 403))
-          finish(revoked());
-        else input.onError?.(error);
+        const refusal =
+          error instanceof SignetHttpError && (error.status === 401 || error.status === 403);
+        const last = refusals.at(-1);
+        if (
+          refusal &&
+          (last === undefined || Date.now() - last >= retryBaseMs * 2 ** refusals.length)
+        )
+          refusals.push(Date.now());
+        if (refusal && refusals.length >= refusalsToRevoke) return finish(revoked());
+        input.onError?.(error);
       };
       const check = async (until: string) => {
         let last: Snapshot | null = null;
@@ -252,6 +263,8 @@ export async function pairInstallation(input: InstallationPairing) {
 const maxTimerMs = 2 ** 31 - 1;
 /** Slack past an expiry (clock skew, a claim in its last second) before giving up. */
 const expiryGraceMs = 5_000;
+/** Consecutive refusals of this installation's key, a backoff step apart, that mean revoked. */
+const refusalsToRevoke = 3;
 /** Kingdom can still approve these. */
 const openStatuses = new Set(['sent', 'changesRequested']);
 

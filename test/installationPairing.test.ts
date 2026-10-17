@@ -12,7 +12,11 @@ import {
   readPrivateJson,
   signetCredentialFile,
 } from '../src';
-import { requestRegistrationResponseSchema, requestRegistrationSchema } from '../src/contracts';
+import {
+  requestRegistrationResponseSchema,
+  requestRegistrationSchema,
+  signetHolderSchema,
+} from '../src/contracts';
 
 const nonce = () => Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url');
 const owner = {
@@ -580,20 +584,47 @@ test('a claimed inquiry that vanishes (canceled) is reported as withdrawn', asyn
   }
 });
 
-test('Kingdom refusing the key while polling ends the wait as revoked', async () => {
+test('Kingdom refusing the key three times in a row, a backoff apart, ends the wait as revoked', async () => {
   const errors: unknown[] = [];
   const kingdom = stubKingdom(600_000, (read) =>
     read === 0 ? pendingCode() : new Response(null, { status: 401 }),
   );
   const root = await mkdtemp(join(tmpdir(), 'signet-refused-'));
+  const started = Date.now();
   try {
     await expect(
-      pair(kingdom.url, root, { onError: (error) => void errors.push(error) }),
+      pair(kingdom.url, root, {
+        onError: (error) => void errors.push(error),
+        socketOptions: { pollMs: 20, retryBaseMs: 50 },
+      }),
     ).rejects.toThrow('Kingdom revoked this installation');
   } finally {
     kingdom.stop();
   }
-  expect(errors).toEqual([]);
+  // Counted refusals at 0, >=100 and >=200 ms later (retryBaseMs * 2 ** n).
+  expect(Date.now() - started).toBeGreaterThanOrEqual(300);
+  expect(errors.length).toBeGreaterThanOrEqual(2);
+});
+
+test('a single refusal between good snapshots keeps waiting', async () => {
+  const kingdom = stubKingdom(600_000, (read) =>
+    read % 3 === 2 ? new Response(null, { status: 401 }) : pendingCode(),
+  );
+  const root = await mkdtemp(join(tmpdir(), 'signet-blip-'));
+  const controller = new AbortController();
+  try {
+    const result = await outcome(
+      pair(kingdom.url, root, {
+        signal: controller.signal,
+        socketOptions: { pollMs: 60, retryBaseMs: 10 },
+      }),
+      1000,
+    );
+    expect(result).toBe('still waiting');
+  } finally {
+    controller.abort();
+    kingdom.stop();
+  }
 });
 
 test('reviewUrl must be http(s), since callers open it', () => {
@@ -608,4 +639,18 @@ test('reviewUrl must be http(s), since callers open it', () => {
   expect(response('javascript:alert(1)')).toBe(false);
   expect(response('file:///Applications/Calculator.app')).toBe(false);
   expect(response('x-foo://bar')).toBe(false);
+});
+
+test("a Signet holder's Kingdom links must be http(s)", () => {
+  const holder = (manageUrl: string) =>
+    signetHolderSchema.safeParse({
+      integration: { id: integrationId, name: 'Studio Foundry', provider: 'foundry' },
+      owner: { ownerModel: 'User', name: 'Aron', organization: null, space: null, user: null },
+      issuedBy: null,
+      webUrl: 'https://kingdom.example',
+      manageUrl,
+    }).success;
+  expect(holder(`https://kingdom.example/dashboard?integration=${integrationId}`)).toBe(true);
+  expect(holder('javascript:alert(1)')).toBe(false);
+  expect(holder('file:///Applications/Calculator.app')).toBe(false);
 });
