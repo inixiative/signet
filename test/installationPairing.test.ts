@@ -103,7 +103,7 @@ beforeAll(() => {
               : [],
           });
         case 'installationSignets':
-          return data({ signets: [] });
+          return data({ signets: [], hostedSignets: [] });
         case 'collectSignet':
           return data(collected(signetId));
         case 'enrollInstallationSignet':
@@ -226,7 +226,7 @@ test('treats a Kingdom that never answers the socket proof as down and polls ins
       if (action === 'nonce') return Response.json({ data: { nonce: nonce() } });
       if (action === 'installationInquiries')
         return Response.json({ data: { pending: null, declinedAt: null, inquiries: [] } });
-      return Response.json({ data: { signets: [] } });
+      return Response.json({ data: { signets: [], hostedSignets: [] } });
     },
     websocket: {
       open(ws) {
@@ -346,7 +346,7 @@ const stubKingdom = (codeMs: number, inquiries: (read: number) => Response | obj
         const answer = inquiries(reads++);
         return answer instanceof Response ? answer : data(answer);
       }
-      if (action === 'installationSignets') return data({ signets: [] });
+      if (action === 'installationSignets') return data({ signets: [], hostedSignets: [] });
       if (action === 'collectSignet') return data(collected(signetId));
       return new Response(null, { status: 404 });
     },
@@ -579,6 +579,33 @@ test('a claimed inquiry that vanishes (canceled) is reported as withdrawn', asyn
     await expect(pair(kingdom.url, root, {})).rejects.toThrow(
       'The registration was withdrawn in Kingdom',
     );
+  } finally {
+    kingdom.stop();
+  }
+});
+
+test('a claimed inquiry this package cannot read keeps the wait, then collects (review M2)', async () => {
+  const id = crypto.randomUUID();
+  const started = Date.now();
+  const errors: unknown[] = [];
+  const kingdom = stubKingdom(600_000, (read) => {
+    if (read === 0) return { pending: null, declinedAt: null, inquiries: [] };
+    const elapsed = Date.now() - started;
+    // A status from a newer Kingdom: unreadable, so dropped, but not withdrawn.
+    if (elapsed < 300)
+      return {
+        pending: null,
+        declinedAt: null,
+        inquiries: [{ ...sentInquiry(id, 'sent', week()), status: 'escalated' }],
+      };
+    return { pending: null, declinedAt: null, inquiries: [sentInquiry(id, 'approved', null)] };
+  });
+  const root = await mkdtemp(join(tmpdir(), 'signet-unread-'));
+  try {
+    expect(
+      (await pair(kingdom.url, root, { onError: (error) => void errors.push(error) })).signetId,
+    ).toBe(signetId);
+    expect(errors.some((error) => String(error).includes('Could not read'))).toBe(true);
   } finally {
     kingdom.stop();
   }

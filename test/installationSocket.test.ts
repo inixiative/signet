@@ -19,6 +19,7 @@ const signet = {
   integrationId: crypto.randomUUID(),
   name: 'Studio Foundry',
   enrollmentId: null,
+  resources: [],
   owner: {
     ownerModel: 'User' as const,
     userId: crypto.randomUUID(),
@@ -26,7 +27,7 @@ const signet = {
     spaceId: null,
   },
 };
-const empty = { pending: null, declinedAt: null, inquiries: [] };
+const empty = { pending: null, declinedAt: null, inquiries: [], hostedSignetRequests: [] };
 const frames: Record<string, unknown>[] = [];
 const sockets = new Set<ServerWebSocket<unknown>>();
 const polls: string[] = [];
@@ -57,7 +58,7 @@ beforeAll(async () => {
       if (action === 'nonce') return Response.json({ data: { nonce: nonce() } });
       polls.push(action);
       if (action === 'installationInquiries') return Response.json({ data: empty });
-      return Response.json({ data: { signets: [] } });
+      return Response.json({ data: { signets: [], hostedSignets: [] } });
     },
     websocket: {
       open(ws) {
@@ -76,7 +77,14 @@ beforeAll(async () => {
         });
         expect(proof.keyThumbprint).toBe(thumbprint);
         ws.send(JSON.stringify({ type: 'installation', installationId: crypto.randomUUID() }));
-        ws.send(JSON.stringify({ type: 'installation.snapshot', ...empty, signets: [signet] }));
+        ws.send(
+          JSON.stringify({
+            type: 'installation.snapshot',
+            ...empty,
+            signets: [signet],
+            hostedSignets: [],
+          }),
+        );
       },
       close(ws) {
         sockets.delete(ws);

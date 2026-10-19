@@ -7,10 +7,11 @@ import {
   accessTokenPattern,
   collectedSignetSchema,
   type InstallationKind,
-  installationInquiriesResponseSchema,
-  installationSignetsResponseSchema,
   nonceSchema,
   ownerRefSchema,
+  parseInstallationInquiries,
+  parseInstallationSignets,
+  parseSignetDescription,
   publicClientKeySchema,
   type RegistrationRequest,
   registerInstallationResponseSchema,
@@ -19,11 +20,11 @@ import {
   type SignetRequestResponse,
   setInstallationCredentialResponseSchema,
   signetCredentialsSchema,
-  signetDescriptionSchema,
   signetKeySchema,
   signetLifecycleSchema,
   signetProposalSchema,
   signetRequestResponseSchema,
+  signetSocketAction,
 } from './contracts';
 import { readPrivateJson, writePrivateJson } from './files';
 import { createSignetProof, keyThumbprint } from './proof';
@@ -224,7 +225,7 @@ async function keyPost<T>(
   keyFile: string,
   action: string,
   body: unknown,
-  schema: z.ZodType<T>,
+  schema: z.ZodType<T, unknown>,
   options: SignetRequestOptions = {},
   headers: Record<string, string> = {},
 ): Promise<T> {
@@ -274,13 +275,23 @@ export const requestRegistration = (
     options,
   );
 
-/** This installation's pending request and its inquiries. */
+/**
+ * This installation's pending request, its inquiries, and the join requests aimed at its
+ * integrations. Read per entry: an entry this package can't read is dropped and listed in `dropped`.
+ */
 export const installationInquiries = (
   url: string,
   keyFile: string,
   options: SignetRequestOptions = {},
 ) =>
-  keyPost(url, keyFile, 'installationInquiries', {}, installationInquiriesResponseSchema, options);
+  keyPost(
+    url,
+    keyFile,
+    'installationInquiries',
+    {},
+    z.unknown().transform((value) => parseInstallationInquiries(value)),
+    options,
+  );
 
 export const cancelInstallationInquiry = (
   url: string,
@@ -396,12 +407,23 @@ export const enrollSignet = async (
   signetId: enrollment.signetId,
 });
 
-/** The Signets held by this installation's integrations. */
+/**
+ * The Signets held by this installation's integrations, and those issued on them (`hostedSignets`).
+ * Read per entry: a Signet whose lens this package can't read is dropped and listed in `dropped`.
+ */
 export const installationSignets = (
   url: string,
   keyFile: string,
   options: SignetRequestOptions = {},
-) => keyPost(url, keyFile, 'installationSignets', {}, installationSignetsResponseSchema, options);
+) =>
+  keyPost(
+    url,
+    keyFile,
+    'installationSignets',
+    {},
+    z.unknown().transform((value) => parseInstallationSignets(value)),
+    options,
+  );
 
 /** Enroll this installation's key on a Signet one of its integrations holds. */
 export const enrollInstallationSignet = (
@@ -498,7 +520,7 @@ export class SignetClient {
   constructor(
     readonly url: string,
     private credentialFile: string,
-    private signetId: string,
+    readonly signetId: string,
   ) {
     this.url = kingdomUrl(url);
   }
@@ -588,10 +610,28 @@ export class SignetClient {
       { signal, timeoutMs: options.timeoutMs },
     );
   }
+  /** Read per entry: a resource whose lens this package can't read is dropped, listed in `dropped`. */
   async describe(options: SignetRequestOptions = {}) {
-    return signetDescriptionSchema.parse(
+    return parseSignetDescription(
       await this.post('describe', { signetId: this.signetId }, undefined, options),
     );
+  }
+  /**
+   * The access token and a proof bound to the Signet socket, for `authenticateSignet` (or, with
+   * `renew`, a freshly renewed token for `renewPresentation`). Each proof spends one Kingdom nonce.
+   */
+  async socketPresentation(options: SignetRequestOptions & { renew?: boolean } = {}) {
+    const signal = requestSignal(options);
+    const credential = await this.credentials(options.renew ?? false, signal);
+    signal.throwIfAborted();
+    const proof = await signetProof(
+      this.url,
+      signetSocketAction,
+      credential.keyFile,
+      credential.accessToken,
+      { signal, timeoutMs: options.timeoutMs },
+    );
+    return { accessToken: credential.accessToken, proof, expiresAt: credential.expiresAt };
   }
   /** Run one integration operation through the Signet; every call is a new request id. */
   async execute(
