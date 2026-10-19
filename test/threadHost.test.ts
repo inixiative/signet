@@ -250,6 +250,36 @@ test('subscribe is atomic: entries written while the snapshot is taken follow it
   expect(threadAppendFrameSchema.parse(received[4])).toMatchObject({ seq: 5, journalSeq: 10 });
 });
 
+test('entries overflowing a slow subscribe end it, and the subscribe is refused, not answered', async () => {
+  let release: () => void = () => {};
+  const subscribed = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const ended: string[] = [];
+  const live = await connect(
+    host({
+      'thread.subscribe': async () => {
+        await subscribed;
+        return threadResult({ journalSeq: 0, entries: [], truncated: false });
+      },
+      ended: (_subscription, reason) => void ended.push(reason),
+    }),
+  );
+  const frame = relayed();
+  sendHost({ type: 'thread.subscribe', ...frame, threadId: T1 });
+  await waitFor(() => live.threadSubscriptions().length === 1);
+  for (let seq = 1; seq <= 1000; seq++) live.appendThread(frame.requestId, entry(seq));
+  expect(live.appendThread(frame.requestId, entry(1001))).toBe(false);
+  expect(ended).toEqual(['overflow']);
+  release();
+  expect((await responseTo(frame.requestId)).outcome).toMatchObject({
+    ok: false,
+    refusal: 'failed',
+  });
+  await Bun.sleep(20);
+  expect(received.filter((sent) => sent.action === 'thread.append')).toEqual([]);
+});
+
 test('a refused subscribe leaves no subscription', async () => {
   const live = await connect(host({ 'thread.subscribe': () => threadRefused('unknown_thread') }));
   const frame = relayed();

@@ -505,11 +505,11 @@ function parseSignetsWithGrants<S extends z.ZodObject<{ resources: typeof grants
 ): z.infer<S>[] {
   const identity = schema.omit({ resources: true }).extend({ resources: z.unknown().optional() });
   return parseEntries(list, value, identity, dropped).map(
-    (entry, index) =>
+    (entry) =>
       ({
         ...entry,
         resources: parseEntries(
-          `${list}.${index}.resources`,
+          `${list}.${entryId(entry)}.resources`,
           entry.resources,
           signetGrantSchema,
           dropped,

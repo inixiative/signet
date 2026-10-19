@@ -92,8 +92,8 @@ describe('per-entry snapshot parsing (review U1)', () => {
     expect(snapshot.hostedSignetRequests).toHaveLength(1);
     expect(snapshot.dropped.map(({ list, index }) => ({ list, index }))).toEqual([
       { list: 'hostedSignetRequests', index: 1 },
-      { list: 'signets.1.resources', index: 0 },
-      { list: 'hostedSignets.1.resources', index: 0 },
+      { list: `signets.${misfit.signetId}.resources`, index: 0 },
+      { list: `hostedSignets.${standing.signetId}.resources`, index: 0 },
     ]);
     expect(snapshot.dropped[1]?.reason).toContain('another shape');
   });

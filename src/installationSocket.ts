@@ -39,7 +39,7 @@ export type ThreadSubscription = {
   member: ThreadSubscribeFrame['member'];
   lens: ThreadsLens;
 };
-/** `overflow`: too many entries arrived while the snapshot was taken; the member resyncs. */
+/** `overflow`: too many entries arrived while the snapshot was taken; the subscribe is refused and retried. */
 export type ThreadSubscriptionEnd = 'unsubscribed' | 'lease' | 'disconnected' | 'overflow';
 
 /**
@@ -431,8 +431,18 @@ export class InstallationSocket {
       this.options.onError?.(error);
       outcome = threadRefused('failed');
     }
+    // Ended while the view was taken (overflow, unsubscribe, lease): a view no subscription will
+    // follow would freeze the member, so refuse and let Kingdom's open fail and be retried.
+    if (this.subscriptions.get(subscription.subscriptionId) !== subscription) {
+      this.refuse(
+        socket,
+        frame.requestId,
+        'failed',
+        'The subscription ended while its view was taken',
+      );
+      return;
+    }
     const answered = this.respond(socket, frame.requestId, 'thread.subscribe', outcome);
-    if (this.subscriptions.get(subscription.subscriptionId) !== subscription) return;
     if (!answered || !outcome.ok) {
       this.subscriptions.delete(subscription.subscriptionId);
       return;
