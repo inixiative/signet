@@ -85,7 +85,7 @@ beforeAll(() => {
         }
         if (action === 'installationInquiries') {
           await verify(request, action);
-          return ok({ pending: null, declinedAt: null, inquiries: [] });
+          return ok({ pending: null, declinedAt: null, inquiries: [], hostedSignetRequests: [] });
         }
         if (action === 'collectSignet') {
           await verify(request, action);
@@ -188,6 +188,8 @@ describe('pairing and presentation', () => {
       pending: null,
       declinedAt: null,
       inquiries: [],
+      hostedSignetRequests: [],
+      dropped: [],
     });
     expect(await collectSignet(url, keyFile, inquiryId)).toBeNull();
     approved = true;

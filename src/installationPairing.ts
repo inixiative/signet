@@ -13,9 +13,14 @@ import {
   saveCollectedSignet,
   signetCredentialSchema,
 } from './client';
-import type { InstallationKind, OwnerRef, RegistrationRequest } from './contracts';
+import type {
+  InstallationKind,
+  InstallationSnapshot,
+  OwnerRef,
+  RegistrationRequest,
+} from './contracts';
 import { readPrivateJson, writePrivateJson } from './files';
-import { type InstallationSnapshot, InstallationSocket } from './installationSocket';
+import { InstallationSocket } from './installationSocket';
 
 /** Where an installation keeps what it holds for one Kingdom: its key and one file per Signet. */
 export async function installationDirectory(root: string, url: string) {
@@ -79,7 +84,10 @@ export async function holdInstallationSignets(
   url: string,
   keyFile: string,
   directory: string,
-  signets: InstallationSnapshot['signets'],
+  signets: Pick<
+    InstallationSnapshot['signets'][number],
+    'signetId' | 'integrationId' | 'owner' | 'enrollmentId'
+  >[],
 ): Promise<HeldSignet[]> {
   return withHoldLock(directory, async () => {
     const held: HeldSignet[] = [];

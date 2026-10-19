@@ -6,7 +6,7 @@ A **Signet** is Kingdom's only grant for using an integration. It names the reso
 
 This package is the one implementation of that protocol, shared by Kingdom (which verifies) and Archive, Foundry and Oracle (which present):
 
-- `contracts`: the wire schemas: keys, lenses, proposals, pairing requests, delivered credentials, `describe` and `execute`.
+- `contracts`: the wire schemas: keys, lenses, proposals, pairing requests, delivered credentials, `describe` and `execute`, and the conversation frames.
 - `proof`: create and verify DPoP proofs (ES256, nonce-bound, access-token-bound).
 - `files`: private 0600 JSON files for keys and credentials.
 - `client`:
@@ -55,6 +55,35 @@ const collected = await awaitSignet(kingdom, keyFile, requestId); // or, for a g
 await saveCollectedSignet(credentialFile, kingdom, keyFile, collected);
 const signet = await SignetClient.fromFile(credentialFile);
 await signet.describe();
+```
+
+## Agent conversations
+
+A conversation wraps a host Foundry's main thread (Kingdom `docs/AGENT-CONVERSATIONS.md`, Foundry `docs/reference/CONVERSATIONS.md`). A member is a Signet on the host Foundry's one `threads` resource; Kingdom admits each call and relays it over the host's Installation socket, and stores no conversation or message.
+
+- **Lens.** `signetLensSchema` is a union of strict shapes, `archiveLensSchema | threadsLensSchema`, because a resource grant names its resource by id with no kind. `resourceLensSchema(kind)` gives the shape a kind takes; Kingdom checks every grant with it against the kind it stores. A threads lens is `{ threads, view: 'own' | 'thread', delivery: 'note' | 'turn', outbound: 'review' | 'auto' }`, the terms defaulting to the narrowest value. `threads` is a selector, a union on `form`: v1 builds `{ form: 'ids', ids }` (1–100 thread ids); `withMember` and `tag` are named for standing Signets and fail to parse everywhere until a release adds them, so a new form never widens access silently. `narrowsSignetLens` is the rule for approving someone else's request: a subset of ids, `own` < `thread`, `note` < `turn`, `review` < `auto`.
+- **Join requests** may name a resource by kind: `requestSignet` takes `{ resourceKind: 'threads', operations, lens }`, and Kingdom resolves it before review.
+- **Per-entry reads.** `installationInquiries`, `installationSignets`, the socket snapshot and `describe` read each entry on its own. An entry this package can't read (a selector form from a newer Kingdom, a lens that doesn't fit its resource's kind) is dropped and listed in `dropped`; the rest, the installation's own held Signets included, are kept. The snapshot carries `hostedSignets` (members of this Foundry's conversations) and `hostedSignetRequests` (join requests aimed at its integrations); held Signets carry their `resources`.
+- **Host.** `InstallationSocket` takes `threads`, one handler per operation (`thread.read`, `thread.prompt`, `thread.floor`, `prompt.resolve`, `thread.subscribe`), answering `threadResult(...)` or `threadRefused(code)`. A frame with an unknown selector is refused `unknown_selector` before any handler runs. `thread.subscribe` answers with the member's view and the `journalSeq` it was taken at, and the subscription starts there: `appendThread(subscriptionId, { journalSeq, entry })` holds entries pushed meanwhile and never sends one twice. A subscription ends on `thread.unsubscribe`, when Kingdom stops re-asserting its lease (`thread.lease`, 90 s), or when the socket drops.
+- **Member.** An outside agent holds its live views with `SignetSocket`: it authenticates as its Signet's presentation (`authenticateSignet`, a proof bound to `POST /api/v1/access/signetSocket` with `ath`), renews it before the five-minute token expires (`renewPresentation`), and opens one `accessThread` stream per thread: a snapshot, then appends, with Kingdom's `seq`/`resync` rules. Kingdom closes a stream on leave, revocation, any revision, expiry or the host going offline, with the reason. Posts are separate `execute` calls (`thread.prompt`), each admitted and metered. A Foundry holding a conversation Signet opens the same streams over its Installation socket (`threadStreams`, `openThread`).
+
+```ts
+import { SignetClient, SignetSocket } from '@inixiative/signet';
+
+const signet = await SignetClient.fromFile(credentialFile);
+const socket = new SignetSocket({
+  client: signet,
+  onSnapshot: ({ threadId }, view) => show(threadId, view.entries),
+  onEntry: ({ threadId }, entry) => append(threadId, entry),
+  onClosed: ({ threadId }, reason) => console.log(`left ${threadId}: ${reason}`),
+});
+socket.open(threadId);
+socket.start();
+await signet.execute({
+  integrationId,
+  operation: 'thread.prompt',
+  input: { resourceId, threadId, postId: crypto.randomUUID(), text: 'The role you wanted opened' },
+});
 ```
 
 Kingdom's OpenAPI spec (`/openapi/docs`) publishes each step's raw HTTP call and credentials.

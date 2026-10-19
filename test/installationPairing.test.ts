@@ -103,7 +103,7 @@ beforeAll(() => {
               : [],
           });
         case 'installationSignets':
-          return data({ signets: [] });
+          return data({ signets: [], hostedSignets: [] });
         case 'collectSignet':
           return data(collected(signetId));
         case 'enrollInstallationSignet':
@@ -226,7 +226,7 @@ test('treats a Kingdom that never answers the socket proof as down and polls ins
       if (action === 'nonce') return Response.json({ data: { nonce: nonce() } });
       if (action === 'installationInquiries')
         return Response.json({ data: { pending: null, declinedAt: null, inquiries: [] } });
-      return Response.json({ data: { signets: [] } });
+      return Response.json({ data: { signets: [], hostedSignets: [] } });
     },
     websocket: {
       open(ws) {
@@ -346,7 +346,7 @@ const stubKingdom = (codeMs: number, inquiries: (read: number) => Response | obj
         const answer = inquiries(reads++);
         return answer instanceof Response ? answer : data(answer);
       }
-      if (action === 'installationSignets') return data({ signets: [] });
+      if (action === 'installationSignets') return data({ signets: [], hostedSignets: [] });
       if (action === 'collectSignet') return data(collected(signetId));
       return new Response(null, { status: 404 });
     },
