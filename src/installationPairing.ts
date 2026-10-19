@@ -192,6 +192,9 @@ export async function pairInstallation(input: InstallationPairing) {
       };
       const follow = (snapshot: Snapshot) => {
         refusals.length = 0;
+        const unread = snapshot.dropped.filter((drop) => drop.list === 'inquiries');
+        if (unread.length)
+          input.onError?.(Error(`Could not read ${unread.length} inquiries from Kingdom`));
         const settled = settledInquiry(snapshot, earlier, baseline.declinedAt, claimed);
         if (settled) return finish(settled);
         const inquiry = newInquiry(snapshot, earlier);
@@ -276,7 +279,7 @@ const refusalsToRevoke = 3;
 /** Kingdom can still approve these. */
 const openStatuses = new Set(['sent', 'changesRequested']);
 
-type Snapshot = Pick<InstallationSnapshot, 'pending' | 'declinedAt' | 'inquiries'>;
+type Snapshot = Pick<InstallationSnapshot, 'pending' | 'declinedAt' | 'inquiries' | 'dropped'>;
 
 const expired = () => Error('The review code expired before it was claimed; pair again');
 const revoked = () => Error('Kingdom revoked this installation');
@@ -300,6 +303,8 @@ const settledInquiry = (
   if (inquiry?.status === 'approved') return inquiry;
   if (inquiry && !openStatuses.has(inquiry.status))
     return Error(`The registration was ${inquiry.status} in Kingdom`);
+  // An inquiry this package couldn't read is not a withdrawn or expired one: keep waiting.
+  if (!inquiry && snapshot.dropped.some((drop) => drop.list === 'inquiries')) return null;
   // A canceled inquiry is soft-deleted, so it drops out of the snapshot.
   if (!inquiry && claimed) return withdrawn();
   if (!inquiry && !snapshot.pending) return expired();

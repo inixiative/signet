@@ -78,18 +78,22 @@ const ahead = {
 };
 
 describe('per-entry snapshot parsing (review U1)', () => {
-  test('one unknown selector form drops only its entry', () => {
+  test('one unknown selector form drops only its resource; every Signet is kept', () => {
     const snapshot = parseInstallationSnapshot(ahead);
-    expect(snapshot.signets.map((signet) => signet.signetId)).toEqual([ownHeld.signetId]);
-    expect(snapshot.hostedSignets.map((signet) => signet.signetId)).toEqual([member.signetId]);
+    const ids = (list: { signetId: string }[]) => list.map((signet) => signet.signetId);
+    expect(ids(snapshot.signets)).toEqual([ownHeld.signetId, misfit.signetId]);
+    expect(snapshot.signets[1]?.resources).toEqual([]);
+    // A member whose grant this package can't read is still a member: never mistaken for revoked.
+    expect(ids(snapshot.hostedSignets)).toEqual([member.signetId, standing.signetId]);
     expect(snapshot.hostedSignets[0]?.resources[0]?.lens).toMatchObject({
       threads: { form: 'ids', ids: [T1] },
     });
+    expect(snapshot.hostedSignets[1]?.resources).toEqual([]);
     expect(snapshot.hostedSignetRequests).toHaveLength(1);
-    expect(snapshot.dropped.map(({ list, index, id }) => ({ list, index, id }))).toEqual([
-      { list: 'hostedSignetRequests', index: 1, id: ahead.hostedSignetRequests[1]!.id },
-      { list: 'signets', index: 1, id: misfit.signetId },
-      { list: 'hostedSignets', index: 1, id: standing.signetId },
+    expect(snapshot.dropped.map(({ list, index }) => ({ list, index }))).toEqual([
+      { list: 'hostedSignetRequests', index: 1 },
+      { list: 'signets.1.resources', index: 0 },
+      { list: 'hostedSignets.1.resources', index: 0 },
     ]);
     expect(snapshot.dropped[1]?.reason).toContain('another shape');
   });
@@ -97,11 +101,18 @@ describe('per-entry snapshot parsing (review U1)', () => {
   test('a missing list reads as empty and is reported, never failing the rest', () => {
     const { hostedSignets: _gone, ...older } = ahead;
     const snapshot = parseInstallationSnapshot(older);
-    expect(snapshot.signets).toHaveLength(1);
+    expect(snapshot.signets).toHaveLength(2);
     expect(snapshot.hostedSignets).toEqual([]);
     expect(
       snapshot.dropped.some((drop) => drop.list === 'hostedSignets' && drop.index === -1),
     ).toBe(true);
+  });
+
+  test('a Signet listed without resources (a Kingdom before 0.5.0) is kept', () => {
+    const { resources: _none, ...bare } = ownHeld;
+    const snapshot = parseInstallationSnapshot({ ...ahead, signets: [bare] });
+    expect(snapshot.signets.map((signet) => signet.signetId)).toEqual([ownHeld.signetId]);
+    expect(snapshot.signets[0]?.resources).toEqual([]);
   });
 
   test('describe drops a resource whose lens it cannot read, and keeps the rest', () => {
@@ -190,8 +201,14 @@ describe('an older client meets a snapshot ahead of it (design test 23)', () => 
       if (Date.now() - start > 3000) throw Error('no snapshot');
     socket.close();
     expect(errors).toEqual([]);
-    expect(snapshots[0]?.signets.map((signet) => signet.signetId)).toEqual([ownHeld.signetId]);
-    expect(snapshots[0]?.hostedSignets.map((signet) => signet.signetId)).toEqual([member.signetId]);
+    expect(snapshots[0]?.signets.map((signet) => signet.signetId)).toEqual([
+      ownHeld.signetId,
+      misfit.signetId,
+    ]);
+    expect(snapshots[0]?.hostedSignets.map((signet) => signet.signetId)).toEqual([
+      member.signetId,
+      standing.signetId,
+    ]);
     expect(snapshots[0]?.dropped).toHaveLength(3);
   });
 });

@@ -39,7 +39,8 @@ export type ThreadSubscription = {
   member: ThreadSubscribeFrame['member'];
   lens: ThreadsLens;
 };
-export type ThreadSubscriptionEnd = 'unsubscribed' | 'lease' | 'disconnected';
+/** `overflow`: too many entries arrived while the snapshot was taken; the member resyncs. */
+export type ThreadSubscriptionEnd = 'unsubscribed' | 'lease' | 'disconnected' | 'overflow';
 
 /**
  * A host Foundry's side of agent conversations: one handler per operation, typed by what Kingdom
@@ -94,10 +95,16 @@ const frameSchema = z.object({ type: z.string() }).loose();
 
 type HeldSubscription = ThreadSubscription & {
   leaseUntil: number;
-  /** The last `journalSeq` sent; null while the snapshot is being taken. */
+  /** The last `journalSeq` covered (the snapshot's, then each append's); null while it is taken. */
   sentSeq: number | null;
-  held: { journalSeq: number; entry: ThreadEntry }[];
+  /** The last append's dense `seq` (0 = the snapshot). */
+  seq: number;
+  held: ThreadEntry[];
 };
+/** Entries held while one snapshot is taken; past this the subscription ends (Kingdom resyncs). */
+const maxHeldEntries = 1_000;
+/** WebSocket.OPEN, read from the spec rather than whichever WebSocket class was passed. */
+const OPEN = 1;
 
 /** An unknown selector form (or a `within`, which no v1 form fills) is refused as `unknown_selector`. */
 const unknownSelector = (frame: Record<string, unknown>) => {
@@ -136,7 +143,9 @@ export class InstallationSocket {
   constructor(private readonly options: InstallationSocketOptions) {
     this.viewerUrl = options.viewerUrl ?? null;
     this.streams = options.threadStreams
-      ? new ThreadStreams((frame) => this.send(frame), options.threadStreams, options.retryBaseMs)
+      ? new ThreadStreams((frame) => this.send(frame), options.threadStreams, {
+          retryBaseMs: options.retryBaseMs,
+        })
       : null;
   }
 
@@ -174,36 +183,44 @@ export class InstallationSocket {
   /** The members' views this host is pushing now. */
   threadSubscriptions(): ThreadSubscription[] {
     return [...this.subscriptions.values()].map(
-      ({ leaseUntil: _lease, sentSeq: _sent, held: _held, ...subscription }) => subscription,
+      ({ leaseUntil: _lease, sentSeq: _sent, seq: _seq, held: _held, ...subscription }) =>
+        subscription,
     );
   }
 
   /**
    * Push one journal entry to one subscription, already filtered to that member's view. Entries at
-   * or below what was sent are skipped; while the snapshot is being taken they are held. False when
-   * the subscription is gone or the entry doesn't fit the contract.
+   * or below what was covered are skipped; while the snapshot is being taken they are held. An
+   * entry that breaks the contract still spends its `seq`, so Kingdom sees the gap and the member
+   * resyncs rather than silently missing it. False when the subscription is gone.
    */
-  appendThread(subscriptionId: string, append: { journalSeq: number; entry: ThreadEntry }) {
+  appendThread(subscriptionId: string, entry: ThreadEntry) {
     const subscription = this.subscriptions.get(subscriptionId);
     if (!subscription) return false;
     if (subscription.sentSeq === null) {
-      subscription.held.push(append);
+      if (subscription.held.length >= maxHeldEntries) {
+        this.endSubscription(subscriptionId, 'overflow');
+        return false;
+      }
+      subscription.held.push(entry);
       return true;
     }
-    if (append.journalSeq <= subscription.sentSeq) return true;
+    if (entry.journalSeq <= subscription.sentSeq) return true;
+    subscription.sentSeq = entry.journalSeq;
+    subscription.seq += 1;
     const frame = threadAppendFrameSchema.safeParse({
       action: 'thread.append',
       subscriptionId,
       signetId: subscription.signetId,
       threadId: subscription.threadId,
-      journalSeq: append.journalSeq,
-      entry: append.entry,
+      seq: subscription.seq,
+      journalSeq: entry.journalSeq,
+      entry,
     } satisfies ThreadAppendFrame);
     if (!frame.success) {
       this.options.onError?.(frame.error);
-      return false;
+      return true;
     }
-    subscription.sentSeq = append.journalSeq;
     this.send(frame.data);
     return true;
   }
@@ -237,7 +254,7 @@ export class InstallationSocket {
       return;
     }
     if (socket !== this.socket || typeof json !== 'object' || json === null) return;
-    if (this.streams && (await this.streams.receive(json as Record<string, unknown>))) return;
+    if (this.streams?.receive(json as Record<string, unknown>)) return;
     const parsed = frameSchema.safeParse(json);
     if (!parsed.success) return;
     const frame = parsed.data;
@@ -266,7 +283,7 @@ export class InstallationSocket {
           );
           this.leaseTimer ??= setInterval(
             () => this.expireLeases(),
-            Math.min(this.leaseMs() / 3, 15_000),
+            Math.min(this.leaseMs() / 3, 5_000),
           );
           if (this.viewerUrl) this.send({ action: 'advertise', viewerUrl: this.viewerUrl });
           this.streams?.up();
@@ -288,29 +305,41 @@ export class InstallationSocket {
           this.options.onError?.(Error(`Kingdom refused viewer URL ${this.viewerUrl}`));
           return;
         case 'thread.request':
-          await this.threadRequest(socket, frame);
-          return;
         case 'thread.subscribe':
-          await this.threadSubscribe(socket, frame);
+        case 'thread.unsubscribe':
+        case 'thread.lease':
+          // Only an authenticated Installation socket carries conversation frames.
+          if (this.authenticated) await this.threadFrame(socket, frame);
           return;
-        case 'thread.unsubscribe': {
-          const { subscriptionId } = threadUnsubscribeFrameSchema.parse(frame);
-          this.endSubscription(subscriptionId, 'unsubscribed');
-          return;
-        }
-        case 'thread.lease': {
-          const { subscriptionIds } = threadLeaseFrameSchema.parse(frame);
-          const leaseUntil = Date.now() + this.leaseMs();
-          for (const id of subscriptionIds) {
-            const subscription = this.subscriptions.get(id);
-            if (subscription) subscription.leaseUntil = leaseUntil;
-          }
-          return;
-        }
       }
     } catch (error) {
       this.options.onError?.(error);
       if (frame.type === 'connected') socket.close();
+    }
+  }
+
+  private async threadFrame(socket: WebSocket, frame: Record<string, unknown>) {
+    switch (frame.type) {
+      case 'thread.request':
+        await this.threadRequest(socket, frame);
+        return;
+      case 'thread.subscribe':
+        await this.threadSubscribe(socket, frame);
+        return;
+      case 'thread.unsubscribe': {
+        const { subscriptionId } = threadUnsubscribeFrameSchema.parse(frame);
+        this.endSubscription(subscriptionId, 'unsubscribed');
+        return;
+      }
+      case 'thread.lease': {
+        const { subscriptionIds } = threadLeaseFrameSchema.parse(frame);
+        const leaseUntil = Date.now() + this.leaseMs();
+        for (const id of subscriptionIds) {
+          const subscription = this.subscriptions.get(id);
+          if (subscription) subscription.leaseUntil = leaseUntil;
+        }
+        return;
+      }
     }
   }
 
@@ -390,6 +419,7 @@ export class InstallationSocket {
       lens: frame.lens,
       leaseUntil: Date.now() + this.leaseMs(),
       sentSeq: null,
+      seq: 0,
       held: [],
     };
     // Registered before the snapshot is taken, so nothing written meanwhile is lost (review V3).
@@ -410,7 +440,7 @@ export class InstallationSocket {
     subscription.sentSeq = outcome.result.journalSeq;
     const held = subscription.held.sort((a, b) => a.journalSeq - b.journalSeq);
     subscription.held = [];
-    for (const append of held) this.appendThread(subscription.subscriptionId, append);
+    for (const entry of held) this.appendThread(subscription.subscriptionId, entry);
   }
 
   /** Answers a request; false (after answering `failed`) when the handler's outcome breaks the contract. */
@@ -457,7 +487,7 @@ export class InstallationSocket {
     const subscription = this.subscriptions.get(subscriptionId);
     if (!subscription) return;
     this.subscriptions.delete(subscriptionId);
-    const { leaseUntil: _lease, sentSeq: _sent, held: _held, ...ended } = subscription;
+    const { leaseUntil: _lease, sentSeq: _sent, seq: _seq, held: _held, ...ended } = subscription;
     this.options.threads?.ended?.(ended, reason);
   }
 
@@ -470,8 +500,7 @@ export class InstallationSocket {
   }
 
   private sendOn(socket: WebSocket, frame: Record<string, unknown>) {
-    if (socket === this.socket && socket.readyState === WebSocket.OPEN)
-      socket.send(JSON.stringify(frame));
+    if (socket === this.socket && socket.readyState === OPEN) socket.send(JSON.stringify(frame));
   }
 
   private disconnected(socket: WebSocket) {

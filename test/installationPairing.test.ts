@@ -584,6 +584,33 @@ test('a claimed inquiry that vanishes (canceled) is reported as withdrawn', asyn
   }
 });
 
+test('a claimed inquiry this package cannot read keeps the wait, then collects (review M2)', async () => {
+  const id = crypto.randomUUID();
+  const started = Date.now();
+  const errors: unknown[] = [];
+  const kingdom = stubKingdom(600_000, (read) => {
+    if (read === 0) return { pending: null, declinedAt: null, inquiries: [] };
+    const elapsed = Date.now() - started;
+    // A status from a newer Kingdom: unreadable, so dropped, but not withdrawn.
+    if (elapsed < 300)
+      return {
+        pending: null,
+        declinedAt: null,
+        inquiries: [{ ...sentInquiry(id, 'sent', week()), status: 'escalated' }],
+      };
+    return { pending: null, declinedAt: null, inquiries: [sentInquiry(id, 'approved', null)] };
+  });
+  const root = await mkdtemp(join(tmpdir(), 'signet-unread-'));
+  try {
+    expect(
+      (await pair(kingdom.url, root, { onError: (error) => void errors.push(error) })).signetId,
+    ).toBe(signetId);
+    expect(errors.some((error) => String(error).includes('Could not read'))).toBe(true);
+  } finally {
+    kingdom.stop();
+  }
+});
+
 test('Kingdom refusing the key three times in a row, a backoff apart, ends the wait as revoked', async () => {
   const errors: unknown[] = [];
   const kingdom = stubKingdom(600_000, (read) =>

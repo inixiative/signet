@@ -279,6 +279,7 @@ export const signetGrantSchema = z.object({
   lens: signetLensSchema,
 });
 export type SignetGrant = z.infer<typeof signetGrantSchema>;
+const grantsSchema = z.array(signetGrantSchema);
 /** Whether a grant's lens is the shape its resource's kind takes. */
 export const grantLensFitsKind = (grant: Pick<SignetGrant, 'kind' | 'lens'>) =>
   resourceLensSchema(grant.kind).safeParse(grant.lens).success;
@@ -300,7 +301,7 @@ export const installationSignetSchema = z.object({
   enrollmentId: z.uuid().nullable(),
   owner: ownerRefSchema,
   /** What the Signet reaches, so a holder knows, for example, which threads it may open. */
-  resources: z.array(signetGrantSchema),
+  resources: grantsSchema,
 });
 /**
  * A Signet issued on one of the Installation's integrations: a member of a Foundry's conversations.
@@ -323,7 +324,7 @@ export const hostedSignetSchema = z.object({
     id: z.uuid(),
     displayName: z.string(),
   }),
-  resources: z.array(signetGrantSchema),
+  resources: grantsSchema,
 });
 export type InstallationSignet = z.infer<typeof installationSignetSchema>;
 export type HostedSignet = z.infer<typeof hostedSignetSchema>;
@@ -460,9 +461,6 @@ const entryId = (value: unknown) => {
   const id = record.signetId ?? record.id;
   return typeof id === 'string' ? id.slice(0, 80) : null;
 };
-const lensMismatch = (resources: readonly Pick<SignetGrant, 'kind' | 'lens'>[]) =>
-  resources.find((grant) => !grantLensFitsKind(grant));
-
 /**
  * Parse each entry on its own and drop the ones that don't parse. A Kingdom ahead of this package
  * (a selector form it doesn't know, a new field shape) then costs only those entries: never the
@@ -490,10 +488,36 @@ export function parseEntries<T>(
   });
 }
 
-const kindCheck = (entry: { resources: readonly Pick<SignetGrant, 'kind' | 'lens'>[] }) => {
-  const grant = lensMismatch(entry.resources);
-  return grant ? `a ${grant.kind} resource carries a lens of another shape` : null;
-};
+const lensFits = (grant: Pick<SignetGrant, 'kind' | 'lens'>) =>
+  grantLensFitsKind(grant) ? null : `a ${grant.kind} resource carries a lens of another shape`;
+
+/**
+ * Signets read per entry, and their resources per entry inside them: a resource this package can't
+ * read (a newer lens, a lens that doesn't fit its kind) is dropped and reported, and the Signet is
+ * kept, so the Installation never loses a held Signet (or mistakes a member for revoked) over one
+ * resource.
+ */
+function parseSignetsWithGrants<S extends z.ZodObject<{ resources: typeof grantsSchema }>>(
+  list: string,
+  value: unknown,
+  schema: S,
+  dropped: DroppedEntry[],
+): z.infer<S>[] {
+  const identity = schema.omit({ resources: true }).extend({ resources: z.unknown().optional() });
+  return parseEntries(list, value, identity, dropped).map(
+    (entry, index) =>
+      ({
+        ...entry,
+        resources: parseEntries(
+          `${list}.${index}.resources`,
+          entry.resources,
+          signetGrantSchema,
+          dropped,
+          lensFits,
+        ),
+      }) as z.infer<S>,
+  );
+}
 
 const inquiriesScalars = installationInquiriesResponseSchema.pick({
   pending: true,
@@ -516,17 +540,16 @@ export function parseInstallationInquiries(value: unknown, dropped: DroppedEntry
   };
 }
 
-/** `installationSignets`, per entry: a Signet whose lens doesn't fit its resource's kind is dropped. */
+/** `installationSignets`, per Signet and per resource inside it. */
 export function parseInstallationSignets(value: unknown, dropped: DroppedEntry[] = []) {
   const record = z.object({}).loose().parse(value);
   return {
-    signets: parseEntries('signets', record.signets, installationSignetSchema, dropped, kindCheck),
-    hostedSignets: parseEntries(
+    signets: parseSignetsWithGrants('signets', record.signets, installationSignetSchema, dropped),
+    hostedSignets: parseSignetsWithGrants(
       'hostedSignets',
       record.hostedSignets,
       hostedSignetSchema,
       dropped,
-      kindCheck,
     ),
     dropped,
   };

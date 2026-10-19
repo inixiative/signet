@@ -20,6 +20,8 @@ export type SignetSocketOptions = ThreadStreamHandlers & {
 };
 
 const frameSchema = z.object({ type: z.string() }).loose();
+/** WebSocket.OPEN, read from the spec rather than whichever WebSocket class was passed. */
+const OPEN = 1;
 
 /**
  * Kingdom's live line to a Signet presenter: an outside agent holding a member's Signet on a host
@@ -42,7 +44,11 @@ export class SignetSocket {
   private readonly streams: ThreadStreams;
 
   constructor(private readonly options: SignetSocketOptions) {
-    this.streams = new ThreadStreams((frame) => this.send(frame), options, options.retryBaseMs);
+    this.streams = new ThreadStreams((frame) => this.send(frame), options, {
+      retryBaseMs: options.retryBaseMs,
+      // Kingdom closed streams because the presentation lapsed: re-present on a new connection.
+      onPresentationExpired: () => this.socket?.close(),
+    });
   }
 
   get connected() {
@@ -98,7 +104,7 @@ export class SignetSocket {
       return;
     }
     if (socket !== this.socket || typeof json !== 'object' || json === null) return;
-    if (await this.streams.receive(json as Record<string, unknown>)) return;
+    if (this.streams.receive(json as Record<string, unknown>)) return;
     const parsed = frameSchema.safeParse(json);
     if (!parsed.success) return;
     const frame = parsed.data;
@@ -112,6 +118,11 @@ export class SignetSocket {
         }
         case 'signet': {
           const presented = signetPresentedFrameSchema.parse(frame);
+          if (presented.signetId !== this.options.client.signetId) {
+            this.options.onError?.(Error('Kingdom presented another Signet on this socket'));
+            socket.close();
+            return;
+          }
           if (this.authTimer) clearTimeout(this.authTimer);
           this.authTimer = null;
           this.scheduleRenewal(socket, presented.expiresAt);
@@ -156,14 +167,18 @@ export class SignetSocket {
     try {
       const { accessToken, proof } = await this.options.client.socketPresentation({ renew: true });
       this.sendOn(socket, { action: 'renewPresentation', accessToken, proof });
+      // Kingdom answers with `signet` (which reschedules); silence means the presentation is lost.
+      this.authTimer = setTimeout(() => socket.close(), this.options.authTimeoutMs ?? 10_000);
     } catch (error) {
       this.options.onError?.(error);
-      // Try again while the old presentation still holds; past it, Kingdom has closed the streams.
-      if (Date.parse(expiresAt) > Date.now() && socket === this.socket)
+      if (socket !== this.socket) return;
+      // Try again while the old presentation still holds; past it, reconnect and present afresh.
+      if (Date.parse(expiresAt) > Date.now())
         this.renewTimer = setTimeout(
           () => void this.renew(socket, expiresAt),
           this.options.retryBaseMs ?? 1_000,
         );
+      else socket.close();
     }
   }
 
@@ -172,8 +187,7 @@ export class SignetSocket {
   }
 
   private sendOn(socket: WebSocket, frame: Record<string, unknown>) {
-    if (socket === this.socket && socket.readyState === WebSocket.OPEN)
-      socket.send(JSON.stringify(frame));
+    if (socket === this.socket && socket.readyState === OPEN) socket.send(JSON.stringify(frame));
   }
 
   private disconnected(socket: WebSocket) {

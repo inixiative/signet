@@ -221,9 +221,9 @@ test('subscribe is atomic: entries written while the snapshot is taken follow it
   sendHost({ type: 'thread.subscribe', ...frame, threadId: T1 });
   await waitFor(() => live.threadSubscriptions().length === 1);
   // Written while the host takes the view: 5 is in the snapshot, 6 and 7 come after it.
-  expect(live.appendThread(frame.requestId, { journalSeq: 7, entry: entry(7) })).toBe(true);
-  expect(live.appendThread(frame.requestId, { journalSeq: 5, entry: entry(5) })).toBe(true);
-  expect(live.appendThread(frame.requestId, { journalSeq: 6, entry: entry(6) })).toBe(true);
+  expect(live.appendThread(frame.requestId, entry(7))).toBe(true);
+  expect(live.appendThread(frame.requestId, entry(5))).toBe(true);
+  expect(live.appendThread(frame.requestId, entry(6))).toBe(true);
   expect(received).toEqual([]);
   release();
   await waitFor(() => received.length === 3);
@@ -236,10 +236,18 @@ test('subscribe is atomic: entries written while the snapshot is taken follow it
     threadId: T1,
   });
   // Already sent: skipped, not re-sent.
-  expect(live.appendThread(frame.requestId, { journalSeq: 6, entry: entry(6) })).toBe(true);
-  live.appendThread(frame.requestId, { journalSeq: 8, entry: entry(8) });
+  expect(live.appendThread(frame.requestId, entry(6))).toBe(true);
+  live.appendThread(frame.requestId, entry(8));
   await waitFor(() => received.length === 4);
   expect(threadAppendFrameSchema.parse(received[3]).journalSeq).toBe(8);
+  expect(received.slice(1).map((sent) => threadAppendFrameSchema.parse(sent).seq)).toEqual([
+    1, 2, 3,
+  ]);
+  // An entry that breaks the contract still spends its seq: Kingdom sees the gap and resyncs.
+  expect(live.appendThread(frame.requestId, { ...entry(9), text: 'x'.repeat(16_001) })).toBe(true);
+  live.appendThread(frame.requestId, entry(10));
+  await waitFor(() => received.length === 5);
+  expect(threadAppendFrameSchema.parse(received[4])).toMatchObject({ seq: 5, journalSeq: 10 });
 });
 
 test('a refused subscribe leaves no subscription', async () => {
@@ -251,7 +259,7 @@ test('a refused subscribe leaves no subscription', async () => {
     refusal: 'unknown_thread',
   });
   expect(live.threadSubscriptions()).toEqual([]);
-  expect(live.appendThread(frame.requestId, { journalSeq: 9, entry: entry(9) })).toBe(false);
+  expect(live.appendThread(frame.requestId, entry(9))).toBe(false);
 });
 
 test('unsubscribe, the lease, and a dropped socket each end a subscription', async () => {
@@ -270,7 +278,7 @@ test('unsubscribe, the lease, and a dropped socket each end a subscription', asy
   sendHost({ type: 'thread.unsubscribe', subscriptionId: unsubscribed });
   await waitFor(() => ended.length === 1);
   expect(ended[0]).toMatchObject([{ subscriptionId: unsubscribed, threadId: T1 }, 'unsubscribed']);
-  expect(live.appendThread(unsubscribed, { journalSeq: 9, entry: entry(9) })).toBe(false);
+  expect(live.appendThread(unsubscribed, entry(9))).toBe(false);
 
   const leased = await subscribe();
   const lapsed = await subscribe();

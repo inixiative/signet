@@ -18,6 +18,7 @@ import {
   type ThreadSelector,
   threadHostFrameSchema,
   threadInputFromAccess,
+  threadInputKeys,
   threadRequestFrameSchema,
   threadResponseEnvelopeSchema,
   threadResponseFrameSchema,
@@ -247,6 +248,17 @@ describe('thread operations through access/execute', () => {
     expect(accessInputSchema.safeParse({ resourceId, text: 'x'.repeat(16_001) }).success).toBe(
       false,
     );
+    // Kingdom's per-operation allow list derives from the same schemas.
+    expect(threadInputKeys('thread.prompt')).toEqual(['threadId', 'postId', 'text', 'inReplyTo']);
+    expect(threadInputKeys('thread.read')).toEqual(['threadId', 'afterSeq']);
+    for (const operation of [
+      'thread.read',
+      'thread.prompt',
+      'thread.floor',
+      'prompt.resolve',
+    ] as const)
+      for (const key of threadInputKeys(operation))
+        expect(Object.keys(accessInputSchema.shape)).toContain(key);
   });
 
   test('a request frame is typed by its operation', () => {

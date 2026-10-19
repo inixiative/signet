@@ -25,6 +25,8 @@ const enrollmentId = uuid();
 const nonces = new Set<string>();
 const frames: Record<string, unknown>[] = [];
 let tokens = 0;
+let failRenewal = false;
+let presentForMs: number | null = null;
 const accessToken = () => `kingdom_${String(tokens).padStart(43, 'a')}`;
 const minutes = (count: number) => new Date(Date.now() + count * 60_000).toISOString();
 let kingdom: ServerWebSocket<unknown> | null = null;
@@ -72,6 +74,7 @@ beforeAll(async () => {
         return Response.json({ data: { nonce } });
       }
       if (action === 'renewSignet') {
+        if (failRenewal) return Response.json({ error: 'revoked' }, { status: 401 });
         tokens++;
         return Response.json({
           data: {
@@ -115,7 +118,10 @@ beforeAll(async () => {
           return;
         }
         // A renewed presentation holds longer, so the test sees exactly one renewal.
-        const expiresAt = minutes(frame.action === 'authenticateSignet' ? 5 : 60);
+        const expiresAt =
+          presentForMs === null
+            ? minutes(frame.action === 'authenticateSignet' ? 5 : 60)
+            : new Date(Date.now() + presentForMs).toISOString();
         ws.send(JSON.stringify({ type: 'signet', signetId, enrollmentId, expiresAt }));
       },
       close(ws) {
@@ -208,15 +214,93 @@ test('presents its Signet, renews before expiry, and holds thread streams by seq
   await waitFor(() => frames.some((frame) => frame.action === 'close' && frame.stream === second));
   toMember({ type: 'closed', stream: second });
   socket.open(T2);
+  await waitFor(() => opens(T2) === 2);
+  // The host is offline: the member keeps the thread and retries with backoff.
   toMember({ type: 'openRejected', stream: second, reason: 'hostOffline' });
+  await waitFor(() => opens(T2) === 3);
+  expect(closed).toHaveLength(1);
+  // A revision closes the stream; the member reopens under the new lens.
+  toMember({ type: 'opened', stream: second });
+  toMember({
+    category: 'data',
+    action: 'snapshot',
+    stream: second,
+    seq: 1,
+    payload: { data: view(20) },
+  });
+  await waitFor(() => snapshots.length === 4);
+  toMember({ type: 'closed', stream: second, reason: 'revised' });
+  await waitFor(() => opens(T2) === 4);
+  // While that open is pending, a resync asks for nothing more: one open in flight per stream.
+  toMember({ type: 'resync', stream: second });
+  await Bun.sleep(30);
+  expect(opens(T2)).toBe(4);
+  // ...and once it is answered, the asked-for fresh snapshot follows.
+  toMember({
+    category: 'data',
+    action: 'snapshot',
+    stream: second,
+    seq: 1,
+    payload: { data: view(21) },
+  });
+  await waitFor(() => opens(T2) === 5);
+  toMember({
+    category: 'data',
+    action: 'snapshot',
+    stream: second,
+    seq: 1,
+    payload: { data: { ...view(22), newField: true } },
+  });
+  await waitFor(() => snapshots.length === 6);
+  expect(snapshots.at(-1)).toEqual([T2, 22]); // a field this package doesn't know is ignored
+  // A narrowing that leaves this thread out: Kingdom refuses the reopen, and the member is told.
+  toMember({ type: 'openRejected', stream: second, reason: 'unauthorized' });
   await waitFor(() => closed.length === 2);
-  expect(closed[1]).toEqual([T2, 'hostOffline']);
+  expect(closed[1]).toEqual([T2, 'unauthorized']);
+
+  // The presentation lapsed: Kingdom closed the stream; the socket re-presents and reopens it.
+  socket.open(T2);
+  await waitFor(() => opens(T2) === 6);
+  const presentations = () =>
+    frames.filter((frame) => frame.action === 'authenticateSignet').length;
+  toMember({ type: 'closed', stream: second, reason: 'presentationExpired' });
+  await waitFor(() => presentations() === 2 && opens(T2) === 7, 5000);
+  expect(closed).toHaveLength(2);
+  socket.leave(T2);
 
   // A dropped socket re-presents and re-opens what it holds.
   socket.open(T1);
   const before = opens(T1);
   kingdom?.close();
   await waitFor(() => opens(T1) === before + 1, 5000);
-  expect(frames.filter((frame) => frame.action === 'authenticateSignet')).toHaveLength(2);
+  expect(frames.filter((frame) => frame.action === 'authenticateSignet')).toHaveLength(3);
   socket.close();
+});
+
+test('a renewal that keeps failing past expiry reconnects and presents afresh', async () => {
+  frames.length = 0;
+  failRenewal = true;
+  presentForMs = 150;
+  const errors: unknown[] = [];
+  const socket = new SignetSocket({
+    client,
+    renewBeforeMs: 100,
+    retryBaseMs: 20,
+    onSnapshot: () => {},
+    onEntry: () => {},
+    onError: (error) => void errors.push(error),
+  });
+  socket.start();
+  try {
+    await waitFor(
+      () => frames.filter((frame) => frame.action === 'authenticateSignet').length >= 2,
+      5000,
+    );
+    expect(frames.some((frame) => frame.action === 'renewPresentation')).toBe(false);
+    expect(errors.length).toBeGreaterThan(0);
+  } finally {
+    socket.close();
+    failRenewal = false;
+    presentForMs = null;
+  }
 });

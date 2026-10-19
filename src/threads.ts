@@ -111,8 +111,12 @@ export const threadOperationSchema = z.enum([
 ]);
 export type ThreadOperation = z.infer<typeof threadOperationSchema>;
 
-/** A party in a conversation, as Foundry names it (not "participant": that is a Warden contributor). */
-export const conversationMemberSchema = z.strictObject({
+/**
+ * A party in a conversation, as Foundry names it (not "participant": that is a Warden contributor).
+ * Read paths (entries, views) use plain objects, so a host that adds a field never costs an older
+ * member its entries; lenses and request frames stay strict.
+ */
+export const conversationMemberSchema = z.object({
   kind: z.enum(['owner', 'local-herald', 'signet']),
   id: z.string().min(1).max(128),
 });
@@ -155,13 +159,16 @@ export const threadInputSchemas = {
     }),
   }),
 } as const satisfies Record<ThreadOperation, z.ZodObject>;
+/** The `access/execute` input keys each thread operation takes, besides `resourceId`. */
+export const threadInputKeys = <O extends ThreadOperation>(operation: O) =>
+  Object.keys(threadInputSchemas[operation].shape) as (keyof ThreadInput<O>)[];
 export type ThreadInput<O extends ThreadOperation> = z.infer<(typeof threadInputSchemas)[O]>;
 
 /**
  * One entry of the main thread's journal as a member sees it: an owner message, a main-agent
  * message, a member's post (`member` = its author) or a released send (`member` = the addressee).
  */
-export const threadEntrySchema = z.strictObject({
+export const threadEntrySchema = z.object({
   journalSeq: z.number().int().min(0),
   at: z.iso.datetime(),
   kind: z.enum(['owner', 'agent', 'post', 'send']),
@@ -171,13 +178,31 @@ export const threadEntrySchema = z.strictObject({
 export type ThreadEntry = z.infer<typeof threadEntrySchema>;
 
 /** A member's view, taken at `journalSeq`: the answer to `thread.read` and to `thread.subscribe`. */
-export const threadViewResultSchema = z.strictObject({
+export const threadViewResultSchema = z.object({
   journalSeq: z.number().int().min(0),
   entries: z.array(threadEntrySchema).max(1000),
   /** The view was cut at the character cap; read again after the last entry's `journalSeq`. */
   truncated: z.boolean(),
 });
 export type ThreadViewResult = z.infer<typeof threadViewResultSchema>;
+
+/**
+ * A view read per entry (`thread.read` results, stream snapshots): an entry this package can't read
+ * is dropped and counted, never costing the whole view. Null when the view itself is unreadable.
+ */
+export const parseThreadView = (value: unknown) => {
+  const record = z
+    .object({ entries: z.array(z.unknown()).max(1000) })
+    .loose()
+    .safeParse(value);
+  const view = threadViewResultSchema.omit({ entries: true }).safeParse(value);
+  if (!record.success || !view.success) return null;
+  const entries = record.data.entries.flatMap((entry) => {
+    const parsed = threadEntrySchema.safeParse(entry);
+    return parsed.success ? [parsed.data] : [];
+  });
+  return { ...view.data, entries, dropped: record.data.entries.length - entries.length };
+};
 
 export const floorModeSchema = z.enum(['talk', 'speak-when-spoken-to', 'conch']);
 
@@ -290,7 +315,10 @@ export const threadLeaseFrameSchema = z.strictObject({
   type: z.literal('thread.lease'),
   subscriptionIds: z.array(z.uuid()).max(10_000),
 });
-/** Two sweeps: one late sweep doesn't drop a live member's stream. */
+/**
+ * Two sweeps from the last re-assertion: a subscription survives one late sweep and is dropped by the
+ * next missed one, so at most 45 s after a missed re-assertion (Foundry test 27).
+ */
 export const threadSubscriptionLeaseMs = 90_000;
 
 /** Every frame Kingdom sends a host for conversations. */
@@ -341,14 +369,18 @@ export const threadRefused = (refusal: ThreadRefusal, message?: string) => ({
 });
 
 /**
- * Host → Kingdom: an entry for one subscription, already filtered to that member's view. Kingdom
- * drops any at or below the snapshot's `journalSeq` and sends the member `resync` on a jump.
+ * Host → Kingdom: an entry for one subscription, already filtered to that member's view. `seq` counts
+ * this subscription's appends densely from 1 (the snapshot is 0): a filtered view skips journal
+ * entries, so `journalSeq` jumps on purpose and can't detect loss. Kingdom drops an append whose
+ * `journalSeq` is at or below the snapshot's, and sends the member `resync` when `seq` jumps. An
+ * entry the host can't send still spends its `seq`, so the member resyncs instead of missing it.
  */
 export const threadAppendFrameSchema = z.strictObject({
   action: z.literal('thread.append'),
   subscriptionId: z.uuid(),
   signetId: z.uuid(),
   threadId: threadIdSchema,
+  seq: z.number().int().min(1),
   journalSeq: z.number().int().min(0),
   entry: threadEntrySchema,
 });
