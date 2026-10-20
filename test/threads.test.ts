@@ -1,21 +1,33 @@
 import { describe, expect, test } from 'bun:test';
+import {
+  extendZodWithOpenApi,
+  OpenAPIRegistry,
+  OpenApiGeneratorV31,
+} from '@asteasolutions/zod-to-openapi';
 import { z } from 'zod';
 import {
   accessInputSchema,
+  accessRequestSchema,
+  accessThreadSnapshotSchema,
   accessThreadStreamName,
   archiveLibraryResourceKind,
+  authenticateSignetFrameSchema,
+  installationInquiriesResponseSchema,
+  installationSignetsResponseSchema,
   narrowsSignetLens,
-  narrowsThreadSelector,
   parseAccessThreadStreamName,
+  registrationRequestSchema,
+  registrationTermsSchema,
   resourceLensSchema,
   type SignetLens,
   selectsThread,
+  signetDescriptionSchema,
   signetLensSchema,
   signetProposalSchema,
   signetRequestSchema,
   signetResourceSchema,
   signetReviewProposalSchema,
-  type ThreadSelector,
+  threadAppendFrameSchema,
   threadHostFrameSchema,
   threadInputFromAccess,
   threadInputKeys,
@@ -141,18 +153,6 @@ describe('approving a request only narrows', () => {
   test('a lens of another shape than the request is refused', () => {
     expect(narrowsSignetLens({}, requested)).toBe(false);
     expect(narrowsSignetLens(requested, {})).toBe(false);
-  });
-
-  test('within is never dropped or added', () => {
-    // No v1 form can fill `within`; the rule holds for the forms that will.
-    const withWithin = { form: 'ids', ids: [T1], within: { form: 'tag', tag: 'x' } };
-    const asSelector = (value: unknown) => value as ThreadSelector;
-    expect(
-      narrowsThreadSelector(asSelector({ form: 'ids', ids: [T1] }), asSelector(withWithin)),
-    ).toBe(false);
-    expect(
-      narrowsThreadSelector(asSelector(withWithin), asSelector({ form: 'ids', ids: [T1] })),
-    ).toBe(false);
   });
 
   test('the archive rules are unchanged', () => {
@@ -317,14 +317,46 @@ describe('thread operations through access/execute', () => {
     ).toBe(false);
   });
 
-  test('every request body and frame stays representable in OpenAPI', () => {
-    for (const schema of [
-      signetProposalSchema,
-      signetRequestSchema,
-      accessInputSchema,
-      threadHostFrameSchema,
-    ])
-      expect(() => z.toJSONSchema(schema, { io: 'input', unrepresentable: 'throw' })).not.toThrow();
+  // Kingdom's routes build OpenAPI with @hono/zod-openapi, i.e. @asteasolutions/zod-to-openapi 9.x:
+  // test against that generator, not zod's own toJSONSchema (which accepted a z.never() it rejects).
+  test('every contract schema stays representable in Kingdom’s OpenAPI generator', () => {
+    extendZodWithOpenApi(z);
+    const generate = (schemas: Record<string, z.ZodType>) => {
+      const registry = new OpenAPIRegistry();
+      for (const [name, schema] of Object.entries(schemas))
+        registry.registerPath({
+          method: 'post',
+          path: `/${name}`,
+          request: { body: { content: { 'application/json': { schema } } } },
+          responses: { 200: { description: name, content: { 'application/json': { schema } } } },
+        });
+      return new OpenApiGeneratorV31(registry.definitions).generateDocument({
+        openapi: '3.1.0',
+        info: { title: 'signet', version: '0' },
+      });
+    };
+    expect(() => generate({ never: z.object({ within: z.never().optional() }) })).toThrow();
+    expect(() =>
+      generate({
+        signetProposalSchema,
+        signetRequestSchema,
+        signetReviewProposalSchema,
+        signetResourceSchema,
+        registrationRequestSchema,
+        registrationTermsSchema,
+        accessInputSchema,
+        accessRequestSchema,
+        installationInquiriesResponseSchema,
+        installationSignetsResponseSchema,
+        signetDescriptionSchema,
+        threadsLensSchema,
+        threadHostFrameSchema,
+        threadAppendFrameSchema,
+        threadResponseEnvelopeSchema,
+        authenticateSignetFrameSchema,
+        accessThreadSnapshotSchema,
+      }),
+    ).not.toThrow();
   });
 });
 
