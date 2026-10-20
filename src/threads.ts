@@ -27,16 +27,15 @@ export const threadIdSchema = foundryIdSchema;
 export const unbuiltThreadSelectorForms = ['withMember', 'tag'] as const;
 
 /**
- * What `within` may hold: exactly one non-`ids` form, never another selector, so it cannot nest. It is
- * set only by approving a request for a selector form narrowed to `ids` (the grant is then
- * `ids ∩ within`). No non-`ids` form is built in v1, so nothing parses here yet.
+ * `ids` takes `within` only once a non-`ids` form exists: `within` will hold exactly one such form
+ * (never a selector, so it can't nest), set only by approving a request for a selector form narrowed
+ * to `ids` (the grant is then `ids ∩ within`), and approval may never drop or widen it. Until then
+ * the strict object refuses `within` like any unknown key: structural, and representable in Kingdom's
+ * OpenAPI (a `z.never()` placeholder is not).
  */
-export const threadSelectorWithinSchema = z.never();
-
 export const idsThreadSelectorSchema = z.strictObject({
   form: z.literal('ids'),
   ids: z.array(threadIdSchema).min(1).max(100),
-  within: threadSelectorWithinSchema.optional(),
 });
 
 /** Which threads a grant reaches. A discriminated union on `form`; v1 builds only `ids`. */
@@ -78,12 +77,8 @@ export const narrowsThreadSelector = (
 ): boolean => {
   switch (requested.form) {
     case 'ids':
-      return (
-        granted.form === 'ids' &&
-        granted.ids.every((id) => requested.ids.includes(id)) &&
-        // `within` can only be kept as asked: never dropped, never added to a plain id list.
-        (requested.within === undefined) === (granted.within === undefined)
-      );
+      // When `within` exists, it must also be kept as asked: never dropped, never added.
+      return granted.form === 'ids' && granted.ids.every((id) => requested.ids.includes(id));
   }
 };
 
