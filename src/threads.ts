@@ -108,11 +108,13 @@ export type ThreadOperation = z.infer<typeof threadOperationSchema>;
 
 /**
  * A party in a conversation, as Foundry names it (not "participant": that is a Warden contributor).
+ * `local` is a member on the host's own machine (its own Codex, a local Herald), joined in-process
+ * with no Signet; `signet` is one that reaches the host through Kingdom.
  * Read paths (entries, views) use plain objects, so a host that adds a field never costs an older
  * member its entries; lenses and request frames stay strict.
  */
 export const conversationMemberSchema = z.object({
-  kind: z.enum(['owner', 'local-herald', 'signet']),
+  kind: z.enum(['owner', 'local', 'signet']),
   id: z.string().min(1).max(128),
 });
 export type ConversationMember = z.infer<typeof conversationMemberSchema>;
