@@ -2,14 +2,17 @@ import { existsSync } from 'node:fs';
 import { mkdir, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
+  cancelInstallationInquiry,
   collectSignet,
   enrollInstallationSignet,
-  generateSignetKey,
+  enrollSignet,
   installationInquiries,
+  installationSignets,
   kingdomUrl,
   registerInstallation,
   requestRegistration,
   SignetHttpError,
+  type SignetRequestOptions,
   saveCollectedSignet,
   signetCredentialSchema,
 } from './client';
@@ -19,19 +22,9 @@ import type {
   OwnerRef,
   RegistrationRequest,
 } from './contracts';
-import { readPrivateJson, writePrivateJson } from './files';
+import { readPrivateJson } from './files';
+import { installationDirectory, installationPaths, signetCredentialFile } from './installation';
 import { InstallationSocket } from './installationSocket';
-
-/** Where an installation keeps what it holds for one Kingdom: its key and one file per Signet. */
-export async function installationDirectory(root: string, url: string) {
-  const directory = join(root, new URL(kingdomUrl(url)).host);
-  const keyFile = join(directory, 'installation-key.json');
-  if (!existsSync(keyFile)) await writePrivateJson(keyFile, generateSignetKey());
-  return { directory, keyFile };
-}
-
-export const signetCredentialFile = (directory: string, signetId: string) =>
-  join(directory, `signet-${signetId}.json`);
 
 export type HeldSignet = {
   signetId: string;
@@ -50,8 +43,12 @@ const heldEnrollment = async (credentialFile: string) => {
 
 const lockStaleMs = 60_000;
 
-/** One holder at a time per directory, so two processes never enroll over each other. */
-async function withHoldLock<T>(directory: string, fn: () => Promise<T>): Promise<T> {
+/**
+ * One holder at a time per installation directory, so two processes never enroll or write
+ * credentials over each other. Every hold in this package takes it; take it to write a Signet
+ * credential into the directory by other means.
+ */
+export async function withHoldLock<T>(directory: string, fn: () => Promise<T>): Promise<T> {
   const lock = join(directory, '.hold-lock');
   for (const started = Date.now(); ; ) {
     try {
@@ -110,6 +107,118 @@ export async function holdInstallationSignets(
     }
     return held;
   });
+}
+
+export type PersonSignet = {
+  signetId: string;
+  /** The Signet's current revision, as the person read it (`/me/overview`); Kingdom refuses a stale one. */
+  expectedRevision: number;
+  integrationId: string;
+  owner?: OwnerRef;
+};
+
+export type HeldPersonSignet = {
+  signetId: string;
+  integrationId: string;
+  owner?: OwnerRef;
+  credentialFile: string;
+  /** False when a credential file was already held and kept. */
+  enrolled: boolean;
+};
+
+/**
+ * Enrolls this installation's key on Signets issued to the person a Kingdom API token belongs to,
+ * under the same lock as `holdInstallationSignets`, so a person login and an installation sync
+ * never enroll over each other. A Signet whose credential file already parses is kept unless
+ * `replace` is set. The token authorizes the enrollment and is never written.
+ */
+export async function holdPersonSignets(
+  url: string,
+  keyFile: string,
+  directory: string,
+  apiToken: string,
+  signets: readonly PersonSignet[],
+  options: SignetRequestOptions & { name: string; replace?: boolean },
+): Promise<HeldPersonSignet[]> {
+  const { name, replace, ...request } = options;
+  return withHoldLock(directory, async () => {
+    const held: HeldPersonSignet[] = [];
+    for (const signet of signets) {
+      const credentialFile = signetCredentialFile(directory, signet.signetId);
+      const kept = !replace && (await heldEnrollment(credentialFile));
+      if (!kept) {
+        const enrolled = await enrollSignet(
+          url,
+          keyFile,
+          apiToken,
+          { signetId: signet.signetId, expectedRevision: signet.expectedRevision, name },
+          request,
+        );
+        await saveCollectedSignet(credentialFile, url, keyFile, {
+          ...enrolled,
+          integrationId: signet.integrationId,
+          ...(signet.owner ? { owner: signet.owner } : {}),
+        });
+      }
+      held.push({
+        signetId: signet.signetId,
+        integrationId: signet.integrationId,
+        ...(signet.owner ? { owner: signet.owner } : {}),
+        credentialFile,
+        enrolled: !kept,
+      });
+    }
+    return held;
+  });
+}
+
+/** Which Signets each Kingdom lists for this installation: one read per Kingdom; null when it refused or is unreachable. */
+export async function listedSignets(root: string, urls: readonly string[]) {
+  const listed = new Map<string, Set<string> | null>();
+  await Promise.all(
+    [...new Set(urls)].map(async (url) => {
+      const { keyFile } = installationPaths(root, url);
+      try {
+        if (!existsSync(keyFile)) throw Error('No installation key');
+        const { signets } = await installationSignets(url, keyFile, { timeoutMs: 5000 });
+        listed.set(url, new Set(signets.map((signet) => signet.signetId)));
+      } catch {
+        listed.set(url, null);
+      }
+    }),
+  );
+  return listed;
+}
+
+/** The local file of a Signet this installation holds, enrolling it now if Kingdom lists it but no file exists yet. */
+export async function heldSignetFile(root: string, url: string, signetId: string) {
+  const { keyFile, directory } = await installationDirectory(root, url);
+  const file = signetCredentialFile(directory, signetId);
+  if (existsSync(file)) return file;
+  const listed = (await installationSignets(url, keyFile)).signets.filter(
+    (signet) => signet.signetId === signetId,
+  );
+  if (!listed.length) throw Error(`Kingdom does not list Signet ${signetId} for this installation`);
+  await holdInstallationSignets(url, keyFile, directory, listed);
+  if (!existsSync(file)) throw Error(`Signet ${signetId} could not be enrolled here`);
+  return file;
+}
+
+/**
+ * Withdraws every open registration of this installation, so a later approval in Kingdom mints no
+ * integration nothing collects. One pairing runs at a time per installation, so every open
+ * registration belongs to a pairing that no longer waits. Kingdom's refusals are thrown.
+ */
+export async function withdrawRegistration(root: string, url: string) {
+  const origin = kingdomUrl(url);
+  const { keyFile } = installationPaths(root, origin);
+  if (!existsSync(keyFile)) return [];
+  const { inquiries } = await installationInquiries(origin, keyFile);
+  const open = inquiries.filter(
+    (inquiry) => inquiry.type === 'registerIntegration' && openStatuses.has(inquiry.status),
+  );
+  for (const inquiry of open) await cancelInstallationInquiry(origin, keyFile, inquiry.id);
+  return open.map((inquiry) => inquiry.id);
 }
 
 export type InstallationPairing = {

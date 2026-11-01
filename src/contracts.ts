@@ -44,6 +44,21 @@ export const ownerRefSchema = z.object({
 });
 export type OwnerRef = z.infer<typeof ownerRefSchema>;
 
+/** Kingdom's canonical owner key: `ownerModel:userId:organizationId:spaceId`, absent ids empty. */
+export const ownerKey = (
+  owner: Pick<OwnerRef, 'ownerModel'> & {
+    [K in 'userId' | 'organizationId' | 'spaceId']?: string | null;
+  },
+) =>
+  [owner.ownerModel, owner.userId ?? '', owner.organizationId ?? '', owner.spaceId ?? ''].join(':');
+
+const uuidOrEmpty =
+  '(?:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})?';
+/** An `ownerKey` string. */
+export const ownerKeySchema = z
+  .string()
+  .regex(new RegExp(`^(?:${ownerModelSchema.options.join('|')})(?::${uuidOrEmpty}){3}$`));
+
 export const publicClientKeySchema = z.strictObject({
   kty: z.literal('EC'),
   crv: z.literal('P-256'),
