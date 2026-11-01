@@ -48,6 +48,13 @@ export const threadViewSchema = z.enum(['own', 'thread']);
 export const threadDeliverySchema = z.enum(['note', 'turn']);
 /** `review`: the host's sends to this member wait for the owner. `auto`: they leave at once. */
 export const threadOutboundSchema = z.enum(['review', 'auto']);
+/**
+ * The member's own floor rights. `mayTake`: it may take the conch without being given it (a senior
+ * pairing with a junior). A role changes by revising the Signet, never in a separate table (Aron,
+ * 2026-11-01: "You join with a certain thing... and then you can have it changed or granted or
+ * ungranted").
+ */
+export const threadFloorTermsSchema = z.strictObject({ mayTake: z.boolean().default(false) });
 
 /**
  * A member's terms on a `threads` resource. Every term but the selector defaults to its narrowest
@@ -59,6 +66,7 @@ export const threadsLensSchema = z.strictObject({
   view: threadViewSchema.default('own'),
   delivery: threadDeliverySchema.default('note'),
   outbound: threadOutboundSchema.default('review'),
+  floor: threadFloorTermsSchema.default({ mayTake: false }),
 });
 export type ThreadsLens = z.infer<typeof threadsLensSchema>;
 
@@ -90,12 +98,16 @@ const narrowsView = order(threadViewSchema.options);
 const narrowsDelivery = order(threadDeliverySchema.options);
 const narrowsOutbound = order(threadOutboundSchema.options);
 
-/** Approving a request may only narrow (`own` < `thread`, `note` < `turn`, `review` < `auto`). */
+/**
+ * Approving a request may only narrow (`own` < `thread`, `note` < `turn`, `review` < `auto`, and
+ * `floor.mayTake` only where it was asked for).
+ */
 export const narrowsThreadsLens = (granted: ThreadsLens, requested: ThreadsLens): boolean =>
   narrowsThreadSelector(granted.threads, requested.threads) &&
   narrowsView(granted.view, requested.view) &&
   narrowsDelivery(granted.delivery, requested.delivery) &&
-  narrowsOutbound(granted.outbound, requested.outbound);
+  narrowsOutbound(granted.outbound, requested.outbound) &&
+  (!granted.floor.mayTake || requested.floor.mayTake);
 
 /** The operations a `threads` resource carries. `prompt.resolve` is for owner recipients only. */
 export const threadOperationSchema = z.enum([
@@ -131,6 +143,8 @@ export const threadTextLimit = 16_000;
 
 export const threadFloorActionSchema = z.discriminatedUnion('action', [
   z.strictObject({ action: z.literal('request') }),
+  /** Take the conch without being given it: only under `floor.mayTake`. */
+  z.strictObject({ action: z.literal('take') }),
   z.strictObject({ action: z.literal('release') }),
   z.strictObject({ action: z.literal('pass'), to: conversationMemberSchema }),
 ]);
@@ -165,14 +179,29 @@ export const threadInputSchemas = {
 } as const satisfies Record<ThreadOperation, z.ZodObject>;
 
 /**
+ * A commissioned task (Aron, 2026-11-01): a send that asks a member's agent for work. `report`
+ * is fixed by the caller's person when the send is released: `post` lets the report enter the
+ * thread against this commission, `notify` tells only the caller.
+ */
+export const threadCommissionSchema = z.strictObject({
+  report: z.enum(['post', 'notify']),
+  expiresAt: z.iso.datetime(),
+});
+export type ThreadCommission = z.infer<typeof threadCommissionSchema>;
+
+/**
  * One entry of the main thread's journal as a member sees it: an owner message, a main-agent
- * message, a member's post (`member` = its author) or a released send (`member` = the addressee).
+ * message, a member's post (`member` = its author), a released send (`member` = the addressee;
+ * `commission` when it asks for work), or an aside: person to person, out of the thread's log
+ * (`member` = its author, `to` = the one person it is for; never shown to an agent).
  */
 export const threadEntrySchema = z.object({
   journalSeq: z.number().int().min(0),
   at: z.iso.datetime(),
-  kind: z.enum(['owner', 'agent', 'post', 'send']),
+  kind: z.enum(['owner', 'agent', 'post', 'send', 'aside']),
   member: conversationMemberSchema.nullable(),
+  to: conversationMemberSchema.optional(),
+  commission: threadCommissionSchema.optional(),
   text: z.string().max(threadTextLimit),
 });
 export type ThreadEntry = z.infer<typeof threadEntrySchema>;

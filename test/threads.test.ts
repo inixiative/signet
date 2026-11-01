@@ -15,6 +15,7 @@ import {
   installationInquiriesResponseSchema,
   installationSignetsResponseSchema,
   narrowsSignetLens,
+  narrowsThreadsLens,
   operationInputFromAccess,
   operationInputKeys,
   parseAccessThreadStreamName,
@@ -30,6 +31,8 @@ import {
   signetResourceSchema,
   signetReviewProposalSchema,
   threadAppendFrameSchema,
+  threadEntrySchema,
+  threadFloorActionSchema,
   threadHostFrameSchema,
   threadRequestFrameSchema,
   threadResponseEnvelopeSchema,
@@ -55,7 +58,55 @@ describe('the threads lens', () => {
       view: 'own',
       delivery: 'note',
       outbound: 'review',
+      floor: { mayTake: false },
     });
+  });
+
+  test('floor.mayTake narrows only where it was asked for, and take is a floor action', () => {
+    const asked = threadsLensSchema.parse({
+      threads: { form: 'ids', ids: [T1] },
+      floor: { mayTake: true },
+    });
+    const without = threadsLensSchema.parse({ threads: { form: 'ids', ids: [T1] } });
+    expect(narrowsThreadsLens(without, asked)).toBe(true);
+    expect(narrowsThreadsLens(asked, asked)).toBe(true);
+    expect(narrowsThreadsLens(asked, without)).toBe(false);
+    expect(threadFloorActionSchema.safeParse({ action: 'take' }).success).toBe(true);
+  });
+
+  test('an entry may be an aside to one person, or a send carrying a commission', () => {
+    const at = new Date().toISOString();
+    const member = { kind: 'signet' as const, id: uuid() };
+    expect(
+      threadEntrySchema.safeParse({
+        journalSeq: 3,
+        at,
+        kind: 'aside',
+        member,
+        to: { kind: 'owner', id: 'owner' },
+        text: 'between us',
+      }).success,
+    ).toBe(true);
+    expect(
+      threadEntrySchema.safeParse({
+        journalSeq: 4,
+        at,
+        kind: 'send',
+        member,
+        commission: { report: 'notify', expiresAt: at },
+        text: 'look into the retry path and report back',
+      }).success,
+    ).toBe(true);
+    expect(
+      threadEntrySchema.safeParse({
+        journalSeq: 5,
+        at,
+        kind: 'send',
+        member,
+        commission: { report: 'shout', expiresAt: at },
+        text: 'x',
+      }).success,
+    ).toBe(false);
   });
 
   test('the union holds both strict shapes; {} is the empty archive lens', () => {
