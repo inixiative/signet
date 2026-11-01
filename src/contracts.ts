@@ -399,6 +399,7 @@ export const accessInputSchema = z.strictObject({
     .regex(/^[a-f0-9]{64}$/)
     .nullable()
     .optional(),
+  restore: z.boolean().optional(),
   threadId: threadIdSchema.optional(),
   postId: z.uuid().optional(),
   text: z.string().min(1).max(threadTextLimit).optional(),
