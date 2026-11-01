@@ -165,6 +165,12 @@ export const threadInputSchemas = {
     text: z.string().min(1).max(threadTextLimit),
     /** The invitation a `speak-when-spoken-to` reply answers. */
     inReplyTo: foundryIdSchema.optional(),
+    /**
+     * An aside: person to person, out of the thread's log (entry kind `aside`). Every person in the
+     * thread sees it and no agent does, until someone promotes it to a post. A person types it, never
+     * an agent; it is not floor-gated and starts no turn.
+     */
+    aside: z.literal(true).optional(),
   }),
   'thread.floor': z.strictObject({ threadId: threadIdSchema, floor: threadFloorActionSchema }),
   'prompt.resolve': z.strictObject({
