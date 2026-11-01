@@ -9,6 +9,14 @@ import {
   narrowsArchiveLens,
 } from './archive';
 import {
+  githubInputSchemas,
+  githubOperationSchema,
+  gitObjectIdSchema,
+  narrowsRepositoryLens,
+  repositoryLensSchema,
+  repositoryResourceKind,
+} from './github';
+import {
   foundryIdSchema,
   narrowsThreadsLens,
   threadFloorActionSchema,
@@ -21,6 +29,7 @@ import {
 } from './threads';
 
 export * from './archive';
+export * from './github';
 export * from './threads';
 
 const token43 = /^[A-Za-z0-9_-]{43}$/;
@@ -65,7 +74,11 @@ export const emptyLensSchema = z.strictObject({});
  * kind, and Kingdom checks that with `resourceLensSchema` against the kind it stores (review R9).
  * `{}` parses as the empty Archive lens: "no lens", valid for every kind but `threads`.
  */
-export const signetLensSchema = z.union([archiveLensSchema, threadsLensSchema]);
+export const signetLensSchema = z.union([
+  archiveLensSchema,
+  threadsLensSchema,
+  repositoryLensSchema,
+]);
 export type SignetLens = z.infer<typeof signetLensSchema>;
 
 /** The lens shape a resource of `kind` takes. */
@@ -74,7 +87,9 @@ export const resourceLensSchema = (kind: string) =>
     ? archiveLensSchema
     : kind === threadsResourceKind
       ? threadsLensSchema
-      : emptyLensSchema;
+      : kind === repositoryResourceKind
+        ? repositoryLensSchema
+        : emptyLensSchema;
 
 /**
  * `granted` reaches nothing `requested` doesn't, for lenses of the same resource. Approving someone
@@ -84,7 +99,22 @@ export const resourceLensSchema = (kind: string) =>
 export const narrowsSignetLens = (granted: SignetLens, requested: SignetLens): boolean => {
   if ('threads' in granted || 'threads' in requested)
     return 'threads' in granted && 'threads' in requested && narrowsThreadsLens(granted, requested);
-  return narrowsArchiveLens(granted, requested);
+  if ('commits' in granted || 'commits' in requested) {
+    const repositoryGranted = repositoryLensSchema.safeParse(granted);
+    const repositoryRequested = repositoryLensSchema.safeParse(requested);
+    return (
+      repositoryGranted.success &&
+      repositoryRequested.success &&
+      narrowsRepositoryLens(repositoryGranted.data, repositoryRequested.data)
+    );
+  }
+  const archiveGranted = archiveLensSchema.safeParse(granted);
+  const archiveRequested = archiveLensSchema.safeParse(requested);
+  return (
+    archiveGranted.success &&
+    archiveRequested.success &&
+    narrowsArchiveLens(archiveGranted.data, archiveRequested.data)
+  );
 };
 
 export const signetResourceSchema = z.strictObject({
@@ -408,6 +438,7 @@ export const accessInputSchema = z.strictObject({
   floor: threadFloorActionSchema.optional(),
   promptId: foundryIdSchema.optional(),
   answer: threadInputSchemas['prompt.resolve'].shape.answer.optional(),
+  objectId: gitObjectIdSchema.optional(),
 });
 export const accessRequestSchema = z.strictObject({
   requestId: z.uuid(),
@@ -422,18 +453,20 @@ export type AccessRequest = z.infer<typeof accessRequestSchema>;
 export const accessResultSchema = z.object({ executionId: z.uuid(), result: z.unknown() });
 
 /**
- * Every operation a contract in this package declares (`threads.ts`, `archive.ts`), and the input
+ * Every operation a contract in this package declares (`threads.ts`, `archive.ts`, `github.ts`), and the input
  * each takes. Kingdom's `access/execute` check, its catalog and its dispatch read these, so a new
  * operation is added here and nowhere else. Operation names are unique across contracts.
  */
 export const declaredOperationSchema = z.enum([
   ...threadOperationSchema.options,
   ...archiveOperationSchema.options,
+  ...githubOperationSchema.options,
 ]);
 export type DeclaredOperation = z.infer<typeof declaredOperationSchema>;
 export const operationInputSchemas = {
   ...threadInputSchemas,
   ...archiveInputSchemas,
+  ...githubInputSchemas,
 } as const satisfies Record<DeclaredOperation, z.ZodObject>;
 export type OperationInput<O extends DeclaredOperation> = z.infer<
   (typeof operationInputSchemas)[O]
