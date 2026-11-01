@@ -11,6 +11,7 @@ import {
   type ThreadHost,
   type ThreadSubscription,
   threadAppendFrameSchema,
+  threadInputSchemas,
   threadRefused,
   threadResponseFrameSchema,
   threadResult,
@@ -355,4 +356,11 @@ test('an Installation recipient holds a thread view over its own socket, with no
   });
   await waitFor(() => views.length === 1);
   expect(views).toEqual([4]);
+});
+
+test('thread.prompt carries an aside flag, and nothing else rides along', () => {
+  const input = { threadId: T1, postId: uuid(), text: 'between us people' };
+  expect(threadInputSchemas['thread.prompt'].parse({ ...input, aside: true }).aside).toBe(true);
+  expect(threadInputSchemas['thread.prompt'].parse(input).aside).toBeUndefined();
+  expect(() => threadInputSchemas['thread.prompt'].parse({ ...input, aside: false })).toThrow();
 });

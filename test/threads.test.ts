@@ -307,6 +307,7 @@ describe('thread operations through access/execute', () => {
       'postId',
       'text',
       'inReplyTo',
+      'aside',
     ]);
     expect(operationInputKeys('thread.read')).toEqual(['threadId', 'afterSeq']);
     for (const operation of [

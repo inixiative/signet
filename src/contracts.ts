@@ -449,6 +449,7 @@ export const accessInputSchema = z.strictObject({
   postId: z.uuid().optional(),
   text: z.string().min(1).max(threadTextLimit).optional(),
   inReplyTo: foundryIdSchema.optional(),
+  aside: threadInputSchemas['thread.prompt'].shape.aside,
   afterSeq: z.number().int().min(0).optional(),
   floor: threadFloorActionSchema.optional(),
   promptId: foundryIdSchema.optional(),
