@@ -73,7 +73,11 @@ export const archiveInputSchemas = {
     projectId: z.string().min(1).max(256).optional(),
     tag: z.string().min(1).max(120).optional(),
   }),
-  /** An Archive snapshot (`@inixiative/archive`), parsed by Kingdom before it is stored. */
+  /**
+   * An Archive snapshot (`@inixiative/archive`), parsed by Kingdom before it is stored. `restore`
+   * brings back a session deleted at the hosted Archive on purpose (a routed part sent back), which
+   * its tombstone otherwise refuses.
+   */
   'sessions.write': z.strictObject({
     snapshot: z.record(z.string(), z.unknown()),
     previousDigest: z
@@ -81,6 +85,7 @@ export const archiveInputSchemas = {
       .regex(/^[a-f0-9]{64}$/)
       .nullable()
       .optional(),
+    restore: z.boolean().optional(),
   }),
   'sessions.delete': z.strictObject({ documentId: archiveDocumentIdSchema }),
 } as const satisfies Record<ArchiveOperation, z.ZodObject>;

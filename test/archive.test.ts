@@ -63,7 +63,7 @@ describe('the Archive operation contract', () => {
       'projectId',
       'tag',
     ]);
-    expect(operationInputKeys('sessions.write')).toEqual(['snapshot', 'previousDigest']);
+    expect(operationInputKeys('sessions.write')).toEqual(['snapshot', 'previousDigest', 'restore']);
     expect(operationInputKeys('sessions.delete')).toEqual(['documentId']);
   });
 
@@ -79,6 +79,19 @@ describe('the Archive operation contract', () => {
     expect(
       operationInputFromAccess('sessions.write', accessInputSchema.parse({ resourceId })).success,
     ).toBe(false);
+    expect(
+      operationInputFromAccess(
+        'sessions.write',
+        accessInputSchema.parse({ resourceId, snapshot: { title: 'x' }, restore: true }),
+      ),
+    ).toMatchObject({ success: true, data: { snapshot: { title: 'x' }, restore: true } });
+    expect(accessInputSchema.safeParse({ resourceId, restore: 'yes' }).success).toBe(false);
+    expect(
+      operationInputFromAccess(
+        'documents.read',
+        accessInputSchema.parse({ resourceId, restore: true }),
+      ),
+    ).toMatchObject({ success: true, data: {} });
     expect(
       operationInputFromAccess('sessions.delete', accessInputSchema.parse({ resourceId })).success,
     ).toBe(false);
