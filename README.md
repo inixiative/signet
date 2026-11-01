@@ -57,6 +57,12 @@ const signet = await SignetClient.fromFile(credentialFile);
 await signet.describe();
 ```
 
+## Declared operations
+
+An integration whose operations Kingdom executes generically declares them here, one module per resource kind: `threads.ts` for a Foundry's `threads` resource, `archive.ts` for an Archive's `archiveLibrary`. Each declares its operation enum, display names, the input each operation takes, its lens schema and the lens's narrowing. `declaredOperationSchema` and `operationInputSchemas` join them (operation names are unique across contracts), `operationInputKeys(operation)` gives the `access/execute` keys an operation takes besides `resourceId` and `limit`, and `operationInputFromAccess(operation, input)` picks and parses exactly those. Kingdom's catalog, its input check and its dispatch read these, so a new operation is added here first.
+
+- **Archive** (`archiveLibrary`): `documents.read`, `documents.search`, `sessions.write`, `sessions.delete`. The lens is `{ documentIds?, fields? }` (`{}` reaches every document) and `narrowsArchiveLens` narrows it. `archiveSourceOperations` (`sessions.write`, `sessions.delete`) are a paired local Archive acting on its own sessions: Kingdom binds them to its `sourceId`, so their grant takes no lens. `archiveLensRefusal(operation, lens)` says why a grant can't carry a lens (search needs content over every document).
+
 ## Agent conversations
 
 A conversation wraps a host Foundry's main thread (Kingdom `docs/AGENT-CONVERSATIONS.md`, Foundry `docs/reference/CONVERSATIONS.md`). A member is a Signet on the host Foundry's one `threads` resource; Kingdom admits each call and relays it over the host's Installation socket, and stores no conversation or message.

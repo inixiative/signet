@@ -106,6 +106,13 @@ export const threadOperationSchema = z.enum([
 ]);
 export type ThreadOperation = z.infer<typeof threadOperationSchema>;
 
+export const threadOperationNames: Record<ThreadOperation, string> = {
+  'thread.read': "Read a conversation's thread through this member's view",
+  'thread.prompt': 'Post into a conversation',
+  'thread.floor': "Request, release or pass a conversation's floor",
+  'prompt.resolve': "Answer the host's held prompts (owner only)",
+};
+
 /**
  * A party in a conversation, as Foundry names it (not "participant": that is a Warden contributor).
  * `local` is a member on the host's own machine (its own Codex, a local Herald), joined in-process
@@ -156,10 +163,6 @@ export const threadInputSchemas = {
     }),
   }),
 } as const satisfies Record<ThreadOperation, z.ZodObject>;
-/** The `access/execute` input keys each thread operation takes, besides `resourceId`. */
-export const threadInputKeys = <O extends ThreadOperation>(operation: O) =>
-  Object.keys(threadInputSchemas[operation].shape) as (keyof ThreadInput<O>)[];
-export type ThreadInput<O extends ThreadOperation> = z.infer<(typeof threadInputSchemas)[O]>;
 
 /**
  * One entry of the main thread's journal as a member sees it: an owner message, a main-agent
