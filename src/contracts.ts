@@ -1,16 +1,26 @@
 import { z } from 'zod';
 import {
+  archiveDocumentIdSchema,
+  archiveFieldSchema,
+  archiveInputSchemas,
+  archiveLensSchema,
+  archiveLibraryResourceKind,
+  archiveOperationSchema,
+  narrowsArchiveLens,
+} from './archive';
+import {
   foundryIdSchema,
   narrowsThreadsLens,
-  type ThreadOperation,
   threadFloorActionSchema,
   threadIdSchema,
   threadInputSchemas,
+  threadOperationSchema,
   threadsLensSchema,
   threadsResourceKind,
   threadTextLimit,
 } from './threads';
 
+export * from './archive';
 export * from './threads';
 
 const token43 = /^[A-Za-z0-9_-]{43}$/;
@@ -18,10 +28,6 @@ const token43 = /^[A-Za-z0-9_-]{43}$/;
 export const accessTokenPattern = /^kingdom_[A-Za-z0-9_-]{43}$/;
 export const renewalCredentialPattern = /^signet_renew_[A-Za-z0-9_-]{43}$/;
 export const nonceSchema = z.string().regex(token43);
-
-export const archiveDocumentIdSchema = z.string().regex(/^[a-f0-9]{64}$/);
-export const archiveFieldSchema = z.enum(['id', 'title', 'content', 'tags', 'createdAt']);
-export type ArchiveField = z.infer<typeof archiveFieldSchema>;
 
 export const ownerModelSchema = z.enum([
   'User',
@@ -50,14 +56,6 @@ export const signetKeySchema = publicClientKeySchema.extend({
 export type PublicClientKey = z.infer<typeof publicClientKeySchema>;
 export type SignetKey = z.infer<typeof signetKeySchema>;
 
-/** The resource kind of a hosted Archive library: one per Archive integration. */
-export const archiveLibraryResourceKind = 'archiveLibrary';
-/** Which documents and fields of an `archiveLibrary` a grant reaches; `{}` reaches all of them. */
-export const archiveLensSchema = z.strictObject({
-  documentIds: z.array(archiveDocumentIdSchema).max(1000).optional(),
-  fields: z.array(archiveFieldSchema).max(6).optional(),
-});
-export type ArchiveLens = z.infer<typeof archiveLensSchema>;
 /** Every other resource kind takes no lens. */
 export const emptyLensSchema = z.strictObject({});
 
@@ -78,9 +76,6 @@ export const resourceLensSchema = (kind: string) =>
       ? threadsLensSchema
       : emptyLensSchema;
 
-const subset = <T>(granted: T[] | undefined, requested: T[] | undefined) =>
-  !requested || (granted !== undefined && granted.every((item) => requested.includes(item)));
-
 /**
  * `granted` reaches nothing `requested` doesn't, for lenses of the same resource. Approving someone
  * else's request may only narrow; an owner revising their own grant may widen (review U3). A lens of
@@ -89,9 +84,7 @@ const subset = <T>(granted: T[] | undefined, requested: T[] | undefined) =>
 export const narrowsSignetLens = (granted: SignetLens, requested: SignetLens): boolean => {
   if ('threads' in granted || 'threads' in requested)
     return 'threads' in granted && 'threads' in requested && narrowsThreadsLens(granted, requested);
-  return (
-    subset(granted.documentIds, requested.documentIds) && subset(granted.fields, requested.fields)
-  );
+  return narrowsArchiveLens(granted, requested);
 };
 
 export const signetResourceSchema = z.strictObject({
@@ -428,20 +421,43 @@ export type AccessRequest = z.infer<typeof accessRequestSchema>;
 export const accessResultSchema = z.object({ executionId: z.uuid(), result: z.unknown() });
 
 /**
- * The host-side input of a thread operation, taken from an `access/execute` input: exactly the keys
- * that operation takes (no `resourceId`, no `limit`). Kingdom builds `thread.request` frames with it.
+ * Every operation a contract in this package declares (`threads.ts`, `archive.ts`), and the input
+ * each takes. Kingdom's `access/execute` check, its catalog and its dispatch read these, so a new
+ * operation is added here and nowhere else. Operation names are unique across contracts.
  */
-export const threadInputFromAccess = <O extends ThreadOperation>(
+export const declaredOperationSchema = z.enum([
+  ...threadOperationSchema.options,
+  ...archiveOperationSchema.options,
+]);
+export type DeclaredOperation = z.infer<typeof declaredOperationSchema>;
+export const operationInputSchemas = {
+  ...threadInputSchemas,
+  ...archiveInputSchemas,
+} as const satisfies Record<DeclaredOperation, z.ZodObject>;
+export type OperationInput<O extends DeclaredOperation> = z.infer<
+  (typeof operationInputSchemas)[O]
+>;
+
+/** The `access/execute` input keys a declared operation takes, besides `resourceId` and `limit`. */
+export const operationInputKeys = <O extends DeclaredOperation>(operation: O) =>
+  Object.keys(operationInputSchemas[operation].shape) as (keyof OperationInput<O>)[];
+
+/**
+ * A declared operation's input, taken from an `access/execute` input: exactly the keys that
+ * operation takes (no `resourceId`, no `limit`). Kingdom builds `thread.request` frames and Archive
+ * calls with it.
+ */
+export const operationInputFromAccess = <O extends DeclaredOperation>(
   operation: O,
   input: AccessRequest['input'],
 ) => {
-  const schema = threadInputSchemas[operation];
+  const schema = operationInputSchemas[operation];
   const picked = Object.fromEntries(
     Object.keys(schema.shape).flatMap((key) =>
       key in input ? [[key, input[key as keyof typeof input]]] : [],
     ),
   );
-  return schema.safeParse(picked) as z.ZodSafeParseResult<z.infer<(typeof threadInputSchemas)[O]>>;
+  return schema.safeParse(picked) as z.ZodSafeParseResult<OperationInput<O>>;
 };
 
 /** What Kingdom pushes over the Installation socket, and what a poll of both reads assembles. */

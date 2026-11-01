@@ -15,6 +15,8 @@ import {
   installationInquiriesResponseSchema,
   installationSignetsResponseSchema,
   narrowsSignetLens,
+  operationInputFromAccess,
+  operationInputKeys,
   parseAccessThreadStreamName,
   registrationRequestSchema,
   registrationTermsSchema,
@@ -29,8 +31,6 @@ import {
   signetReviewProposalSchema,
   threadAppendFrameSchema,
   threadHostFrameSchema,
-  threadInputFromAccess,
-  threadInputKeys,
   threadRequestFrameSchema,
   threadResponseEnvelopeSchema,
   threadResponseFrameSchema,
@@ -229,18 +229,20 @@ describe('thread operations through access/execute', () => {
       postId,
       text: 'Watching for X',
     });
-    const host = threadInputFromAccess('thread.prompt', input);
+    const host = operationInputFromAccess('thread.prompt', input);
     expect(host.success && host.data).toEqual({ threadId: T1, postId, text: 'Watching for X' });
-    expect(threadInputFromAccess('thread.read', input)).toMatchObject({ data: { threadId: T1 } });
+    expect(operationInputFromAccess('thread.read', input)).toMatchObject({
+      data: { threadId: T1 },
+    });
     expect(
-      threadInputFromAccess('thread.read', accessInputSchema.parse({ resourceId })).success,
+      operationInputFromAccess('thread.read', accessInputSchema.parse({ resourceId })).success,
     ).toBe(false);
     // Only the operation's own keys cross; Kingdom refuses the rest earlier (requireOperationInput).
     expect(
-      threadInputFromAccess('thread.floor', { ...input, floor: { action: 'request' } }),
+      operationInputFromAccess('thread.floor', { ...input, floor: { action: 'request' } }),
     ).toMatchObject({ success: true, data: { threadId: T1, floor: { action: 'request' } } });
     expect(
-      threadInputFromAccess(
+      operationInputFromAccess(
         'thread.floor',
         accessInputSchema.parse({ resourceId, threadId: T1, floor: { action: 'release' } }),
       ),
@@ -249,15 +251,20 @@ describe('thread operations through access/execute', () => {
       false,
     );
     // Kingdom's per-operation allow list derives from the same schemas.
-    expect(threadInputKeys('thread.prompt')).toEqual(['threadId', 'postId', 'text', 'inReplyTo']);
-    expect(threadInputKeys('thread.read')).toEqual(['threadId', 'afterSeq']);
+    expect(operationInputKeys('thread.prompt')).toEqual([
+      'threadId',
+      'postId',
+      'text',
+      'inReplyTo',
+    ]);
+    expect(operationInputKeys('thread.read')).toEqual(['threadId', 'afterSeq']);
     for (const operation of [
       'thread.read',
       'thread.prompt',
       'thread.floor',
       'prompt.resolve',
     ] as const)
-      for (const key of threadInputKeys(operation))
+      for (const key of operationInputKeys(operation))
         expect(Object.keys(accessInputSchema.shape)).toContain(key);
   });
 
