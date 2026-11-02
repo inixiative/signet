@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { lensFilters, lensHidesField, type StoredLensLayer } from './lens';
+import { type GrantLens, projectionFilters, projectionShows } from './lens';
+import { type OperationScope, scopeRefusal } from './operations';
 
 /**
  * Archive libraries (Kingdom `docs/kingdom.md`, Archive `docs/KINGDOM.md`). A hosted Archive is an
@@ -77,17 +78,20 @@ export const archiveInputSchemas = {
   'sessions.delete': z.strictObject({ documentId: archiveDocumentIdSchema }),
 } as const satisfies Record<ArchiveOperation, z.ZodObject>;
 
-/**
- * Why a grant of `operation` can't carry these lens layers, or null when it can. Kingdom evaluates
- * the layers; this reads only whether they filter documents or hide `content`.
- */
-export const archiveLensRefusal = (
-  operation: ArchiveOperation,
-  lens: readonly StoredLensLayer[] | undefined,
-) => {
-  if (!lens?.length) return null;
+/** Why a grant of `operation` can't carry `lens`, or null when it can. No layers is the base. */
+export const archiveLensRefusal = (operation: ArchiveOperation, lens: GrantLens) => {
+  if (lens.layers.length === 0) return null;
   if (isArchiveSourceOperation(operation)) return 'Writing or deleting sessions takes no lens';
-  if (operation === 'documents.search' && (lensFilters(lens) || lensHidesField(lens, 'content')))
+  if (
+    operation === 'documents.search' &&
+    (projectionFilters(lens.projection) || !projectionShows(lens.projection, 'content'))
+  )
     return 'Search needs a lens that shows content and is not limited to chosen documents';
   return null;
 };
+
+/** `archiveLensRefusal` over every operation a grant row reaches, `full` meaning all of them. */
+export const archiveGrantRefusal = (scope: OperationScope, lens: GrantLens) =>
+  scopeRefusal(scope, archiveOperationSchema.options, (operation) =>
+    archiveLensRefusal(operation, lens),
+  );

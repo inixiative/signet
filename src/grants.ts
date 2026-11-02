@@ -12,7 +12,11 @@ import { threadsResourceKind, threadsTermsSchema } from './threads';
 export const grantResourceModelSchema = z.enum(['IntegrationResource', 'Project']);
 export type GrantResourceModel = z.infer<typeof grantResourceModelSchema>;
 
-/** Per-kind terms that are neither operations nor lens: how a holder takes part. Strict per kind. */
+/**
+ * Per-kind terms that are neither operations nor lens: how a holder takes part. Strict per kind. A
+ * request names its resource by id with no kind, so Kingdom checks `grantTermsFitKind` once it has
+ * resolved the resource.
+ */
 export const grantTermsSchema = z.strictObject({ threads: threadsTermsSchema.optional() });
 export type GrantTerms = z.infer<typeof grantTermsSchema>;
 

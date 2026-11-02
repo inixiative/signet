@@ -27,7 +27,13 @@ export const operationPickSchema = z.union([
 export type OperationPick = z.infer<typeof operationPickSchema>;
 
 /** Resolved leaves, as a grant row stores them. Picks of nested events may run past a hundred. */
-export const resolvedOperationsSchema = z.array(operationKeySchema).min(1).max(1000);
+export const resolvedOperationsSchema = z
+  .array(operationKeySchema)
+  .min(1)
+  .max(1000)
+  .refine((operations) => new Set(operations).size === operations.length, {
+    message: 'Each operation is listed once',
+  });
 
 /**
  * What a row reaches: `full`, or the leaves its picks resolved to. Not the same axis as
@@ -76,6 +82,8 @@ export type OperationNode = {
   segment: string;
   leaf: boolean;
   pick: string;
+  /** `key.*`, whenever the node has children (a leaf that is also a prefix included). */
+  groupPick?: string;
   children: OperationNode[];
 };
 
@@ -92,6 +100,7 @@ export const operationTree = (leaves: readonly string[]): OperationNode[] => {
         node = { key, segment: part, leaf: false, pick: `${key}.*`, children: [] };
         level.push(node);
       }
+      if (depth < parts.length - 1) node.groupPick = `${key}.*`;
       if (depth === parts.length - 1) {
         node.leaf = true;
         node.pick = key;
@@ -110,5 +119,26 @@ export const operationTree = (leaves: readonly string[]): OperationNode[] => {
 export const narrowsOperations = (inner: OperationScope, outer: OperationScope): boolean => {
   if (outer.full) return true;
   if (inner.full) return false;
-  return inner.operations.every((operation) => outer.operations.includes(operation));
+  return inner.operations.every((operation) => permitsOperation(outer, operation));
+};
+
+/** Whether `scope` reaches `operation`. */
+export const permitsOperation = (scope: OperationScope, operation: string) =>
+  scope.full || scope.operations.includes(operation);
+
+/**
+ * The first refusal among the catalog operations `scope` reaches, or null. A full scope is checked
+ * against the whole catalog, so run it again whenever the catalog grows.
+ */
+export const scopeRefusal = <O extends string>(
+  scope: OperationScope,
+  catalog: readonly O[],
+  refusal: (operation: O) => string | null,
+) => {
+  for (const operation of catalog) {
+    if (!permitsOperation(scope, operation)) continue;
+    const reason = refusal(operation);
+    if (reason) return reason;
+  }
+  return null;
 };

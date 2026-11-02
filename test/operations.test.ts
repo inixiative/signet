@@ -5,6 +5,8 @@ import {
   OperationPickError,
   operationPickSchema,
   operationTree,
+  permitsOperation,
+  resolvedOperationsSchema,
   resolveOperationPicks,
 } from '../src';
 
@@ -167,6 +169,7 @@ describe('the operation tree', () => {
       key: 'events.message',
       leaf: true,
       pick: 'events.message',
+      groupPick: 'events.message.*',
       children: [{ key: 'events.message.im', leaf: true }],
     });
   });
@@ -193,6 +196,19 @@ describe('narrowing operations: the inner reaches nothing the outer does not', (
     expect(narrowsOperations(full, full)).toBe(true);
     expect(narrowsOperations(grant(['events.*']), full)).toBe(true);
     expect(narrowsOperations({ full: false, operations: ['added.later'] }, full)).toBe(true);
+  });
+
+  test('permitsOperation: full reaches any operation, leaves only their own', () => {
+    expect(permitsOperation(full, 'added.later')).toBe(true);
+    expect(permitsOperation(grant(['commits.*']), 'commits.read')).toBe(true);
+    expect(permitsOperation(grant(['commits.*']), 'trees.read')).toBe(false);
+  });
+
+  test('resolved leaves are listed once each', () => {
+    expect(resolvedOperationsSchema.safeParse(['commits.read', 'commits.read']).success).toBe(
+      false,
+    );
+    expect(resolvedOperationsSchema.safeParse(['commits.read']).success).toBe(true);
   });
 
   test('equal leaf sets narrow each other', () => {

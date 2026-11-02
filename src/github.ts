@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { lensFilters, type StoredLensLayer } from './lens';
+import { type GrantLens, projectionFilters } from './lens';
+import { type OperationScope, scopeRefusal } from './operations';
 
 /**
  * GitHub repositories (Kingdom `docs/OPERATOR-ACCESS.md` §9). A GitHub integration is one GitHub
@@ -33,11 +34,17 @@ export const githubInputSchemas = {
   'blobs.read': z.strictObject({ objectId: gitObjectIdSchema }),
 } as const satisfies Record<GithubOperation, z.ZodObject>;
 
-/** Why a grant of `operation` can't carry these lens layers, or null when it can. */
-export const repositoryLensRefusal = (
-  operation: GithubOperation,
-  lens: readonly StoredLensLayer[] | undefined,
-) =>
-  lens && lensFilters(lens) && operation !== 'commits.read'
+/** Why a grant of `operation` can't carry `lens`, or null when it can. */
+export const repositoryLensRefusal = (operation: GithubOperation, lens: GrantLens) =>
+  projectionFilters(lens.projection) && operation !== 'commits.read'
     ? 'A grant pinned to commits reads only those commits; trees and blobs need an unpinned grant'
     : null;
+
+/** `repositoryLensRefusal` over every operation a grant row reaches, `full` meaning all of them. */
+export const repositoryGrantRefusal = (scope: OperationScope, lens: GrantLens) =>
+  scopeRefusal(scope, githubOperationSchema.options, (operation) =>
+    repositoryLensRefusal(operation, lens),
+  );
+
+/** The row a repository grant's `where` is evaluated over: the call's object, as `sha`. */
+export const repositoryCallRow = (input: { objectId: string }) => ({ sha: input.objectId });

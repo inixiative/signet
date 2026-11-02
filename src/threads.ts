@@ -43,6 +43,9 @@ export const threadsTermsSchema = z.strictObject({
 });
 export type ThreadsTerms = z.infer<typeof threadsTermsSchema>;
 
+/** The row a threads grant's `where` is evaluated over at admission: the thread, by `id`. */
+export const threadRow = (threadId: string) => ({ id: threadIdSchema.parse(threadId) });
+
 const order = <T extends string>(values: readonly T[]) => {
   const rank = (value: T) => values.indexOf(value);
   return (granted: T, requested: T) => rank(granted) <= rank(requested);
