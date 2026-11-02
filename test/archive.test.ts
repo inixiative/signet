@@ -2,18 +2,12 @@ import { describe, expect, test } from 'bun:test';
 import {
   accessInputSchema,
   archiveInputSchemas,
-  archiveLensRefusal,
-  archiveLensSchema,
   archiveOperationNames,
   archiveOperationSchema,
   archiveSourceOperations,
   declaredOperationSchema,
-  eventsOperationNames,
-  eventsOperationSchema,
   githubOperationNames,
   githubOperationSchema,
-  narrowsArchiveLens,
-  narrowsSignetLens,
   operationInputFromAccess,
   operationInputKeys,
   operationInputSchemas,
@@ -22,7 +16,6 @@ import {
 } from '../src';
 
 const a = 'a'.repeat(64);
-const b = 'b'.repeat(64);
 const resourceId = crypto.randomUUID();
 
 describe('the Archive operation contract', () => {
@@ -43,12 +36,6 @@ describe('the Archive operation contract', () => {
   test('operation names are unique across contracts, and every declared one is named', () => {
     const threads: readonly string[] = threadOperationSchema.options;
     const github: readonly string[] = githubOperationSchema.options;
-    const events: readonly string[] = eventsOperationSchema.options;
-    expect(
-      [...threads, ...github, ...archiveOperationSchema.options].filter((operation) =>
-        events.includes(operation),
-      ),
-    ).toEqual([]);
     expect(
       archiveOperationSchema.options.filter(
         (operation) => threads.includes(operation) || github.includes(operation),
@@ -60,14 +47,12 @@ describe('the Archive operation contract', () => {
     expect(declaredOperationSchema.options).toHaveLength(
       threadOperationSchema.options.length +
         archiveOperationSchema.options.length +
-        githubOperationSchema.options.length +
-        eventsOperationSchema.options.length,
+        githubOperationSchema.options.length,
     );
     const names: Record<string, string> = {
       ...threadOperationNames,
       ...archiveOperationNames,
       ...githubOperationNames,
-      ...eventsOperationNames,
     };
     for (const operation of declaredOperationSchema.options) {
       expect(names[operation]).toBeDefined();
@@ -128,35 +113,5 @@ describe('the Archive operation contract', () => {
     expect(
       operationInputFromAccess('documents.read', accessInputSchema.parse({ resourceId })).success,
     ).toBe(true);
-  });
-});
-
-describe('the Archive lens', () => {
-  test('narrowing keeps to the requested documents and fields', () => {
-    expect(narrowsArchiveLens({ documentIds: [a] }, { documentIds: [a, b] })).toBe(true);
-    expect(narrowsArchiveLens({ documentIds: [a, b] }, { documentIds: [a] })).toBe(false);
-    expect(narrowsArchiveLens({}, { documentIds: [a] })).toBe(false);
-    expect(narrowsArchiveLens({ documentIds: [a] }, {})).toBe(true);
-    expect(narrowsArchiveLens({ fields: ['title'] }, { fields: ['title', 'content'] })).toBe(true);
-    expect(narrowsArchiveLens({ fields: ['content'] }, { fields: ['title'] })).toBe(false);
-    expect(narrowsSignetLens({ documentIds: [a] }, { documentIds: [a, b] })).toBe(true);
-  });
-
-  test('sessions operations take no lens; search needs content over every document', () => {
-    const lens = (value: unknown) => archiveLensSchema.parse(value);
-    expect(archiveLensRefusal('sessions.write', lens({}))).toBeNull();
-    expect(archiveLensRefusal('sessions.delete', lens({}))).toBeNull();
-    expect(archiveLensRefusal('sessions.delete', lens({ documentIds: [a] }))).toBe(
-      'Writing or deleting sessions takes no lens',
-    );
-    expect(archiveLensRefusal('sessions.write', lens({ fields: ['title'] }))).toBe(
-      'Writing or deleting sessions takes no lens',
-    );
-    expect(archiveLensRefusal('documents.search', lens({ documentIds: [a] }))).not.toBeNull();
-    expect(archiveLensRefusal('documents.search', lens({ fields: ['title'] }))).not.toBeNull();
-    expect(archiveLensRefusal('documents.search', lens({ fields: ['content'] }))).toBeNull();
-    expect(
-      archiveLensRefusal('documents.read', lens({ documentIds: [a], fields: ['title'] })),
-    ).toBe(null);
   });
 });

@@ -3,41 +3,33 @@ import {
   archiveDocumentIdSchema,
   archiveFieldSchema,
   archiveInputSchemas,
-  archiveLensSchema,
-  archiveLibraryResourceKind,
   archiveOperationSchema,
-  narrowsArchiveLens,
 } from './archive';
+import { githubInputSchemas, githubOperationSchema, gitObjectIdSchema } from './github';
 import {
-  eventsInputSchemas,
-  eventsLensSchema,
-  eventsOperationSchema,
-  eventsResourceKind,
-  narrowsEventsLens,
-} from './events';
-import {
-  githubInputSchemas,
-  githubOperationSchema,
-  gitObjectIdSchema,
-  narrowsRepositoryLens,
-  repositoryLensSchema,
-  repositoryResourceKind,
-} from './github';
+  grantTermsFitKind,
+  grantTermsSchema,
+  requestedResourceSchema,
+  type SignetGrant,
+  signetGrantSchema,
+  signetResourceSchema,
+} from './grants';
+import { storedLensLayersSchema } from './lens';
 import {
   foundryIdSchema,
-  narrowsThreadsLens,
   threadFloorActionSchema,
   threadIdSchema,
   threadInputSchemas,
   threadOperationSchema,
-  threadsLensSchema,
-  threadsResourceKind,
   threadTextLimit,
 } from './threads';
 
 export * from './archive';
 export * from './events';
 export * from './github';
+export * from './grants';
+export * from './lens';
+export * from './operations';
 export * from './threads';
 
 const token43 = /^[A-Za-z0-9_-]{43}$/;
@@ -88,83 +80,12 @@ export const signetKeySchema = publicClientKeySchema.extend({
 export type PublicClientKey = z.infer<typeof publicClientKeySchema>;
 export type SignetKey = z.infer<typeof signetKeySchema>;
 
-/** Every other resource kind takes no lens. */
-export const emptyLensSchema = z.strictObject({});
-
-/**
- * A grant's lens. `signetResourceSchema` names a resource by id with no `kind`, so the contract can
- * only hold a union of the strict shapes; which shape a grant may carry depends on its resource's
- * kind, and Kingdom checks that with `resourceLensSchema` against the kind it stores (review R9).
- * `{}` parses as the empty Archive lens: "no lens", valid for every kind but `threads`.
- */
-export const signetLensSchema = z.union([
-  archiveLensSchema,
-  threadsLensSchema,
-  repositoryLensSchema,
-  eventsLensSchema,
-]);
-export type SignetLens = z.infer<typeof signetLensSchema>;
-
-/** The lens shape a resource of `kind` takes. */
-export const resourceLensSchema = (kind: string) =>
-  kind === archiveLibraryResourceKind
-    ? archiveLensSchema
-    : kind === threadsResourceKind
-      ? threadsLensSchema
-      : kind === repositoryResourceKind
-        ? repositoryLensSchema
-        : kind === eventsResourceKind
-          ? eventsLensSchema
-          : emptyLensSchema;
-
-/**
- * `granted` reaches nothing `requested` doesn't, for lenses of the same resource. Approving someone
- * else's request may only narrow; an owner revising their own grant may widen (review U3). A lens of
- * another shape than the request's is refused.
- */
-export const narrowsSignetLens = (granted: SignetLens, requested: SignetLens): boolean => {
-  if ('threads' in granted || 'threads' in requested)
-    return 'threads' in granted && 'threads' in requested && narrowsThreadsLens(granted, requested);
-  const isEvents = (lens: SignetLens) => 'where' in lens || 'select' in lens || 'name' in lens;
-  if (isEvents(granted) || isEvents(requested)) {
-    const eventsGranted = eventsLensSchema.safeParse(granted);
-    const eventsRequested = eventsLensSchema.safeParse(requested);
-    return (
-      eventsGranted.success &&
-      eventsRequested.success &&
-      narrowsEventsLens(eventsGranted.data, eventsRequested.data)
-    );
-  }
-  if ('commits' in granted || 'commits' in requested) {
-    const repositoryGranted = repositoryLensSchema.safeParse(granted);
-    const repositoryRequested = repositoryLensSchema.safeParse(requested);
-    return (
-      repositoryGranted.success &&
-      repositoryRequested.success &&
-      narrowsRepositoryLens(repositoryGranted.data, repositoryRequested.data)
-    );
-  }
-  const archiveGranted = archiveLensSchema.safeParse(granted);
-  const archiveRequested = archiveLensSchema.safeParse(requested);
-  return (
-    archiveGranted.success &&
-    archiveRequested.success &&
-    narrowsArchiveLens(archiveGranted.data, archiveRequested.data)
-  );
-};
-
-export const signetResourceSchema = z.strictObject({
-  resourceId: z.uuid(),
-  operations: z.array(z.string().min(1).max(80)).min(1).max(100),
-  lens: signetLensSchema.default({}),
-});
 export const signetRecipientSchema = z.discriminatedUnion('recipientModel', [
   z.strictObject({ recipientModel: z.literal('User'), userId: z.uuid() }),
   z.strictObject({ recipientModel: z.literal('Integration'), integrationId: z.uuid() }),
 ]);
 export const signetLifecycleSchema = z.enum(['request', 'task', 'ongoing']);
 export type SignetRecipient = z.infer<typeof signetRecipientSchema>;
-export type SignetResource = z.infer<typeof signetResourceSchema>;
 
 export const signetEnrollmentSchema = z.strictObject({
   signetId: z.uuid(),
@@ -206,18 +127,6 @@ const signetTerms = {
 /** A local Foundry, Archive or Oracle known to Kingdom by its key. */
 export const installationKindSchema = z.enum(['foundry', 'archive', 'oracle']);
 export type InstallationKind = z.infer<typeof installationKindSchema>;
-/**
- * A resource asked for by kind, and optionally name, when the asker does not know its id: an
- * Installation registering, or a party asking to join a Foundry's `threads` (one per Foundry, so the
- * integration id names it). Kingdom resolves it to the resource's id before anyone reviews it.
- */
-export const requestedResourceKindSchema = z.strictObject({
-  resourceKind: z.string().min(1).max(80),
-  resourceName: z.string().trim().min(1).max(120).optional(),
-  operations: z.array(z.string().min(1).max(80)).min(1).max(100),
-  lens: signetLensSchema.default({}),
-});
-export const requestedResourceSchema = z.union([signetResourceSchema, requestedResourceKindSchema]);
 /** What a party asks for on an integration: resources by id or by kind (review R8). */
 export const signetProposalSchema = z.strictObject({
   ...signetTerms,
@@ -260,7 +169,6 @@ export const signetRequestResponseSchema = z.object({
 export type SignetProposal = z.infer<typeof signetProposalSchema>;
 export type RegistrationTerms = z.infer<typeof registrationTermsSchema>;
 export type RequestedOwner = z.infer<typeof requestedOwnerSchema>;
-export type RequestedResource = z.input<typeof requestedResourceSchema>;
 export type RegistrationRequest = z.input<typeof registrationRequestSchema>;
 export type SignetRequest = z.infer<typeof signetRequestSchema>;
 export type SignetRequestResponse = z.infer<typeof signetRequestResponseSchema>;
@@ -330,18 +238,7 @@ export const installationInquiriesResponseSchema = z.object({
 });
 export const inquiryReferenceSchema = z.strictObject({ inquiryId: z.uuid() });
 
-/** One resource a Signet reaches, with its stored kind, so its lens can be checked against it. */
-export const signetGrantSchema = z.object({
-  resourceId: z.uuid(),
-  kind: z.string().min(1).max(80),
-  operations: z.array(z.string().min(1).max(80)),
-  lens: signetLensSchema,
-});
-export type SignetGrant = z.infer<typeof signetGrantSchema>;
 const grantsSchema = z.array(signetGrantSchema);
-/** Whether a grant's lens is the shape its resource's kind takes. */
-export const grantLensFitsKind = (grant: Pick<SignetGrant, 'kind' | 'lens'>) =>
-  resourceLensSchema(grant.kind).safeParse(grant.lens).success;
 
 /** Who a Signet is issued to. Recipients run broad (2026-10-18); Kingdom widens issuing in K0. */
 export const signetRecipientModelSchema = z.enum([
@@ -403,7 +300,8 @@ export const signetDescriptionResourceSchema = z.object({
   name: z.string(),
   kind: z.string(),
   integrationId: z.uuid(),
-  lens: signetLensSchema,
+  lens: storedLensLayersSchema.optional(),
+  terms: grantTermsSchema.optional(),
 });
 export const signetDescriptionSchema = z.object({
   signetId: z.uuid(),
@@ -498,14 +396,12 @@ export const declaredOperationSchema = z.enum([
   ...threadOperationSchema.options,
   ...archiveOperationSchema.options,
   ...githubOperationSchema.options,
-  ...eventsOperationSchema.options,
 ]);
 export type DeclaredOperation = z.infer<typeof declaredOperationSchema>;
 export const operationInputSchemas = {
   ...threadInputSchemas,
   ...archiveInputSchemas,
   ...githubInputSchemas,
-  ...eventsInputSchemas,
 } as const satisfies Record<DeclaredOperation, z.ZodObject>;
 export type OperationInput<O extends DeclaredOperation> = z.infer<
   (typeof operationInputSchemas)[O]
@@ -552,7 +448,7 @@ const entryId = (value: unknown) => {
 };
 /**
  * Parse each entry on its own and drop the ones that don't parse. A Kingdom ahead of this package
- * (a selector form it doesn't know, a new field shape) then costs only those entries: never the
+ * (a term it doesn't know, a new field shape) then costs only those entries: never the
  * Installation's other grants or its own held Signets. A missing list reads as empty, reported.
  */
 export function parseEntries<T>(
@@ -577,12 +473,14 @@ export function parseEntries<T>(
   });
 }
 
-const lensFits = (grant: Pick<SignetGrant, 'kind' | 'lens'>) =>
-  grantLensFitsKind(grant) ? null : `a ${grant.kind} resource carries a lens of another shape`;
+const termsFit = (grant: SignetGrant) =>
+  grant.resourceModel === 'Project' || grantTermsFitKind(grant.kind, grant.terms)
+    ? null
+    : `a ${grant.kind} resource carries terms of another kind`;
 
 /**
  * Signets read per entry, and their resources per entry inside them: a resource this package can't
- * read (a newer lens, a lens that doesn't fit its kind) is dropped and reported, and the Signet is
+ * read (a newer term, terms that don't fit its kind) is dropped and reported, and the Signet is
  * kept, so the Installation never loses a held Signet (or mistakes a member for revoked) over one
  * resource.
  */
@@ -602,7 +500,7 @@ function parseSignetsWithGrants<S extends z.ZodObject<{ resources: typeof grants
           entry.resources,
           signetGrantSchema,
           dropped,
-          lensFits,
+          termsFit,
         ),
       }) as z.infer<S>,
   );
@@ -654,7 +552,7 @@ export function parseInstallationSnapshot(value: unknown): InstallationSnapshot 
 
 export type ParsedSignetDescription = SignetDescription & { dropped: DroppedEntry[] };
 
-/** `access/describe`, per entry: a resource whose lens doesn't parse, or doesn't fit its kind, is dropped. */
+/** `access/describe`, per entry: a resource whose lens or terms don't parse, or don't fit its kind, is dropped. */
 export function parseSignetDescription(value: unknown): ParsedSignetDescription {
   const dropped: DroppedEntry[] = [];
   const record = z
@@ -668,7 +566,10 @@ export function parseSignetDescription(value: unknown): ParsedSignetDescription 
       operation.resources,
       signetDescriptionResourceSchema,
       dropped,
-      (resource) => (grantLensFitsKind(resource) ? null : 'lens does not fit the resource kind'),
+      (resource) =>
+        grantTermsFitKind(resource.kind, resource.terms)
+          ? null
+          : 'terms do not fit the resource kind',
     ),
   }));
   return { ...signetDescriptionSchema.parse({ ...record, operations }), dropped };

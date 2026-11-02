@@ -409,7 +409,7 @@ export const enrollSignet = async (
 
 /**
  * The Signets held by this installation's integrations, and those issued on them (`hostedSignets`).
- * Read per entry: a Signet whose lens this package can't read is dropped and listed in `dropped`.
+ * Read per entry: a Signet whose grants this package can't read is dropped and listed in `dropped`.
  */
 export const installationSignets = (
   url: string,
@@ -610,7 +610,7 @@ export class SignetClient {
       { signal, timeoutMs: options.timeoutMs },
     );
   }
-  /** Read per entry: a resource whose lens this package can't read is dropped, listed in `dropped`. */
+  /** Read per entry: a resource whose lens or terms this package can't read is dropped, listed in `dropped`. */
   async describe(options: SignetRequestOptions = {}) {
     return parseSignetDescription(
       await this.post('describe', { signetId: this.signetId }, undefined, options),
