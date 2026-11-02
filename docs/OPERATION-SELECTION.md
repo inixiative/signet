@@ -1,6 +1,6 @@
 # Operation selection: pick and omit over the operation tree
 
-Coordinating doc for inixiative-bf (signet grant core, Kingdom grant table) and inixiative-ec (Archive, the first requester). Status: **draft, revised after Aron's answers (2026-11-02); for his confirmation.** No code changes until he confirms the shape.
+Coordinating doc for inixiative-bf (signet grant core, Kingdom grant table) and inixiative-ec (Archive, the first requester). Status: **draft; lens spike done (2026-11-02), differing rows are for Aron (see Log). No `src` code until he rules on them.**
 
 ## Why
 
