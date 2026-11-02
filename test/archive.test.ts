@@ -8,6 +8,8 @@ import {
   archiveOperationSchema,
   archiveSourceOperations,
   declaredOperationSchema,
+  eventsOperationNames,
+  eventsOperationSchema,
   githubOperationNames,
   githubOperationSchema,
   narrowsArchiveLens,
@@ -41,6 +43,12 @@ describe('the Archive operation contract', () => {
   test('operation names are unique across contracts, and every declared one is named', () => {
     const threads: readonly string[] = threadOperationSchema.options;
     const github: readonly string[] = githubOperationSchema.options;
+    const events: readonly string[] = eventsOperationSchema.options;
+    expect(
+      [...threads, ...github, ...archiveOperationSchema.options].filter((operation) =>
+        events.includes(operation),
+      ),
+    ).toEqual([]);
     expect(
       archiveOperationSchema.options.filter(
         (operation) => threads.includes(operation) || github.includes(operation),
@@ -52,12 +60,14 @@ describe('the Archive operation contract', () => {
     expect(declaredOperationSchema.options).toHaveLength(
       threadOperationSchema.options.length +
         archiveOperationSchema.options.length +
-        githubOperationSchema.options.length,
+        githubOperationSchema.options.length +
+        eventsOperationSchema.options.length,
     );
     const names: Record<string, string> = {
       ...threadOperationNames,
       ...archiveOperationNames,
       ...githubOperationNames,
+      ...eventsOperationNames,
     };
     for (const operation of declaredOperationSchema.options) {
       expect(names[operation]).toBeDefined();
