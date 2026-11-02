@@ -46,7 +46,21 @@ export const integrationEventSchema = z.strictObject({
 });
 export type IntegrationEvent = z.infer<typeof integrationEventSchema>;
 
-/** The envelope fields a channel may `select`. */
+/**
+ * The integration itself as a model: account-level events that belong to no repository, channel or
+ * team (a person's mentions, review requests and assignments from GitHub's notifications, a Slack DM)
+ * hang off it. Each integration that receives events has one `account` resource.
+ */
+export const accountResourceKind = 'account';
+
+/**
+ * An event kind's operation leaf: `events.<provider event>.<action>`, mirroring the provider's own
+ * taxonomy (Aron, 2026-11-01). A grant picks it like any operation, a prefix (`events.pull_request.*`)
+ * or everything (`full`).
+ */
+export const eventOperationKey = (type: IntegrationEvent['type']) => `events.${type}`;
+
+/** The envelope's fields, for the base event lens a provider's catalog declares over the event model. */
 export const integrationEventFieldSchema = z.enum([
   'eventId',
   'integrationId',
@@ -64,29 +78,23 @@ export const integrationEventFieldSchema = z.enum([
 ]);
 export type IntegrationEventField = z.infer<typeof integrationEventFieldSchema>;
 
-/** What a holder receives from a channel: the event, cut to the channel's `select`. */
-export const selectedEventSchema = integrationEventSchema
-  .partial()
-  .required({ eventId: true, type: true });
-export type SelectedEvent = z.infer<typeof selectedEventSchema>;
-
-/** The event as a channel's `select` lets it through; `eventId` and `type` always go. */
-export const selectEvent = (
-  lens: { select?: readonly IntegrationEventField[] },
-  event: IntegrationEvent,
-): SelectedEvent => {
-  if (!lens.select) return event;
-  const fields = new Set<IntegrationEventField>([...lens.select, 'eventId', 'type']);
-  return Object.fromEntries(
-    Object.entries(event).filter(([key]) => fields.has(key as IntegrationEventField)),
-  ) as SelectedEvent;
-};
+/**
+ * One append on a channel's stream. `eventId` and `type` ride outside the projected body, so the
+ * grant's lens trimming can never drop what a holder needs to dedupe and route; `event` is the
+ * envelope as the grant's lens layers project it (json-rules `projectRows`).
+ */
+export const accessEventsAppendSchema = z.strictObject({
+  eventId: integrationEventSchema.shape.eventId,
+  type: integrationEventSchema.shape.type,
+  event: z.record(z.string(), z.unknown()),
+});
+export type AccessEventsAppend = z.infer<typeof accessEventsAppendSchema>;
 
 /**
  * A channel's live stream is a Kingdom data stream, like a thread's (`accessThread`): its family is
  * the operationId of Kingdom's snapshot route `GET /api/v1/access/events/{resourceId}/{signetId}`,
  * and its name that route's channel key (path fields sorted). The snapshot is always empty: there is
- * no backlog. Each append's payload is one `SelectedEvent`.
+ * no backlog. Each append's payload is one `AccessEventsAppend`.
  */
 export const accessEventsStreamFamily = 'accessEvents';
 export const accessEventsStreamName = (stream: { signetId: string; resourceId: string }) =>
