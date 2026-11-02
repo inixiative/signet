@@ -1,76 +1,87 @@
 # Operation selection: pick and omit over the operation tree
 
-Coordinating doc for inixiative-bf (signet grant core, Kingdom grant table) and inixiative-ec (Archive, the first requester). Status: **draft, for Aron's yes**. Nothing in code changes until the decision points below are settled.
+Coordinating doc for inixiative-bf (signet grant core, Kingdom grant table) and inixiative-ec (Archive, the first requester). Status: **draft, revised after Aron's answers (2026-11-02); for his confirmation.** No code changes until he confirms the shape.
 
 ## Why
 
 Aron, 2026-11-02, on signet 0.12.0's `{ full: true } | { picks: [...] }`:
 
-> It's not just full or true. It should just be a pick or omit, right? … The reason I like a lens for this is because you can do a combination of picks and omits, and it's a nested object. … The problem is: do you omit a whole branch, some parts of a branch, or just a couple leaves? Figure out some TDD around that that doesn't just blow up.
+> It's not just full or true. It should just be a pick or omit, right? … The reason I like a lens for this is because you can do a combination of picks and omits … do you omit a whole branch, some parts of a branch, or just a couple leaves? Figure out some TDD around that that doesn't just blow up.
 
-His earlier ruling on lenses applies the same way: "omits picks and relations all compose.. only choosing picks is a major error."
+And on the first draft:
 
-`full` is "omit nothing": signet already defines it as "everything the resource offers, now and as its catalog grows". Pick-only can't say "everything except X". Today that needs either a list of every other leaf, which goes stale when the catalog grows, or `full`.
+> The object should match the map of the operations … Then it needs to have a serialized narrow order, which is why I like lenses … You have a bunch of top-level models. If one's not listed, is that included or not? … We just need a consistent way of describing things so that you can traverse down a thing … Only that path along the branch is given. If you want to remove something, you can omit just that path on the branch as well, with dot path notation. If you pick or omit at any node along the branch, it gets everything [below] that.
+
+His earlier ruling on lenses applies too: "omits picks and relations all compose.. only choosing picks is a major error."
+
+`full` is just "no picks, no omits". Pick-only can't say "everything except X".
 
 ## What exists, and what this reuses
 
 | Concern | Existing primitive | Use |
 |---|---|---|
-| Operation catalog and tree | `signet/src/operations.ts`: dotted leaf keys, `operationTree` (a key can be both a leaf and a branch) | unchanged: the tree a selection walks |
-| Group pick | `key.*` in `resolveOperationPicks` | replaced by naming a branch (below) |
-| Pick/omit semantics and layering | json-rules lens: `picks` and `omits` at each node, relations narrowed per hop, layers intersect picks and union omits, a later layer only narrows, naming what an ancestor hid is an error (`json-rules/docs/LENS.md` §2, §5; codes `not_in_lens`, `not_visible`, `conflicting_selection`) | **the same rules**, applied to the operation tree: lens field = operation leaf, lens relation = operation branch |
-| Narrowing check | `narrowsOperations`, `permitsOperation`, `scopeRefusal` | kept; they take the resolved scope |
+| The operations map | the provider catalog: dotted leaf keys, `operationTree` (`signet/src/operations.ts`) | a selection names paths in this map, so its shape is the map's |
+| Ordered narrowing layers | json-rules lens: layers in order, picks intersect, omits union, a later layer only narrows, naming what an ancestor hid is an error (`json-rules/docs/LENS.md` §5) | the same composition, layer by layer |
+| Refusal checks | `narrowsOperations`, `permitsOperation`, `scopeRefusal` | kept; they take the resolved scope |
 
-No new machinery: a selection is the lens's pick/omit narrowing, without `where`, over a tree whose nodes are operation segments.
-
-## The shape (proposed)
+## The shape
 
 ```ts
-/** One node's narrowing. Every name is a direct child of this node: a leaf or a branch. */
-type OperationSelection = {
-  picks?: string[];  // keep only these children (default: all, including ones added later)
-  omits?: string[];  // drop these children (a whole branch, or a leaf)
-  branches?: Record<string, OperationSelection>; // narrow a kept child branch ("parts of a branch")
-};
+/** One layer. Every entry is a dot path into the operations map; a path names a node and everything under it. */
+type OperationLayer = { picks?: string[]; omits?: string[] };
+/** The request's layer first, then each approver's, in order; the integration's baseline caps all of them. */
+type OperationSelection = OperationLayer[];
 ```
 
-The three cases Aron named:
+The rule is the same at every level, top-level resources included:
 
-| Want | Selection |
+1. **No picks:** everything in the map is in, including what the provider adds later.
+2. **Picks:** only the picked paths are in, each with everything under it.
+3. **Omits:** then remove each omitted path, with everything under it.
+4. **Layers:** each layer applies to what the previous one left; it can only narrow.
+
+So the answer to "if one's not listed, is it included?" never depends on depth. A layer without picks includes it; a layer with picks doesn't.
+
+| Want | Layer |
 |---|---|
 | Everything (today's `full`) | `{}` |
 | Omit a whole branch | `{ omits: ['events'] }` |
-| Omit some of a branch | `{ branches: { events: { omits: ['pull_request'] } } }` |
-| Omit a couple of leaves | `{ branches: { sessions: { omits: ['delete'] } } }` |
-| Pick a whole branch | `{ picks: ['sessions'] }` |
-| Pick a couple of leaves | `{ picks: ['sessions'], branches: { sessions: { picks: ['write', 'delete'] } } }` |
-| Mixed | `{ omits: ['commits'], branches: { events: { picks: ['pull_request'], branches: { pull_request: { omits: ['opened'] } } } } }` |
+| Omit part of a branch | `{ omits: ['events.pull_request'] }` |
+| Omit a couple of leaves | `{ omits: ['sessions.delete', 'documents.search'] }` |
+| Pick a branch | `{ picks: ['sessions'] }` |
+| Pick a couple of leaves | `{ picks: ['sessions.write', 'sessions.delete'] }` |
+| Pick a branch, minus a leaf | `{ picks: ['events'], omits: ['events.pull_request.opened'] }` |
 
-Rules, one place each:
+**Growth follows from the paths.** A picked or unrestricted node takes what the provider adds under it, while a picked leaf is fixed. `{}` grows everywhere, `{ picks: ['sessions'] }` takes a future `sessions.restore`, and `{ picks: ['sessions.write'] }` never grows. An omit-based layer widens as the catalog grows; the baseline caps it live.
 
-1. **At a node:** start from its children (all of them, or `picks`), remove `omits`, then narrow each remaining branch by `branches[name]`. A branch kept with no entry in `branches` is whole.
-2. **Growth:** a node with no `picks` takes children the catalog adds later; a node with `picks` is fixed to those children, but each picked branch still grows inside unless it is narrowed itself. So `{}` grows everywhere (today's `full`), and `{ picks: ['sessions'] }` takes a future `sessions.restore`.
-3. **Layers** (requester's ask, then each approver; the integration's baseline caps all): picks intersect, omits union, `branches` compose per child. A layer can only narrow, never re-add.
-4. **Validation**, with the lens's codes:
-   - `not_in_catalog`: a name that isn't a child of this node.
-   - `not_visible`: a layer names something an earlier layer removed.
-   - `conflicting_selection`: the same name in both `picks` and `omits`, or in `branches` while omitted.
-   - `wrong_kind`: `branches` names a leaf.
-   - `empty_selection`: the selection reaches no leaf (a typo never saves an empty grant, as `OperationPickError` does today).
-5. **Resolution:** `resolveOperationSelection(catalog, layers) → { operations: string[] }`, in catalog order. It is recomputed whenever the catalog changes, so growth is real. A stored grant keeps its layers, not only the leaves they resolved to.
+**A key that is both a leaf and a branch** (`events` as an operation, with `events.push` under it): naming `events` takes both. To keep only the leaf, omit `events.*`, which is the existing group syntax, here meaning "every child".
 
-## Decision points for Aron
+**Validation** uses the lens's codes:
+- `not_in_catalog`: a path the map doesn't have.
+- `not_visible`: a layer names a path an earlier layer removed.
+- `conflicting_selection`: in one layer, an omit that equals a pick, or a pick inside an omitted path.
+- `empty_selection`: the selection reaches no operation (a typo never saves an empty grant).
 
-1. **Nested object (above) or dotted paths in flat lists?** The alternative is `{ picks?: string[], omits?: string[] }` with relative dotted names (`omits: ['sessions.delete', 'events']`). That's shorter for one-off leaves, but it's a second way to write the same thing, and `conflicting_selection` gets harder (`events` vs `events.push`). Recommendation: **nested only**, because it is the lens's shape and has one place per node.
-2. **Omit grows.** An omit-based selection widens on its own as the provider adds operations. That's the point, and `full` already does it. Recommendation: keep it, since the baseline caps it live. A grantor who wants it fixed uses `picks`.
-3. **A key that is both a leaf and a branch** (`events` as an operation, with `events.push` under it). Recommendation: naming `events` means the leaf and its whole subtree. To keep only the leaf, write `branches: { events: { picks: [] } }`; empty `picks` means "none of the children", and is valid only there.
-4. **Store layers, resolve live.** Signet 0.12 resolves picks to leaves once, at save time. Under this design a grant row stores its selection layers and resolves on read, or when the catalog changes. Recommendation: store layers, plus the resolved leaves as a cache refreshed on catalog change, so refusals stay cheap.
+## Resolution and caching
+
+`resolveOperationSelection(catalog, layers) → string[]` (leaves, in catalog order) and `permitsSelection(catalog, layers, operation)` are pure functions over the map.
+
+Kingdom's catalogs are code ("catalogs are code/enums"), so resolving is an in-memory walk with nothing to cache. A grant row stores its layers, not the leaves they resolved to, so growth is real.
+
+If a provider's map is ever fetched rather than coded, that fetched map is what gets cached, with a time-to-live. A grant's result is never cached.
+
+A selection is lens-shaped data, so if operations ever become rows, the same paths compile to a query filter the way a lens's narrowing does. Nothing needs that today.
+
+## Open for Aron
+
+1. **Confirm the reading:** layers of `{ picks, omits }` with dot paths, one rule at every depth, a named node covering its subtree.
+2. **`events.*` to mean "children only"** for a key that is both a leaf and a branch. That case is rare; GitHub events may have it.
 
 ## TDD: one table, one resolver
 
-One fixture catalog and one table-driven test file, `tests/operation-selection.test.ts`. Each row is `selection layers → leaves now → leaves after the catalog grows`, or an error code. New cases are rows, not new tests. That keeps it from turning into a pile of bespoke tests.
+One fixture catalog, and one table-driven file, `tests/operation-selection.test.ts`. Each row is `layers → leaves now → leaves after the catalog grows`, or an error code. New cases are new rows.
 
-Fixture catalog (now):
+Fixture catalog (now, 9 leaves):
 
 ```
 sessions.read  sessions.write  sessions.delete
@@ -83,31 +94,33 @@ Grown catalog: adds `sessions.restore`, `events.pull_request.closed`, `issues.re
 
 | # | Layers | Now | After growth |
 |---|---|---|---|
-| 1 | `{}` | all 9 | all 12 |
-| 2 | `{ omits: ['events'] }` | 6 (no events) | 8 (+restore, +issues.read) |
-| 3 | `{ branches: { events: { omits: ['pull_request'] } } }` | 7 | 9 (+restore, +issues.read; not +closed) |
-| 4 | `{ branches: { sessions: { omits: ['delete'] } } }` | 8 | 11 (+restore, +closed, +issues.read) |
-| 5 | `{ picks: ['sessions'] }` | read, write, delete | + restore |
-| 6 | `{ picks: ['sessions'], branches: { sessions: { picks: ['write', 'delete'] } } }` | write, delete | write, delete (fixed) |
-| 7 | mixed (shape table above) | review_requested, sessions.\*, documents.\* | + restore, + closed, + issues.read |
-| 8 | layers `{ picks: ['sessions', 'documents'] }` then `{ omits: ['documents'] }` | sessions.\* | + restore |
-| 9 | layers `{ omits: ['events'] }` then `{ picks: ['events'] }` | error `not_visible` | |
-| 10 | `{ picks: ['sessions'], omits: ['sessions'] }` | error `conflicting_selection` | |
-| 11 | `{ omits: ['events'], branches: { events: {} } }` | error `conflicting_selection` | |
-| 12 | `{ branches: { commits: { picks: ['read'] } }, picks: ['sesions'] }` | error `not_in_catalog` (`sesions`) | |
-| 13 | `{ branches: { sessions: { branches: { read: {} } } } }` | error `wrong_kind` | |
-| 14 | `{ picks: ['sessions'], branches: { sessions: { omits: ['read', 'write', 'delete'] } } }` | error `empty_selection` | |
-| 15 | baseline `{ omits: ['commits'] }`, ask `{}` | 8 | 11 |
-| 16 | Archive's ask: `{ picks: ['sessions'], branches: { sessions: { picks: ['write', 'delete'] } } }` | write, delete | write, delete |
+| 1 | `[{}]` | all 9 | all 12 |
+| 2 | `[{ omits: ['events'] }]` | 6 | 8 (+restore, +issues.read) |
+| 3 | `[{ omits: ['events.pull_request'] }]` | 7 | 9 (+restore, +issues.read) |
+| 4 | `[{ omits: ['sessions.delete'] }]` | 8 | 11 |
+| 5 | `[{ picks: ['sessions'] }]` | read, write, delete | + restore |
+| 6 | `[{ picks: ['sessions.write', 'sessions.delete'] }]` | write, delete | write, delete (fixed) |
+| 7 | `[{ picks: ['sessions', 'documents', 'events.pull_request'], omits: ['events.pull_request.opened'] }]` | sessions.\*, documents.\*, review_requested | + restore, + closed |
+| 8 | `[{ picks: ['sessions', 'documents'] }, { omits: ['documents'] }]` | sessions.\* | + restore |
+| 9 | `[{ omits: ['events'] }, { picks: ['events'] }]` | error `not_visible` | |
+| 10 | `[{ picks: ['sessions'], omits: ['sessions'] }]` | error `conflicting_selection` | |
+| 11 | `[{ omits: ['events'], picks: ['events.push'] }]` | error `conflicting_selection` | |
+| 12 | `[{ picks: ['sesions'] }]` | error `not_in_catalog` | |
+| 13 | `[{ omits: ['commits.read.extra'] }]` | error `not_in_catalog` | |
+| 14 | `[{ picks: ['sessions'], omits: ['sessions.read', 'sessions.write', 'sessions.delete'] }]` | error `empty_selection` | |
+| 15 | baseline `[{ omits: ['commits'] }]`, then ask `[{}]` | 8 | 11 |
+| 16 | Archive's ask: `[{ picks: ['sessions.write', 'sessions.delete'] }]` | write, delete | write, delete |
+| 17 | catalog `events`, `events.push`: `[{ omits: ['events.*'] }]` | events | events |
 
-Plus `narrowsOperations` on resolved scopes, which stays as it is: one row per layer pair, checking that each next layer is a narrowing.
+Plus one row per layer pair checking that each next layer is a narrowing, using `narrowsOperations` on the resolved scopes.
 
 ## Who does what
 
-- **bf:** owns the shape and its code in signet (`operations.ts`, `grants.ts`), and Kingdom's grant table and catalog-change refresh. Writes the table test first.
-- **ec:** updates Archive's pairing ask to case 16 when Kingdom moves. Until then Archive holds on signet ^0.11.1, because 0.12 changes the pairing shape and prod Kingdom is on 0.11. Reviews the table from the requester's side.
-- **Aron:** the four decision points.
+- **bf:** owns the shape and its code in signet (`operations.ts`, `grants.ts`), and Kingdom's grant table, which stores layers. Writes the table test first, then the resolver.
+- **ec:** updates Archive's pairing ask to row 16 when Kingdom moves. Until then Archive stays on signet ^0.11.1, because 0.12 changes the pairing shape and prod Kingdom is on 0.11. Reviews the table from the requester's side.
+- **Aron:** the two open items.
 
 ## Log
 
-- 2026-11-02: drafted by ec from Aron's direction; for bf to edit.
+- 2026-11-02: first draft by ec (nested `branches` form, four decision points).
+- 2026-11-02: revised from Aron's answers: dot paths in ordered `{ picks, omits }` layers, one rule at every depth, a named node covers its subtree, store layers and resolve live, cache only a fetched catalog.
