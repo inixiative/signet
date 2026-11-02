@@ -16,32 +16,6 @@ export const threadsResourceKind = 'threads';
 export const foundryIdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
 export const threadIdSchema = foundryIdSchema;
 
-/**
- * Selector forms that are named for standing Signets (design §9) but not built. Each fails to parse
- * on every party until a release adds it to `threadSelectorSchema`, so a new form only takes effect
- * once every side has upgraded and never widens access silently.
- *
- * - `{ form: 'withMember' }`: threads opened with the grant's recipient;
- * - `{ form: 'tag', tag }`: threads carrying a tag.
- */
-export const unbuiltThreadSelectorForms = ['withMember', 'tag'] as const;
-
-/**
- * `ids` takes `within` only once a non-`ids` form exists: `within` will hold exactly one such form
- * (never a selector, so it can't nest), set only by approving a request for a selector form narrowed
- * to `ids` (the grant is then `ids ∩ within`), and approval may never drop or widen it. Until then
- * the strict object refuses `within` like any unknown key: structural, and representable in Kingdom's
- * OpenAPI (a `z.never()` placeholder is not).
- */
-export const idsThreadSelectorSchema = z.strictObject({
-  form: z.literal('ids'),
-  ids: z.array(threadIdSchema).min(1).max(100),
-});
-
-/** Which threads a grant reaches. A discriminated union on `form`; v1 builds only `ids`. */
-export const threadSelectorSchema = z.discriminatedUnion('form', [idsThreadSelectorSchema]);
-export type ThreadSelector = z.infer<typeof threadSelectorSchema>;
-
 /** `own`: the member's posts and the sends addressed to it. `thread`: the main thread's messages. */
 export const threadViewSchema = z.enum(['own', 'thread']);
 /** `note`: rides the owner's next turn. `turn`: queued as a turn of its own. */
@@ -57,38 +31,17 @@ export const threadOutboundSchema = z.enum(['review', 'auto']);
 export const threadFloorTermsSchema = z.strictObject({ mayTake: z.boolean().default(false) });
 
 /**
- * A member's terms on a `threads` resource. Every term but the selector defaults to its narrowest
- * value, so a lens that omits one can only be more careful. `threads` has no default: `{}` is never a
- * valid threads lens, which is why a grant's preset must fill it (review R9).
+ * A member's terms on a `threads` resource: how it takes part, not which threads it reaches (that
+ * is the grant's lens, a json-rules filter Kingdom applies at admission). Every term defaults to its
+ * narrowest value, so terms that omit one can only be more careful.
  */
-export const threadsLensSchema = z.strictObject({
-  threads: threadSelectorSchema,
+export const threadsTermsSchema = z.strictObject({
   view: threadViewSchema.default('own'),
   delivery: threadDeliverySchema.default('note'),
   outbound: threadOutboundSchema.default('review'),
   floor: threadFloorTermsSchema.default({ mayTake: false }),
 });
-export type ThreadsLens = z.infer<typeof threadsLensSchema>;
-
-/** Is `threadId` inside the selector? For `ids`, Kingdom answers this at admission. */
-export const selectsThread = (selector: ThreadSelector, threadId: string): boolean => {
-  switch (selector.form) {
-    case 'ids':
-      return selector.ids.includes(threadId);
-  }
-};
-
-/** `granted` reaches no thread `requested` doesn't: per form, as the design's narrowing rules say. */
-export const narrowsThreadSelector = (
-  granted: ThreadSelector,
-  requested: ThreadSelector,
-): boolean => {
-  switch (requested.form) {
-    case 'ids':
-      // When `within` exists, it must also be kept as asked: never dropped, never added.
-      return granted.form === 'ids' && granted.ids.every((id) => requested.ids.includes(id));
-  }
-};
+export type ThreadsTerms = z.infer<typeof threadsTermsSchema>;
 
 const order = <T extends string>(values: readonly T[]) => {
   const rank = (value: T) => values.indexOf(value);
@@ -100,10 +53,10 @@ const narrowsOutbound = order(threadOutboundSchema.options);
 
 /**
  * Approving a request may only narrow (`own` < `thread`, `note` < `turn`, `review` < `auto`, and
- * `floor.mayTake` only where it was asked for).
+ * `floor.mayTake` only where it was asked for). Terms don't compose like lens layers, so approval
+ * checks them here.
  */
-export const narrowsThreadsLens = (granted: ThreadsLens, requested: ThreadsLens): boolean =>
-  narrowsThreadSelector(granted.threads, requested.threads) &&
+export const narrowsThreadsTerms = (granted: ThreadsTerms, requested: ThreadsTerms): boolean =>
   narrowsView(granted.view, requested.view) &&
   narrowsDelivery(granted.delivery, requested.delivery) &&
   narrowsOutbound(granted.outbound, requested.outbound) &&
@@ -130,7 +83,7 @@ export const threadOperationNames: Record<ThreadOperation, string> = {
  * `local` is a member on the host's own machine (its own Codex, a local Herald), joined in-process
  * with no Signet; `signet` is one that reaches the host through Kingdom.
  * Read paths (entries, views) use plain objects, so a host that adds a field never costs an older
- * member its entries; lenses and request frames stay strict.
+ * member its entries; terms and request frames stay strict.
  */
 export const conversationMemberSchema = z.object({
   kind: z.enum(['owner', 'local', 'signet']),
@@ -263,14 +216,13 @@ export type ThreadResult<O extends keyof typeof threadResultSchemas> = z.infer<
 >;
 
 /**
- * Why the host refused. The first six are the design's refusals, which Kingdom records as
+ * Why the host refused. The first five are the design's refusals, which Kingdom records as
  * `AccessExecution.status = 'denied'` with this `errorCode` (§5.4). `invalid_request` is a frame the
  * host could not read for any other reason, and `failed` an error inside the host; Kingdom records
  * both as `failed`.
  */
 export const threadRefusalSchema = z.enum([
   'unknown_thread',
-  'unknown_selector',
   'thread_closed',
   'floor_denied',
   'not_invited',
@@ -281,7 +233,6 @@ export const threadRefusalSchema = z.enum([
 export type ThreadRefusal = z.infer<typeof threadRefusalSchema>;
 export const threadDeniedRefusals = [
   'unknown_thread',
-  'unknown_selector',
   'thread_closed',
   'floor_denied',
   'not_invited',
@@ -298,10 +249,11 @@ const relayed = {
   /** The `AccessExecution` id: one per admitted call, and the id the answer carries back. */
   requestId: z.uuid(),
   signetId: z.uuid(),
-  /** The Signet revision Kingdom admitted the call under; the lens is that revision's. */
+  /** The Signet revision Kingdom admitted the call under; the terms are that revision's. */
   acceptedRevision: z.number().int().min(1),
   member: threadMemberSchema,
-  lens: threadsLensSchema,
+  /** The member's terms, as Kingdom admitted the call under them. */
+  terms: threadsTermsSchema,
 };
 const requestFrame = <O extends ThreadOperation>(operation: O) =>
   z.strictObject({
@@ -453,7 +405,7 @@ export const accessThreadCloseReasonSchema = z.enum([
   /** The member closed it. */
   'left',
   'revoked',
-  /** Any revision closes the stream; the member reopens under the new lens. */
+  /** Any revision closes the stream; the member reopens under the new revision. */
   'revised',
   'enrollmentRevoked',
   'expired',

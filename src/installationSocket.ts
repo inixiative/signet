@@ -14,7 +14,7 @@ import {
   type ThreadRefusal,
   type ThreadRequestFrame,
   type ThreadSubscribeFrame,
-  type ThreadsLens,
+  type ThreadsTerms,
   threadAppendFrameSchema,
   threadLeaseFrameSchema,
   threadRefused,
@@ -37,7 +37,7 @@ export type ThreadSubscription = {
   threadId: string;
   acceptedRevision: number;
   member: ThreadSubscribeFrame['member'];
-  lens: ThreadsLens;
+  terms: ThreadsTerms;
 };
 /** `overflow`: too many entries arrived while the snapshot was taken; the subscribe is refused and retried. */
 export type ThreadSubscriptionEnd = 'unsubscribed' | 'lease' | 'disconnected' | 'overflow';
@@ -105,18 +105,6 @@ type HeldSubscription = ThreadSubscription & {
 const maxHeldEntries = 1_000;
 /** WebSocket.OPEN, read from the spec rather than whichever WebSocket class was passed. */
 const OPEN = 1;
-
-/** An unknown selector form (or a `within`, which no v1 form fills) is refused as `unknown_selector`. */
-const unknownSelector = (frame: Record<string, unknown>) => {
-  const threads = z
-    .object({ threads: z.object({ form: z.string(), within: z.unknown().optional() }).loose() })
-    .loose()
-    .safeParse(frame.lens);
-  return (
-    threads.success &&
-    (threads.data.threads.form !== 'ids' || threads.data.threads.within !== undefined)
-  );
-};
 
 /**
  * Kingdom's live line to an Installation. It proves the installation's key, then receives a
@@ -349,11 +337,7 @@ export class InstallationSocket {
     const frame = threadRequestFrameSchema.safeParse(raw);
     if (!frame.success) {
       this.options.onError?.(frame.error);
-      return this.refuse(
-        socket,
-        requestId.data,
-        unknownSelector(raw) ? 'unknown_selector' : 'invalid_request',
-      );
+      return this.refuse(socket, requestId.data, 'invalid_request');
     }
     const host = this.options.threads;
     if (!host) return this.refuse(socket, requestId.data, 'failed', 'This host serves no threads');
@@ -401,11 +385,7 @@ export class InstallationSocket {
     const parsed = threadSubscribeFrameSchema.safeParse(raw);
     if (!parsed.success) {
       this.options.onError?.(parsed.error);
-      return this.refuse(
-        socket,
-        requestId.data,
-        unknownSelector(raw) ? 'unknown_selector' : 'invalid_request',
-      );
+      return this.refuse(socket, requestId.data, 'invalid_request');
     }
     const host = this.options.threads;
     if (!host) return this.refuse(socket, requestId.data, 'failed', 'This host serves no threads');
@@ -416,7 +396,7 @@ export class InstallationSocket {
       threadId: frame.threadId,
       acceptedRevision: frame.acceptedRevision,
       member: frame.member,
-      lens: frame.lens,
+      terms: frame.terms,
       leaseUntil: Date.now() + this.leaseMs(),
       sentSeq: null,
       seq: 0,

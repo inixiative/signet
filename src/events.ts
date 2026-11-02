@@ -2,14 +2,11 @@ import { z } from 'zod';
 
 /**
  * Integration events (Kingdom `docs/INTEGRATION-EVENTS.md`, Aron 2026-11-01). An integration that
- * receives its provider's events (a webhook endpoint, or a poll where the provider has none) has one
- * `events` resource: its feed. A Signet grant of `events.subscribe` on it is a **channel**: a
- * json-rules `where` over the event and an optional `select` of what the holder receives. The holder
- * reads its Signet to see the channels it has, and subscribes to any or all of them; Kingdom matches
- * each arriving event against the integration's channels the same way. Live only: a channel nobody
- * holds open drops the event.
+ * receives its provider's events (a webhook endpoint, or a poll where the provider has none) fans
+ * each one out to the Signet grants that reach it: the event kinds are operation leaves under
+ * `events.`, picked like any other, and the grant's lens layers filter and trim the event. Live
+ * only: a channel nobody holds open drops the event.
  */
-export const eventsResourceKind = 'events';
 
 /** A provider identity an event names: a login or handle, and the provider's id when it gives one. */
 export const eventPartySchema = z.strictObject({
@@ -67,20 +64,6 @@ export const integrationEventFieldSchema = z.enum([
 ]);
 export type IntegrationEventField = z.infer<typeof integrationEventFieldSchema>;
 
-/**
- * A channel: `where` is a json-rules condition over the event (Kingdom validates it with
- * json-rules against `integrationEventSchema`'s fields; this package only carries it as JSON), a
- * positive condition, so a grant without one matches every event. `select` is the overlay
- * restricting what the holder receives; `eventId` and `type` are always sent. The `where` may test
- * fields the `select` leaves out. `name` is what the holder sees when it reads its channels.
- */
-export const eventsLensSchema = z.strictObject({
-  name: z.string().min(1).max(80).optional(),
-  where: z.record(z.string(), z.unknown()).optional(),
-  select: z.array(integrationEventFieldSchema).min(1).max(20).optional(),
-});
-export type EventsLens = z.infer<typeof eventsLensSchema>;
-
 /** What a holder receives from a channel: the event, cut to the channel's `select`. */
 export const selectedEventSchema = integrationEventSchema
   .partial()
@@ -88,57 +71,16 @@ export const selectedEventSchema = integrationEventSchema
 export type SelectedEvent = z.infer<typeof selectedEventSchema>;
 
 /** The event as a channel's `select` lets it through; `eventId` and `type` always go. */
-export const selectEvent = (lens: EventsLens, event: IntegrationEvent): SelectedEvent => {
+export const selectEvent = (
+  lens: { select?: readonly IntegrationEventField[] },
+  event: IntegrationEvent,
+): SelectedEvent => {
   if (!lens.select) return event;
   const fields = new Set<IntegrationEventField>([...lens.select, 'eventId', 'type']);
   return Object.fromEntries(
     Object.entries(event).filter(([key]) => fields.has(key as IntegrationEventField)),
   ) as SelectedEvent;
 };
-
-/** JSON with object keys sorted at every depth: a condition read back from jsonb reorders them. */
-const canonical = (value: unknown): unknown =>
-  Array.isArray(value)
-    ? value.map(canonical)
-    : value !== null && typeof value === 'object'
-      ? Object.fromEntries(
-          Object.keys(value)
-            .sort()
-            .map((key) => [key, canonical((value as Record<string, unknown>)[key])]),
-        )
-      : value;
-const sameJson = (a: unknown, b: unknown) =>
-  JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
-
-/**
- * `granted` reaches nothing `requested` doesn't. Conservative and structural, since this package
- * doesn't evaluate json-rules: the granted `where` is the requested one, or `{all: [...]}` holding
- * it (the requested condition plus more); the granted `select` is within the requested one.
- */
-export const narrowsEventsLens = (granted: EventsLens, requested: EventsLens) => {
-  const whereNarrows =
-    requested.where === undefined ||
-    sameJson(granted.where, requested.where) ||
-    (typeof granted.where === 'object' &&
-      granted.where !== null &&
-      !Array.isArray(granted.where) &&
-      Array.isArray((granted.where as { all?: unknown }).all) &&
-      (granted.where as { all: unknown[] }).all.some((part) => sameJson(part, requested.where)));
-  const selectNarrows =
-    !requested.select ||
-    (!!granted.select && granted.select.every((field) => requested.select?.includes(field)));
-  return whereNarrows && selectNarrows;
-};
-
-/** The operation an `events` resource carries: hold a channel open. It takes no input. */
-export const eventsOperationSchema = z.enum(['events.subscribe']);
-export type EventsOperation = z.infer<typeof eventsOperationSchema>;
-export const eventsOperationNames: Record<EventsOperation, string> = {
-  'events.subscribe': "Receive this integration's events as they happen, filtered by the channel",
-};
-export const eventsInputSchemas = {
-  'events.subscribe': z.strictObject({}),
-} as const satisfies Record<EventsOperation, z.ZodObject>;
 
 /**
  * A channel's live stream is a Kingdom data stream, like a thread's (`accessThread`): its family is

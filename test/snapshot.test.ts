@@ -15,11 +15,13 @@ import {
 const uuid = () => crypto.randomUUID();
 const T1 = 'thread_0199f0aa-0000-7000-8000-000000000001';
 const owner = { ownerModel: 'User', userId: uuid(), organizationId: null, spaceId: null };
-const threadsGrant = (selector: Record<string, unknown>) => ({
-  resourceId: uuid(),
+const threadsGrant = (terms: Record<string, unknown>) => ({
+  resourceModel: 'IntegrationResource',
+  integrationResourceId: uuid(),
   kind: 'threads',
+  full: false,
   operations: ['thread.read', 'thread.prompt'],
-  lens: { threads: selector, view: 'own', delivery: 'note', outbound: 'review' },
+  terms,
 });
 const held = (resources: unknown[] = []) => ({
   signetId: uuid(),
@@ -41,7 +43,7 @@ const hosted = (resources: unknown[]) => ({
   recipient: { recipientModel: 'User', id: uuid(), displayName: 'JobCo agent' },
   resources,
 });
-const request = (lens: Record<string, unknown>) => ({
+const request = (terms: Record<string, unknown>) => ({
   id: uuid(),
   status: 'sent',
   createdAt: new Date().toISOString(),
@@ -54,39 +56,46 @@ const request = (lens: Record<string, unknown>) => ({
     expiresAt: null,
     maxRequests: null,
     maxConcurrent: 1,
-    resources: [{ resourceId: uuid(), operations: ['thread.prompt'], lens }],
+    resources: [
+      {
+        resourceModel: 'IntegrationResource',
+        integrationResourceId: uuid(),
+        operations: { picks: ['thread.prompt'] },
+        terms,
+      },
+    ],
   },
   reviewUrl: 'https://kingdom.example/dashboard?reviewSignet=ABC',
 });
 
-// A Kingdom ahead of this package: one hosted grant on a form it doesn't know yet.
+// A Kingdom ahead of this package: one hosted grant with a term it doesn't know yet.
 const ownHeld = held();
-const member = hosted([threadsGrant({ form: 'ids', ids: [T1] })]);
-const standing = hosted([threadsGrant({ form: 'tag', tag: 'job-search' })]);
-const misfit = held([{ ...threadsGrant({ form: 'ids', ids: [T1] }), kind: 'archiveLibrary' }]);
+const member = hosted([threadsGrant({ threads: { delivery: 'turn' } })]);
+const standing = hosted([threadsGrant({ threads: { view: 'thread', speakAs: 'host' } })]);
+const misfit = held([{ ...threadsGrant({ threads: {} }), kind: 'archiveLibrary' }]);
 const ahead = {
   type: 'installation.snapshot',
   pending: null,
   declinedAt: null,
   inquiries: [],
   hostedSignetRequests: [
-    request({ threads: { form: 'ids', ids: [T1] } }),
-    request({ threads: { form: 'withMember' } }),
+    request({ threads: { delivery: 'turn' } }),
+    request({ threads: { delivery: 'stream' } }),
   ],
   signets: [ownHeld, misfit],
   hostedSignets: [member, standing],
 };
 
 describe('per-entry snapshot parsing (review U1)', () => {
-  test('one unknown selector form drops only its resource; every Signet is kept', () => {
+  test('one unknown term drops only its resource; every Signet is kept', () => {
     const snapshot = parseInstallationSnapshot(ahead);
     const ids = (list: { signetId: string }[]) => list.map((signet) => signet.signetId);
     expect(ids(snapshot.signets)).toEqual([ownHeld.signetId, misfit.signetId]);
     expect(snapshot.signets[1]?.resources).toEqual([]);
     // A member whose grant this package can't read is still a member: never mistaken for revoked.
     expect(ids(snapshot.hostedSignets)).toEqual([member.signetId, standing.signetId]);
-    expect(snapshot.hostedSignets[0]?.resources[0]?.lens).toMatchObject({
-      threads: { form: 'ids', ids: [T1] },
+    expect(snapshot.hostedSignets[0]?.resources[0]).toMatchObject({
+      terms: { threads: { view: 'own', delivery: 'turn', outbound: 'review' } },
     });
     expect(snapshot.hostedSignets[1]?.resources).toEqual([]);
     expect(snapshot.hostedSignetRequests).toHaveLength(1);
@@ -95,7 +104,7 @@ describe('per-entry snapshot parsing (review U1)', () => {
       { list: `signets.${misfit.signetId}.resources`, index: 0 },
       { list: `hostedSignets.${standing.signetId}.resources`, index: 0 },
     ]);
-    expect(snapshot.dropped[1]?.reason).toContain('another shape');
+    expect(snapshot.dropped[1]?.reason).toContain('terms of another kind');
   });
 
   test('a missing list reads as empty and is reported, never failing the rest', () => {
@@ -115,13 +124,13 @@ describe('per-entry snapshot parsing (review U1)', () => {
     expect(snapshot.signets[0]?.resources).toEqual([]);
   });
 
-  test('describe drops a resource whose lens it cannot read, and keeps the rest', () => {
-    const resource = (lens: unknown, kind = 'threads') => ({
+  test('describe drops a resource whose lens or terms it cannot read, and keeps the rest', () => {
+    const resource = (extra: Record<string, unknown>, kind = 'threads') => ({
       id: uuid(),
       name: 'Threads',
       kind,
       integrationId: uuid(),
-      lens,
+      ...extra,
     });
     const description = parseSignetDescription({
       signetId: uuid(),
@@ -139,9 +148,9 @@ describe('per-entry snapshot parsing (review U1)', () => {
           key: 'thread.prompt',
           name: 'Post',
           resources: [
-            resource({ threads: { form: 'ids', ids: [T1] } }),
-            resource({ threads: { form: 'tag', tag: 'x' } }),
-            resource({}, 'threads'),
+            resource({ terms: { threads: { delivery: 'turn' } } }),
+            resource({ lens: { threads: { form: 'ids', ids: [T1] } } }),
+            resource({ terms: { threads: {} } }, 'archiveLibrary'),
           ],
         },
       ],

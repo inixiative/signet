@@ -1,10 +1,11 @@
 import { z } from 'zod';
+import { lensFilters, lensHidesField, type StoredLensLayer } from './lens';
 
 /**
  * Archive libraries (Kingdom `docs/kingdom.md`, Archive `docs/KINGDOM.md`). A hosted Archive is an
  * integration with one `archiveLibrary` resource. Kingdom admits each call through a Signet and runs
- * it against that Archive with the integration's credential. The Archive server never sees the lens,
- * so Kingdom applies it.
+ * it against that Archive with the integration's credential. The Archive server never sees the lens
+ * (json-rules layers over the library's base lens), so Kingdom applies it.
  */
 export const archiveLibraryResourceKind = 'archiveLibrary';
 
@@ -12,20 +13,6 @@ export const archiveLibraryResourceKind = 'archiveLibrary';
 export const archiveDocumentIdSchema = z.string().regex(/^[a-f0-9]{64}$/);
 export const archiveFieldSchema = z.enum(['id', 'title', 'content', 'tags', 'createdAt']);
 export type ArchiveField = z.infer<typeof archiveFieldSchema>;
-
-/** Which documents and fields of an `archiveLibrary` a grant reaches; `{}` reaches all of them. */
-export const archiveLensSchema = z.strictObject({
-  documentIds: z.array(archiveDocumentIdSchema).max(1000).optional(),
-  fields: z.array(archiveFieldSchema).max(6).optional(),
-});
-export type ArchiveLens = z.infer<typeof archiveLensSchema>;
-
-const subset = <T>(granted: T[] | undefined, requested: T[] | undefined) =>
-  !requested || (granted !== undefined && granted.every((item) => requested.includes(item)));
-
-/** `granted` reaches no document or field `requested` doesn't. */
-export const narrowsArchiveLens = (granted: ArchiveLens, requested: ArchiveLens): boolean =>
-  subset(granted.documentIds, requested.documentIds) && subset(granted.fields, requested.fields);
 
 /** The operations an `archiveLibrary` resource carries. */
 export const archiveOperationSchema = z.enum([
@@ -90,14 +77,17 @@ export const archiveInputSchemas = {
   'sessions.delete': z.strictObject({ documentId: archiveDocumentIdSchema }),
 } as const satisfies Record<ArchiveOperation, z.ZodObject>;
 
-/** Why a grant of `operation` can't carry `lens`, or null when it can. */
-export const archiveLensRefusal = (operation: ArchiveOperation, lens: ArchiveLens) => {
-  if (isArchiveSourceOperation(operation) && Object.keys(lens).length > 0)
-    return 'Writing or deleting sessions takes no lens';
-  if (
-    operation === 'documents.search' &&
-    (lens.documentIds || (lens.fields && !lens.fields.includes('content')))
-  )
+/**
+ * Why a grant of `operation` can't carry these lens layers, or null when it can. Kingdom evaluates
+ * the layers; this reads only whether they filter documents or hide `content`.
+ */
+export const archiveLensRefusal = (
+  operation: ArchiveOperation,
+  lens: readonly StoredLensLayer[] | undefined,
+) => {
+  if (!lens?.length) return null;
+  if (isArchiveSourceOperation(operation)) return 'Writing or deleting sessions takes no lens';
+  if (operation === 'documents.search' && (lensFilters(lens) || lensHidesField(lens, 'content')))
     return 'Search needs a lens that shows content and is not limited to chosen documents';
   return null;
 };

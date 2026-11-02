@@ -132,8 +132,12 @@ test("pairs through polling when the socket is refused, showing Kingdom's review
       lifecycle: 'ongoing',
       owner: { ownerModel: 'Organization', organization: 'inixiative' },
       resources: [
-        { resourceKind: 'model', operations: ['inference.create'] },
-        { resourceId: libraryId, operations: ['sessions.write'] },
+        { resourceKind: 'model', operations: { picks: ['inference.create'] } },
+        {
+          resourceModel: 'IntegrationResource',
+          integrationResourceId: libraryId,
+          operations: { picks: ['sessions.write'] },
+        },
       ],
       expiresAt: null,
       maxRequests: null,
@@ -150,8 +154,12 @@ test("pairs through polling when the socket is refused, showing Kingdom's review
   expect(requestRegistrationSchema.parse(registrationRequests[0]).terms).toMatchObject({
     owner: { ownerModel: 'Organization', organization: 'inixiative' },
     resources: [
-      { resourceKind: 'model', operations: ['inference.create'], lens: {} },
-      { resourceId: libraryId, operations: ['sessions.write'], lens: {} },
+      { resourceKind: 'model', operations: { picks: ['inference.create'] } },
+      {
+        resourceModel: 'IntegrationResource',
+        integrationResourceId: libraryId,
+        operations: { picks: ['sessions.write'] },
+      },
     ],
   });
   expect(confirmed).toEqual(['Aron']);

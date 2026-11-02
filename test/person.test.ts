@@ -133,7 +133,13 @@ const newKeyFile = async () => {
 const proposal = {
   name: 'Agent research',
   integrationId,
-  resources: [{ resourceId: uuid(), operations: ['documents.read'] }],
+  resources: [
+    {
+      resourceModel: 'IntegrationResource' as const,
+      integrationResourceId: uuid(),
+      operations: { picks: ['documents.read'] },
+    },
+  ],
   lifecycle: 'ongoing' as const,
   expiresAt: null,
   maxRequests: null,
@@ -149,7 +155,7 @@ describe('a person asks for a Signet', () => {
     expect(call.headers.get('authorization')).toBe(`Bearer ${apiToken}`);
     expect(call.ath).toBeUndefined();
     expect(call.body.publicKey).toEqual(signetPublicKey(await readPrivateJson(keyFile)));
-    expect(call.body.resources).toEqual([{ ...proposal.resources[0], lens: {} }]);
+    expect(call.body.resources).toEqual(proposal.resources);
 
     const collected = await awaitSignet(url, keyFile, requested.requestId, { intervalMs: 5 });
     expect(collected.signetId).toBe(signetId);

@@ -1,30 +1,17 @@
 import { z } from 'zod';
+import { lensFilters, type StoredLensLayer } from './lens';
 
 /**
  * GitHub repositories (Kingdom `docs/OPERATOR-ACCESS.md` §9). A GitHub integration is one GitHub
  * account; each repository it reaches is a `repository` resource, named `owner/name`. Kingdom admits
  * each call through a Signet and reads the repository with the integration's credential, so the
- * lens is applied by Kingdom.
+ * lens is applied by Kingdom. A grant pins commits with a `where` over the call's `{ sha }`; reading a
+ * commit never reaches its tree, so a pinned grant reaches no tree or blob.
  */
 export const repositoryResourceKind = 'repository';
 
 /** A Git object id: an immutable commit, tree or blob SHA-1. */
 export const gitObjectIdSchema = z.string().regex(/^[a-f0-9]{40}$/);
-
-/**
- * Which commits of a `repository` a grant reaches; `{}` reaches the whole repository. A grant pinned
- * to commits reads only those commits: reading a commit never reaches its tree, so a pinned grant
- * reaches no tree or blob.
- */
-export const repositoryLensSchema = z.strictObject({
-  commits: z.array(gitObjectIdSchema).min(1).max(1000).optional(),
-});
-export type RepositoryLens = z.infer<typeof repositoryLensSchema>;
-
-/** `granted` reaches no commit `requested` doesn't. */
-export const narrowsRepositoryLens = (granted: RepositoryLens, requested: RepositoryLens) =>
-  !requested.commits ||
-  (granted.commits?.every((commit) => requested.commits?.includes(commit)) ?? false);
 
 /** The operations a `repository` resource carries. */
 export const githubOperationSchema = z.enum(['commits.read', 'trees.read', 'blobs.read']);
@@ -46,19 +33,11 @@ export const githubInputSchemas = {
   'blobs.read': z.strictObject({ objectId: gitObjectIdSchema }),
 } as const satisfies Record<GithubOperation, z.ZodObject>;
 
-/** Why a grant of `operation` can't carry `lens`, or null when it can. */
-export const repositoryLensRefusal = (operation: GithubOperation, lens: RepositoryLens) =>
-  lens.commits && operation !== 'commits.read'
+/** Why a grant of `operation` can't carry these lens layers, or null when it can. */
+export const repositoryLensRefusal = (
+  operation: GithubOperation,
+  lens: readonly StoredLensLayer[] | undefined,
+) =>
+  lens && lensFilters(lens) && operation !== 'commits.read'
     ? 'A grant pinned to commits reads only those commits; trees and blobs need an unpinned grant'
     : null;
-
-/** Whether every lens a call is admitted under reaches `objectId` for `operation`. */
-export const lensesSelectObject = (
-  lenses: RepositoryLens[],
-  operation: GithubOperation,
-  objectId: string,
-) =>
-  lenses.every(
-    (lens) =>
-      !repositoryLensRefusal(operation, lens) && (!lens.commits || lens.commits.includes(objectId)),
-  );

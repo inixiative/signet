@@ -48,7 +48,7 @@ const relayed = (overrides: Record<string, unknown> = {}) => ({
   signetId: uuid(),
   acceptedRevision: 1,
   member: { signetId: uuid(), displayName: 'JobCo' },
-  lens: { threads: { form: 'ids', ids: [T1] } },
+  terms: {},
   ...overrides,
 });
 
@@ -111,7 +111,7 @@ test('thread.request round-trips, typed by its operation', async () => {
   await connect(
     host({
       'thread.prompt': (frame) => {
-        seen.push(frame.input.text, frame.lens.delivery);
+        seen.push(frame.input.text, frame.terms.delivery);
         return threadResult({ accepted: true, journalSeq: 7, duplicate: false });
       },
     }),
@@ -133,7 +133,7 @@ test('thread.request round-trips, typed by its operation', async () => {
   expect(seen).toEqual(['Watching for X', 'note']);
 });
 
-test('refusals: a host refusal, an unknown selector, an unreadable frame, a broken handler', async () => {
+test('refusals: a host refusal, an unknown term, an unreadable frame, a broken handler', async () => {
   let calls = 0;
   await connect(
     host({
@@ -164,10 +164,10 @@ test('refusals: a host refusal, an unknown selector, an unreadable frame, a brok
   expect(
     await outcome({
       type: 'thread.request',
-      ...relayed({ lens: { threads: { form: 'tag', tag: 'job-search' } } }),
+      ...relayed({ terms: { delivery: 'stream' } }),
       ...prompt,
     }),
-  ).toMatchObject({ ok: false, refusal: 'unknown_selector' });
+  ).toMatchObject({ ok: false, refusal: 'invalid_request' });
   expect(
     await outcome({
       type: 'thread.request',

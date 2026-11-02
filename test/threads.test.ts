@@ -10,22 +10,20 @@ import {
   accessRequestSchema,
   accessThreadSnapshotSchema,
   accessThreadStreamName,
-  archiveLibraryResourceKind,
   authenticateSignetFrameSchema,
+  grantResourceSchema,
   installationInquiriesResponseSchema,
   installationSignetsResponseSchema,
-  narrowsSignetLens,
-  narrowsThreadsLens,
+  narrowsThreadsTerms,
   operationInputFromAccess,
   operationInputKeys,
+  operationPickSchema,
   parseAccessThreadStreamName,
   registrationRequestSchema,
   registrationTermsSchema,
-  resourceLensSchema,
-  type SignetLens,
-  selectsThread,
+  requestedResourceSchema,
   signetDescriptionSchema,
-  signetLensSchema,
+  signetGrantSchema,
   signetProposalSchema,
   signetRequestSchema,
   signetResourceSchema,
@@ -34,43 +32,24 @@ import {
   threadEntrySchema,
   threadFloorActionSchema,
   threadHostFrameSchema,
+  threadIdSchema,
   threadRequestFrameSchema,
   threadResponseEnvelopeSchema,
   threadResponseFrameSchema,
-  threadsLensSchema,
   threadsResourceKind,
-  unbuiltThreadSelectorForms,
+  threadsTermsSchema,
 } from '../src';
 
 const T1 = 'thread_0199f0aa-0000-7000-8000-000000000001';
-const T2 = 'thread_0199f0aa-0000-7000-8000-000000000002';
-const T3 = 'thread_0199f0aa-0000-7000-8000-000000000003';
 const uuid = () => crypto.randomUUID();
-const threads = (
-  ids: string[],
-  terms: Partial<Record<'view' | 'delivery' | 'outbound', string>> = {},
-) => signetLensSchema.parse({ threads: { form: 'ids', ids }, ...terms });
 
-describe('the threads lens', () => {
-  test('defaults every term but the selector to its narrowest value', () => {
-    expect(threadsLensSchema.parse({ threads: { form: 'ids', ids: [T1] } })).toEqual({
-      threads: { form: 'ids', ids: [T1] },
-      view: 'own',
-      delivery: 'note',
-      outbound: 'review',
-      floor: { mayTake: false },
-    });
-  });
-
+describe('threads terms and entries', () => {
   test('floor.mayTake narrows only where it was asked for, and take is a floor action', () => {
-    const asked = threadsLensSchema.parse({
-      threads: { form: 'ids', ids: [T1] },
-      floor: { mayTake: true },
-    });
-    const without = threadsLensSchema.parse({ threads: { form: 'ids', ids: [T1] } });
-    expect(narrowsThreadsLens(without, asked)).toBe(true);
-    expect(narrowsThreadsLens(asked, asked)).toBe(true);
-    expect(narrowsThreadsLens(asked, without)).toBe(false);
+    const asked = threadsTermsSchema.parse({ floor: { mayTake: true } });
+    const without = threadsTermsSchema.parse({});
+    expect(narrowsThreadsTerms(without, asked)).toBe(true);
+    expect(narrowsThreadsTerms(asked, asked)).toBe(true);
+    expect(narrowsThreadsTerms(asked, without)).toBe(false);
     expect(threadFloorActionSchema.safeParse({ action: 'take' }).success).toBe(true);
   });
 
@@ -109,113 +88,10 @@ describe('the threads lens', () => {
     ).toBe(false);
   });
 
-  test('the union holds both strict shapes; {} is the empty archive lens', () => {
-    expect(signetLensSchema.parse({})).toEqual({});
-    expect(signetLensSchema.parse({ fields: ['title'] })).toEqual({ fields: ['title'] });
-    expect(threads([T1, T2])).toMatchObject({ threads: { ids: [T1, T2] }, view: 'own' });
-    // A lens mixing the two shapes is neither.
-    expect(
-      signetLensSchema.safeParse({ fields: ['title'], threads: { form: 'ids', ids: [T1] } })
-        .success,
-    ).toBe(false);
-    expect(
-      signetLensSchema.safeParse({ threads: { form: 'ids', ids: [T1] }, extra: 1 }).success,
-    ).toBe(false);
-  });
-
-  test('named but unbuilt selector forms fail closed, and so does any within', () => {
-    expect(unbuiltThreadSelectorForms).toEqual(['withMember', 'tag']);
-    for (const selector of [
-      { form: 'withMember' },
-      { form: 'tag', tag: 'job-search' },
-      { form: 'ids', ids: [T1], within: { form: 'tag', tag: 'job-search' } },
-      { form: 'ids', ids: [T1], within: { form: 'ids', ids: [T1] } },
-      { form: 'everything' },
-    ])
-      expect(signetLensSchema.safeParse({ threads: selector }).success).toBe(false);
-  });
-
-  test('ids are 1..100 Foundry ids with no colon or slash', () => {
-    expect(threadsLensSchema.safeParse({ threads: { form: 'ids', ids: [] } }).success).toBe(false);
-    const hundred = Array.from({ length: 100 }, (_, i) => `thread_${i}`);
-    expect(threadsLensSchema.safeParse({ threads: { form: 'ids', ids: hundred } }).success).toBe(
-      true,
-    );
-    expect(
-      threadsLensSchema.safeParse({ threads: { form: 'ids', ids: [...hundred, 'thread_x'] } })
-        .success,
-    ).toBe(false);
+  test('thread ids are Foundry ids with no colon or slash', () => {
+    expect(threadIdSchema.safeParse(T1).success).toBe(true);
     for (const bad of ['thread:aux', 'a/b', ''])
-      expect(threadsLensSchema.safeParse({ threads: { form: 'ids', ids: [bad] } }).success).toBe(
-        false,
-      );
-  });
-
-  test('selectsThread answers ids membership', () => {
-    const lens = threadsLensSchema.parse({ threads: { form: 'ids', ids: [T1, T2] } });
-    expect(selectsThread(lens.threads, T2)).toBe(true);
-    expect(selectsThread(lens.threads, T3)).toBe(false);
-  });
-});
-
-describe('a lens is checked against its resource kind', () => {
-  test('threads take the threads shape, archive libraries the archive shape, others none', () => {
-    const fits = (kind: string, lens: unknown) => resourceLensSchema(kind).safeParse(lens).success;
-    const lens = { threads: { form: 'ids', ids: [T1] } };
-    expect(fits(threadsResourceKind, lens)).toBe(true);
-    expect(fits(threadsResourceKind, { fields: ['title'] })).toBe(false);
-    // `lens.default({})` can't satisfy a threads grant: its preset must fill the selector (R9).
-    expect(
-      fits(
-        threadsResourceKind,
-        signetResourceSchema.parse({ resourceId: uuid(), operations: ['thread.read'] }).lens,
-      ),
-    ).toBe(false);
-    expect(fits(archiveLibraryResourceKind, lens)).toBe(false);
-    expect(fits(archiveLibraryResourceKind, { documentIds: ['a'.repeat(64)] })).toBe(true);
-    expect(fits('repositoryCommit', {})).toBe(true);
-    expect(fits('repositoryCommit', lens)).toBe(false);
-    expect(fits('repositoryCommit', { fields: ['title'] })).toBe(false);
-  });
-});
-
-describe('approving a request only narrows', () => {
-  const requested = threads([T1, T2], { view: 'own', delivery: 'turn', outbound: 'review' });
-
-  test('a subset of ids, and any term at or below the request, narrows', () => {
-    expect(narrowsSignetLens(requested, requested)).toBe(true);
-    expect(narrowsSignetLens(threads([T1], { delivery: 'turn' }), requested)).toBe(true);
-    expect(narrowsSignetLens(threads([T2], { delivery: 'note' }), requested)).toBe(true);
-  });
-
-  test('widening any field is refused, the selector included', () => {
-    expect(narrowsSignetLens(threads([T1, T2, T3], { delivery: 'turn' }), requested)).toBe(false);
-    expect(narrowsSignetLens(threads([T3], { delivery: 'turn' }), requested)).toBe(false);
-    expect(narrowsSignetLens(threads([T1], { view: 'thread', delivery: 'turn' }), requested)).toBe(
-      false,
-    );
-    expect(
-      narrowsSignetLens(threads([T1], { delivery: 'turn', outbound: 'auto' }), requested),
-    ).toBe(false);
-    const noteOnly = threads([T1]);
-    expect(narrowsSignetLens(threads([T1], { delivery: 'turn' }), noteOnly)).toBe(false);
-  });
-
-  test('a lens of another shape than the request is refused', () => {
-    expect(narrowsSignetLens({}, requested)).toBe(false);
-    expect(narrowsSignetLens(requested, {})).toBe(false);
-  });
-
-  test('the archive rules are unchanged', () => {
-    const docs = (ids: string[]): SignetLens => ({ documentIds: ids });
-    const a = 'a'.repeat(64);
-    const b = 'b'.repeat(64);
-    expect(narrowsSignetLens(docs([a]), docs([a, b]))).toBe(true);
-    expect(narrowsSignetLens(docs([a, b]), docs([a]))).toBe(false);
-    expect(narrowsSignetLens({}, docs([a]))).toBe(false);
-    expect(narrowsSignetLens(docs([a]), {})).toBe(true);
-    expect(narrowsSignetLens({ fields: ['title'] }, { fields: ['title', 'content'] })).toBe(true);
-    expect(narrowsSignetLens({ fields: ['content'] }, { fields: ['title'] })).toBe(false);
+      expect(threadIdSchema.safeParse(bad).success).toBe(false);
   });
 });
 
@@ -230,15 +106,17 @@ describe('requests by resource kind', () => {
   };
   const join = {
     resourceKind: threadsResourceKind,
-    operations: ['thread.read', 'thread.prompt'],
-    lens: { threads: { form: 'ids', ids: [T1] }, delivery: 'turn' },
+    operations: { picks: ['thread.read', 'thread.prompt'] },
+    lens: { root: { where: { field: 'id', operator: 'in', value: [T1] } } },
+    terms: { threads: { delivery: 'turn' } },
   };
 
   test('a join request may name the threads resource by kind', () => {
     const proposal = signetProposalSchema.parse({ ...terms, resources: [join] });
     expect(proposal.resources[0]).toMatchObject({
       resourceKind: 'threads',
-      lens: { threads: { form: 'ids', ids: [T1] }, delivery: 'turn', outbound: 'review' },
+      lens: join.lens,
+      terms: { threads: { view: 'own', delivery: 'turn', outbound: 'review' } },
     });
     const publicKey = {
       kty: 'EC' as const,
@@ -263,7 +141,15 @@ describe('requests by resource kind', () => {
     expect(
       signetReviewProposalSchema.safeParse({
         ...review,
-        resources: [{ resourceId: uuid(), operations: join.operations, lens: join.lens }],
+        resources: [
+          {
+            resourceModel: 'IntegrationResource',
+            integrationResourceId: uuid(),
+            operations: join.operations,
+            lens: join.lens,
+            terms: join.terms,
+          },
+        ],
       }).success,
     ).toBe(true);
   });
@@ -327,7 +213,7 @@ describe('thread operations through access/execute', () => {
       signetId: uuid(),
       acceptedRevision: 2,
       member: { signetId: uuid(), displayName: 'JobCo' },
-      lens: { threads: { form: 'ids', ids: [T1] } },
+      terms: {},
     };
     const prompt = threadRequestFrameSchema.parse({
       ...base,
@@ -335,7 +221,7 @@ describe('thread operations through access/execute', () => {
       input: { threadId: T1, postId: uuid(), text: 'hi' },
     });
     expect(prompt.operation === 'thread.prompt' && prompt.input.text).toBe('hi');
-    expect(prompt.lens.delivery).toBe('note');
+    expect(prompt.terms.delivery).toBe('note');
     expect(
       threadRequestFrameSchema.safeParse({
         ...base,
@@ -401,6 +287,10 @@ describe('thread operations through access/execute', () => {
         signetRequestSchema,
         signetReviewProposalSchema,
         signetResourceSchema,
+        requestedResourceSchema,
+        grantResourceSchema,
+        signetGrantSchema,
+        operationPickSchema,
         registrationRequestSchema,
         registrationTermsSchema,
         accessInputSchema,
@@ -408,7 +298,7 @@ describe('thread operations through access/execute', () => {
         installationInquiriesResponseSchema,
         installationSignetsResponseSchema,
         signetDescriptionSchema,
-        threadsLensSchema,
+        threadsTermsSchema,
         threadHostFrameSchema,
         threadAppendFrameSchema,
         threadResponseEnvelopeSchema,
