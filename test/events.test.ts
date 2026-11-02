@@ -1,10 +1,14 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  accessEventsAppendSchema,
   accessEventsStreamName,
+  accountResourceKind,
+  eventOperationKey,
   type IntegrationEvent,
   integrationEventSchema,
+  narrowsOperations,
   parseAccessEventsStreamName,
-  selectEvent,
+  resolveOperationPicks,
 } from '../src/contracts';
 
 const event: IntegrationEvent = {
@@ -31,13 +35,40 @@ describe('integration events', () => {
     expect(integrationEventSchema.parse(event)).toEqual(event);
   });
 
-  test('the select overlay cuts what the holder receives; eventId and type always go', () => {
-    expect(selectEvent({ select: ['subject'] }, event)).toEqual({
+  test('event kinds are operation leaves under events., picked by prefix like any operation', () => {
+    const leaves = [
+      'commits.read',
+      eventOperationKey('pull_request.opened'),
+      eventOperationKey('pull_request.review_requested'),
+      eventOperationKey('issue_comment.created'),
+    ];
+    expect(eventOperationKey('issue_comment.created')).toBe('events.issue_comment.created');
+    const pullRequests = resolveOperationPicks(leaves, { picks: ['events.pull_request.*'] });
+    expect(pullRequests).toEqual({
+      full: false,
+      operations: ['events.pull_request.opened', 'events.pull_request.review_requested'],
+    });
+    const oneKind = resolveOperationPicks(leaves, {
+      picks: ['events.pull_request.review_requested'],
+    });
+    expect(narrowsOperations(oneKind, pullRequests)).toBe(true);
+    expect(narrowsOperations(pullRequests, oneKind)).toBe(false);
+    expect(narrowsOperations(pullRequests, { full: true })).toBe(true);
+    expect(accountResourceKind).toBe('account');
+  });
+
+  test('an append carries eventId and type outside the projected event', () => {
+    const append = accessEventsAppendSchema.parse({
+      eventId: event.eventId,
+      type: event.type,
+      event: { subject: event.subject },
+    });
+    expect(append).toEqual({
       eventId: 'delivery-1',
       type: 'issue_comment.created',
-      subject: event.subject,
+      event: { subject: event.subject },
     });
-    expect(selectEvent({}, event)).toEqual(event);
+    expect(() => accessEventsAppendSchema.parse({ type: event.type, event: {} })).toThrow();
   });
 
   test("a channel's stream name round-trips, path fields sorted", () => {
