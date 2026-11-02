@@ -500,7 +500,8 @@ export type SignetAction =
   | 'renewRun'
   | 'revokeRun'
   | 'releaseSubscription'
-  | 'reportSubscriptionLimits';
+  | 'reportSubscriptionLimits'
+  | 'reportCredentialRejected';
 const signetActions: SignetAction[] = [
   'describe',
   'execute',
@@ -513,6 +514,7 @@ const signetActions: SignetAction[] = [
   'revokeRun',
   'releaseSubscription',
   'reportSubscriptionLimits',
+  'reportCredentialRejected',
 ];
 
 /** Presents one enrolled Signet: renews its access token and signs each call with the device key. */
