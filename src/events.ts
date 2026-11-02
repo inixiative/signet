@@ -96,7 +96,19 @@ export const selectEvent = (lens: EventsLens, event: IntegrationEvent): Selected
   ) as SelectedEvent;
 };
 
-const sameJson = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+/** JSON with object keys sorted at every depth: a condition read back from jsonb reorders them. */
+const canonical = (value: unknown): unknown =>
+  Array.isArray(value)
+    ? value.map(canonical)
+    : value !== null && typeof value === 'object'
+      ? Object.fromEntries(
+          Object.keys(value)
+            .sort()
+            .map((key) => [key, canonical((value as Record<string, unknown>)[key])]),
+        )
+      : value;
+const sameJson = (a: unknown, b: unknown) =>
+  JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
 
 /**
  * `granted` reaches nothing `requested` doesn't. Conservative and structural, since this package

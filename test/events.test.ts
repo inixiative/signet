@@ -99,3 +99,14 @@ describe('integration events: a channel is a grant of events.subscribe on the ev
     expect(parseAccessEventsStreamName('accessThread:signetId:x:threadId:y')).toBeNull();
   });
 });
+
+test('narrowing compares conditions whatever their key order (jsonb reorders keys)', () => {
+  const stored = { value: 'aron', operator: 'contains', field: 'mentions' };
+  expect(narrowsSignetLens({ where: stored }, { where: mentionsAron })).toBe(true);
+  expect(
+    narrowsSignetLens(
+      { where: { all: [{ field: 'scope', value: 'x/y', operator: 'equals' }, stored] } },
+      { where: mentionsAron },
+    ),
+  ).toBe(true);
+});
