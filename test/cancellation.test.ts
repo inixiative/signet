@@ -229,6 +229,24 @@ test('unknown runtime action is refused before reading credentials or requesting
   expect(spy).not.toHaveBeenCalled();
 });
 
+test('a rejected subscription login is reported with the access token and its own proof', async () => {
+  const f = await fixture();
+  const seen: { target: string; init: RequestInit }[] = [];
+  transport((target, init) => {
+    if (target.endsWith('/nonce')) return nonce();
+    seen.push({ target, init });
+    return data({ integrationId: crypto.randomUUID(), recorded: true });
+  });
+  const body = { executionId: crypto.randomUUID(), credentialVersion: 2 };
+  await f.client.post('reportCredentialRejected', body);
+  expect(seen).toHaveLength(1);
+  expect(seen[0]!.target).toBe(`${url}/api/v1/access/reportCredentialRejected`);
+  const headers = new Headers(seen[0]!.init.headers);
+  expect(headers.get('authorization')).toBe(`DPoP ${f.credential.accessToken}`);
+  expect(headers.get('DPoP')).toBeTruthy();
+  expect(JSON.parse(String(seen[0]!.init.body))).toEqual(body);
+});
+
 for (const seconds of [300, 15]) {
   test(`settlement uses existing token with ${seconds}s remaining without renewal and uses fresh proofs on explicit replay`, async () => {
     const f = await fixture();
