@@ -24,7 +24,20 @@ His earlier ruling on lenses applies too: "omits picks and relations all compose
 | Ordered narrowing layers | json-rules lens: layers in order, picks intersect, omits union, a later layer only narrows, naming what an ancestor hid is an error (`json-rules/docs/LENS.md` §5) | the same composition, layer by layer |
 | Refusal checks | `narrowsOperations`, `permitsOperation`, `scopeRefusal` | kept; they take the resolved scope |
 
-## The shape
+## Direction (Aron, 2026-11-02, third round): use the lens itself
+
+> You can pick and omit at any point. It behaves at that point … Kind of like how lenses behave … just copy how lenses do, even though it's very much overkill … for every event and operation, which has its own lens, you'd have a narrowing of the schema, a narrowing of the data you would get back … one is operations narrowings, and one is schema narrowings on the resource grant row … By using lenses again on the narrowing, on that operation, you can talk about a project, and you can put wheres in there. That's just using a lens.
+
+So a resource grant row carries two narrowings, both json-rules lenses:
+
+1. **Operations narrowing.** The provider's catalog becomes a lens schema: each branch of the operation tree is a model, each operation (leaf) a field, each child branch a relation. A grant's operations narrowing is a plain `LensNarrowing` over it. Picks and omits at any node behave as the lens does at that hop; `parents` gives the ordered layers; composition, `validateNarrowing` and its codes, and `projectLens` (the operations a grant reaches) come from json-rules unchanged. The only new code is `catalogLens(catalog)`.
+2. **Schema and data narrowing, per operation or event.** Each operation's payload has its own lens: which fields come back (picks/omits) and which rows (`where`, for example scoping to a project's ids through the lens's binds). This extends the data-lens layers the grant row already carries (`signet/src/lens.ts`).
+
+**The mismatch to test first:** lens relations start off and the first narrowing turns them on, whereas operations start all on ("no picks = everything"). Proposed fix: `catalogLens`'s base turns every relation on, so grant layers only narrow.
+
+**Spike, test-first, before any of the shape below is built:** generate the lens from the fixture catalog, express rows 1–17 of the table as `LensNarrowing`s, and check `validateNarrowing` and `projectLens` against the expected leaves (now and after growth) and error codes. Rows that differ show where the lens's rules differ from what Aron described; each one goes to him. If none differ, the design is the lens, and the section below survives only as the description of what the lens does for operations.
+
+## The shape (as first revised; the lens spike decides whether it's needed)
 
 ```ts
 /** One layer. Every entry is a dot path into the operations map; a path names a node and everything under it. */
