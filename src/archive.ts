@@ -12,7 +12,14 @@ export const archiveLibraryResourceKind = 'archiveLibrary';
 
 /** An Archive session id: `archiveKey(snapshot)`, the digest of its source and session. */
 export const archiveDocumentIdSchema = z.string().regex(/^[a-f0-9]{64}$/);
-export const archiveFieldSchema = z.enum(['id', 'title', 'content', 'tags', 'createdAt']);
+export const archiveFieldSchema = z.enum([
+  'id',
+  'title',
+  'content',
+  'tags',
+  'projectId',
+  'createdAt',
+]);
 export type ArchiveField = z.infer<typeof archiveFieldSchema>;
 
 /** The operations an `archiveLibrary` resource carries. */
@@ -42,7 +49,7 @@ export const archiveSourceOperations = [
 export const isArchiveSourceOperation = (operation: ArchiveOperation) =>
   (archiveSourceOperations as readonly ArchiveOperation[]).includes(operation);
 
-const fieldsSchema = z.array(archiveFieldSchema).min(1).max(5);
+const fieldsSchema = z.array(archiveFieldSchema).min(1).max(archiveFieldSchema.options.length);
 
 /**
  * The input each Archive operation takes. `access/execute` carries the same fields beside
@@ -88,6 +95,26 @@ export const archiveLensRefusal = (operation: ArchiveOperation, lens: GrantLens)
   )
     return 'Search needs a lens that shows content and is not limited to chosen documents';
   return null;
+};
+
+/**
+ * Why one call's `input` reaches past the grant's `lens`, or null. A call may ask for, and filter on,
+ * only fields the lens shows: a filter on a hidden one (`projectId`, a `tag`) would say which
+ * documents carry a value the holder can't see. No layers is the base, which shows every field.
+ */
+export const archiveInputRefusal = <O extends ArchiveOperation>(
+  operation: O,
+  input: z.infer<(typeof archiveInputSchemas)[O]>,
+  lens: GrantLens,
+) => {
+  if (lens.layers.length === 0 || isArchiveSourceOperation(operation)) return null;
+  const named: ArchiveField[] = [
+    ...('fields' in input && input.fields ? input.fields : []),
+    ...('tag' in input && input.tag !== undefined ? (['tags'] as const) : []),
+    ...('projectId' in input && input.projectId !== undefined ? (['projectId'] as const) : []),
+  ];
+  const hidden = named.find((field) => !projectionShows(lens.projection, field));
+  return hidden ? `The lens doesn't show '${hidden}'` : null;
 };
 
 /** `archiveLensRefusal` over every operation a grant row reaches, `full` meaning all of them. */

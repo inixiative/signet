@@ -1,13 +1,18 @@
 import { describe, expect, test } from 'bun:test';
+import { createLens, type Lens, type LensNarrowing, projectLens } from '@inixiative/json-rules';
 import {
   accessInputSchema,
+  archiveFieldSchema,
+  archiveInputRefusal,
   archiveInputSchemas,
   archiveOperationNames,
   archiveOperationSchema,
   archiveSourceOperations,
   declaredOperationSchema,
+  type GrantLens,
   githubOperationNames,
   githubOperationSchema,
+  type LensLayer,
   operationInputFromAccess,
   operationInputKeys,
   operationInputSchemas,
@@ -113,5 +118,59 @@ describe('the Archive operation contract', () => {
     expect(
       operationInputFromAccess('documents.read', accessInputSchema.parse({ resourceId })).success,
     ).toBe(true);
+  });
+});
+
+describe('Archive calls see only what the lens shows', () => {
+  const text = { kind: 'scalar', type: 'String' } as const;
+  const base = createLens({
+    maps: {
+      archive: {
+        models: {
+          Document: {
+            fields: { id: text, title: text, content: text, tags: text, projectId: text },
+          },
+        },
+      },
+    },
+    mapName: 'archive',
+    model: 'Document',
+  });
+  const lens = (...layers: LensLayer[]): GrantLens => ({
+    layers,
+    projection: projectLens(
+      layers.reduce<Lens | LensNarrowing>((parent, layer) => ({ parent, ...layer }), base),
+    ),
+  });
+  const hidesProject = lens({ root: { omits: ['projectId'] } });
+  const hidesTags = lens({ root: { omits: ['tags'] } });
+
+  test('a search may not filter on a field the lens hides: that would say who carries it', () => {
+    expect(archiveInputRefusal('documents.search', { projectId: 'zealot' }, hidesProject)).toBe(
+      "The lens doesn't show 'projectId'",
+    );
+    expect(archiveInputRefusal('documents.search', { tag: 'route:userevidence' }, hidesTags)).toBe(
+      "The lens doesn't show 'tags'",
+    );
+    expect(archiveInputRefusal('documents.search', { query: 'x' }, hidesProject)).toBeNull();
+    expect(archiveInputRefusal('documents.search', { tag: 'x' }, hidesProject)).toBeNull();
+  });
+
+  test('a call may not ask for a field the lens hides', () => {
+    expect(archiveInputRefusal('documents.read', { fields: ['title', 'tags'] }, hidesTags)).toBe(
+      "The lens doesn't show 'tags'",
+    );
+    expect(archiveInputRefusal('documents.read', { fields: ['title'] }, hidesTags)).toBeNull();
+  });
+
+  test('the base lens shows everything; writes and deletes take no lens', () => {
+    expect(
+      archiveInputRefusal('documents.search', { projectId: 'x', tag: 'y' }, lens()),
+    ).toBeNull();
+    expect(archiveInputRefusal('sessions.delete', { documentId: a }, hidesProject)).toBeNull();
+  });
+
+  test('projectId is an Archive field a lens can show or hide', () => {
+    expect(archiveFieldSchema.options).toContain('projectId');
   });
 });
