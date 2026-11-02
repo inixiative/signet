@@ -1,5 +1,6 @@
+import type { Condition } from '@inixiative/json-rules';
 import { z } from 'zod';
-import { type GrantLens, projectionFilters, projectionShows } from './lens';
+import { type GrantLens, type LensLayer, projectionFilters, projectionShows } from './lens';
 import { type OperationScope, scopeRefusal } from './operations';
 
 /**
@@ -97,25 +98,39 @@ export const archiveLensRefusal = (operation: ArchiveOperation, lens: GrantLens)
   return null;
 };
 
+type ArchiveInput<O extends ArchiveOperation> = z.infer<(typeof archiveInputSchemas)[O]>;
+
 /**
- * Why one call's `input` reaches past the grant's `lens`, or null. A call may ask for, and filter on,
- * only fields the lens shows: a filter on a hidden one (`projectId`, a `tag`) would say which
- * documents carry a value the holder can't see. No layers is the base, which shows every field.
+ * What one call filters on, as a json-rules condition over the Archive document, or undefined when
+ * it filters on nothing. Kingdom gates it with `validateRuleInLens` against the grant's composed
+ * lens: a filter on a field the lens hides (`projectId`, a `tag`) would say which documents carry a
+ * value the holder can't see, and is refused with the lens's own code.
  */
-export const archiveInputRefusal = <O extends ArchiveOperation>(
-  operation: O,
-  input: z.infer<(typeof archiveInputSchemas)[O]>,
-  lens: GrantLens,
-) => {
-  if (lens.layers.length === 0 || isArchiveSourceOperation(operation)) return null;
-  const named: ArchiveField[] = [
-    ...('fields' in input && input.fields ? input.fields : []),
-    ...('tag' in input && input.tag !== undefined ? (['tags'] as const) : []),
-    ...('projectId' in input && input.projectId !== undefined ? (['projectId'] as const) : []),
+export const archiveCallCondition = <O extends ArchiveOperation>(
+  _operation: O,
+  input: ArchiveInput<O>,
+): Condition | undefined => {
+  const rules: Condition[] = [
+    ...('projectId' in input && input.projectId !== undefined
+      ? [{ field: 'projectId', operator: 'equals' as const, value: input.projectId }]
+      : []),
+    ...('tag' in input && input.tag !== undefined
+      ? [{ field: 'tags', operator: 'contains' as const, value: input.tag }]
+      : []),
   ];
-  const hidden = named.find((field) => !projectionShows(lens.projection, field));
-  return hidden ? `The lens doesn't show '${hidden}'` : null;
+  return rules.length === 0 ? undefined : rules.length === 1 ? rules[0] : { all: rules };
 };
+
+/**
+ * The fields one call asks for, as a lens layer that picks them, or undefined when it asks for none.
+ * Kingdom validates it under the grant's composed lens (`validateNarrowing`): a field the lens hides
+ * is refused there.
+ */
+export const archiveCallNarrowing = <O extends ArchiveOperation>(
+  _operation: O,
+  input: ArchiveInput<O>,
+): LensLayer | undefined =>
+  'fields' in input && input.fields?.length ? { root: { picks: [...input.fields] } } : undefined;
 
 /** `archiveLensRefusal` over every operation a grant row reaches, `full` meaning all of them. */
 export const archiveGrantRefusal = (scope: OperationScope, lens: GrantLens) =>
