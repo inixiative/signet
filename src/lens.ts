@@ -34,6 +34,19 @@ export const storedLensLayerSchema = z.strictObject({
 });
 export const storedLensLayersSchema = z.array(storedLensLayerSchema).max(20);
 
+/**
+ * A base lens as Kingdom's catalog carries it: the json-rules `Lens` itself (its field maps, map name
+ * and model) with an `id` and no parents. Only the envelope is checked here; a holder composes it
+ * under a grant's layers with json-rules `composeLens`, which validates what is inside.
+ */
+export const storedBaseLensSchema = z.looseObject({
+  id: layerId,
+  parents: z.array(layerId).max(0),
+  mapName: z.string().min(1),
+  model: z.string().min(1),
+  maps: z.record(z.string(), z.unknown()),
+});
+
 /** The id of an integration's base lens for a resource kind's model, in Kingdom's catalog. */
 export const baseLensId = (provider: string, kind: string) => `${provider}:${kind}`;
 

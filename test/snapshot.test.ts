@@ -31,7 +31,14 @@ const held = (resources: unknown[] = []) => ({
   owner,
   resources,
 });
-const hosted = (resources: unknown[]) => ({
+const baseLens = {
+  id: 'foundry:threads',
+  parents: [],
+  mapName: 'foundry',
+  model: 'Thread',
+  maps: { foundry: { models: { Thread: { fields: {} } } } },
+};
+const hosted = (resources: unknown[], baseLenses: Record<string, unknown> = {}) => ({
   signetId: uuid(),
   integrationId: uuid(),
   name: 'JobCo',
@@ -41,6 +48,7 @@ const hosted = (resources: unknown[]) => ({
   maxRequests: null,
   maxConcurrent: 1,
   recipient: { recipientModel: 'User', id: uuid(), displayName: 'JobCo agent' },
+  baseLenses,
   resources,
 });
 const request = (terms: Record<string, unknown>) => ({
@@ -105,6 +113,23 @@ describe('per-entry snapshot parsing (review U1)', () => {
       { list: `hostedSignets.${standing.signetId}.resources`, index: 0 },
     ]);
     expect(snapshot.dropped[1]?.reason).toContain('terms of another kind');
+  });
+
+  test('a hosted Signet keeps its base lenses, keyed by baseLensId', () => {
+    const withLens = hosted([], { 'foundry:threads': baseLens });
+    const snapshot = parseInstallationSnapshot({ ...ahead, hostedSignets: [withLens] });
+    expect(snapshot.hostedSignets).toHaveLength(1);
+    expect(snapshot.hostedSignets[0]?.baseLenses).toEqual({ 'foundry:threads': baseLens });
+    expect(snapshot.dropped.some((drop) => drop.list === 'hostedSignets')).toBe(false);
+  });
+
+  test('a malformed base lens drops its Signet and is reported', () => {
+    const bad = hosted([], { 'foundry:threads': { ...baseLens, parents: ['x'] } });
+    const snapshot = parseInstallationSnapshot({ ...ahead, hostedSignets: [bad] });
+    expect(snapshot.hostedSignets).toEqual([]);
+    expect(snapshot.dropped.some((drop) => drop.list === 'hostedSignets' && drop.index === 0)).toBe(
+      true,
+    );
   });
 
   test('a missing list reads as empty and is reported, never failing the rest', () => {

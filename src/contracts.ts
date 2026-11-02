@@ -14,7 +14,7 @@ import {
   signetGrantSchema,
   signetResourceSchema,
 } from './grants';
-import { storedLensLayersSchema } from './lens';
+import { storedBaseLensSchema, storedLensLayersSchema } from './lens';
 import {
   foundryIdSchema,
   threadFloorActionSchema,
@@ -280,6 +280,8 @@ export const hostedSignetSchema = z.object({
     id: z.uuid(),
     displayName: z.string(),
   }),
+  /** Each base lens the rows' `lens` layers compose under, keyed by `baseLensId(provider, kind)`. */
+  baseLenses: z.record(z.string(), storedBaseLensSchema),
   resources: grantsSchema,
 });
 export type InstallationSignet = z.infer<typeof installationSignetSchema>;
