@@ -9,6 +9,13 @@ import {
   narrowsArchiveLens,
 } from './archive';
 import {
+  eventsInputSchemas,
+  eventsLensSchema,
+  eventsOperationSchema,
+  eventsResourceKind,
+  narrowsEventsLens,
+} from './events';
+import {
   githubInputSchemas,
   githubOperationSchema,
   gitObjectIdSchema,
@@ -29,6 +36,7 @@ import {
 } from './threads';
 
 export * from './archive';
+export * from './events';
 export * from './github';
 export * from './threads';
 
@@ -93,6 +101,7 @@ export const signetLensSchema = z.union([
   archiveLensSchema,
   threadsLensSchema,
   repositoryLensSchema,
+  eventsLensSchema,
 ]);
 export type SignetLens = z.infer<typeof signetLensSchema>;
 
@@ -104,7 +113,9 @@ export const resourceLensSchema = (kind: string) =>
       ? threadsLensSchema
       : kind === repositoryResourceKind
         ? repositoryLensSchema
-        : emptyLensSchema;
+        : kind === eventsResourceKind
+          ? eventsLensSchema
+          : emptyLensSchema;
 
 /**
  * `granted` reaches nothing `requested` doesn't, for lenses of the same resource. Approving someone
@@ -114,6 +125,16 @@ export const resourceLensSchema = (kind: string) =>
 export const narrowsSignetLens = (granted: SignetLens, requested: SignetLens): boolean => {
   if ('threads' in granted || 'threads' in requested)
     return 'threads' in granted && 'threads' in requested && narrowsThreadsLens(granted, requested);
+  const isEvents = (lens: SignetLens) => 'where' in lens || 'select' in lens || 'name' in lens;
+  if (isEvents(granted) || isEvents(requested)) {
+    const eventsGranted = eventsLensSchema.safeParse(granted);
+    const eventsRequested = eventsLensSchema.safeParse(requested);
+    return (
+      eventsGranted.success &&
+      eventsRequested.success &&
+      narrowsEventsLens(eventsGranted.data, eventsRequested.data)
+    );
+  }
   if ('commits' in granted || 'commits' in requested) {
     const repositoryGranted = repositoryLensSchema.safeParse(granted);
     const repositoryRequested = repositoryLensSchema.safeParse(requested);
@@ -477,12 +498,14 @@ export const declaredOperationSchema = z.enum([
   ...threadOperationSchema.options,
   ...archiveOperationSchema.options,
   ...githubOperationSchema.options,
+  ...eventsOperationSchema.options,
 ]);
 export type DeclaredOperation = z.infer<typeof declaredOperationSchema>;
 export const operationInputSchemas = {
   ...threadInputSchemas,
   ...archiveInputSchemas,
   ...githubInputSchemas,
+  ...eventsInputSchemas,
 } as const satisfies Record<DeclaredOperation, z.ZodObject>;
 export type OperationInput<O extends DeclaredOperation> = z.infer<
   (typeof operationInputSchemas)[O]
