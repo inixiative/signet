@@ -1,6 +1,8 @@
 # @inixiative/signet
 
-Present Kingdom Signets.
+> Part of [inixiative](https://www.inixiative.com), technology for cooperation. See [all the projects](https://github.com/inixiative).
+
+Pass-through execution with tracking and audit. A Signet is how anything uses an integration through Kingdom: a revocable pass on the owner's terms. Kingdom decides who may grant and use one with [`@inixiative/permissions`](https://github.com/inixiative/permissions); a grant's lens is [json-rules](https://github.com/inixiative/json-rules). This package presents Kingdom Signets.
 
 A **Signet** is Kingdom's only grant for using an integration. It names the resources, operations, lens and limits, and it can be revoked. Its grantee is a user or an integration, for example a paired Foundry or a machine's local Archive. The grantee presents it with an access token plus a DPoP proof signed by its device key (RFC 9449).
 
