@@ -1,6 +1,16 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  createLens,
+  type Lens,
+  type LensNarrowing,
+  validateNarrowing,
+  validateRuleInLens,
+} from '@inixiative/json-rules';
+import {
   accessInputSchema,
+  archiveCallCondition,
+  archiveCallNarrowing,
+  archiveFieldSchema,
   archiveInputSchemas,
   archiveOperationNames,
   archiveOperationSchema,
@@ -8,6 +18,7 @@ import {
   declaredOperationSchema,
   githubOperationNames,
   githubOperationSchema,
+  type LensLayer,
   operationInputFromAccess,
   operationInputKeys,
   operationInputSchemas,
@@ -113,5 +124,59 @@ describe('the Archive operation contract', () => {
     expect(
       operationInputFromAccess('documents.read', accessInputSchema.parse({ resourceId })).success,
     ).toBe(true);
+  });
+});
+
+describe('an Archive call, gated by json-rules against the grant lens', () => {
+  const text = { kind: 'scalar', type: 'String' } as const;
+  const base = createLens({
+    maps: {
+      archive: {
+        models: {
+          Document: {
+            fields: {
+              id: text,
+              title: text,
+              content: text,
+              tags: { ...text, isList: true },
+              projectId: text,
+            },
+          },
+        },
+      },
+    },
+    mapName: 'archive',
+    model: 'Document',
+  });
+  const narrowed = (layer: LensLayer): LensNarrowing => ({ parent: base, ...layer });
+  const hidesProject = narrowed({ root: { omits: ['projectId'] } });
+  const hidesTags = narrowed({ root: { omits: ['tags'] } });
+  const refused = (result: { ok: boolean; errors: { code: string }[] }) =>
+    result.ok ? null : result.errors[0]!.code;
+  const filters = (operation: 'documents.search', input: object, lens: Lens | LensNarrowing) => {
+    const condition = archiveCallCondition(operation, input);
+    return condition === undefined ? null : refused(validateRuleInLens(condition, lens));
+  };
+
+  test('a search may not filter on a field the lens hides: that would say who carries it', () => {
+    expect(filters('documents.search', { projectId: 'zealot' }, hidesProject)).toBe('not_in_lens');
+    expect(filters('documents.search', { tag: 'route:userevidence' }, hidesTags)).toBe(
+      'not_in_lens',
+    );
+    expect(filters('documents.search', { tag: 'x' }, hidesProject)).toBeNull();
+    expect(filters('documents.search', { projectId: 'x', tag: 'y' }, base)).toBeNull();
+    expect(archiveCallCondition('documents.search', { query: 'x' })).toBeUndefined();
+  });
+
+  test('a call may not ask for a field the lens hides', () => {
+    const asked = archiveCallNarrowing('documents.read', { fields: ['title', 'tags'] })!;
+    expect(refused(validateNarrowing({ parent: hidesTags, ...asked }))).toBe('not_visible');
+    const ok = archiveCallNarrowing('documents.read', { fields: ['title'] })!;
+    expect(validateNarrowing({ parent: hidesTags, ...ok }).ok).toBe(true);
+    expect(archiveCallNarrowing('documents.read', {})).toBeUndefined();
+  });
+
+  test('projectId is an Archive field a lens can show or hide', () => {
+    expect(archiveFieldSchema.options).toContain('projectId');
   });
 });
