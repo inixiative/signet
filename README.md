@@ -6,7 +6,7 @@ Pass-through execution with tracking and audit. A Signet is how anything uses an
 
 A **Signet** is Kingdom's only grant for using an integration. It names the resources, operations, lens and limits, and it can be revoked. Its grantee is a user or an integration, for example a paired Foundry or a machine's local Archive. The grantee presents it with an access token plus a DPoP proof signed by its device key (RFC 9449).
 
-This package is the one implementation of that protocol, shared by Kingdom (which verifies) and Archive, Foundry and Oracle (which present):
+This package is the one implementation of that protocol, shared by Kingdom (which verifies) and Archive, Foundry, Oracle and KCP (which present):
 
 - `contracts`: the wire schemas: keys, grants (operation picks, lens layers, terms), proposals, pairing requests, delivered credentials, `describe` and `execute`, and the conversation frames.
 - `proof`: create and verify DPoP proofs (ES256, nonce-bound, access-token-bound).
