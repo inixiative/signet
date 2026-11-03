@@ -13,7 +13,7 @@ import {
 
 const event: IntegrationEvent = {
   eventId: 'delivery-1',
-  integrationId: crypto.randomUUID(),
+  integrationId: Bun.randomUUIDv7(),
   provider: 'github',
   type: 'issue_comment.created',
   at: '2026-11-01T12:00:00.000Z',
@@ -72,7 +72,7 @@ describe('integration events', () => {
   });
 
   test("a channel's stream name round-trips, path fields sorted", () => {
-    const stream = { signetId: crypto.randomUUID(), resourceId: crypto.randomUUID() };
+    const stream = { signetId: Bun.randomUUIDv7(), resourceId: Bun.randomUUIDv7() };
     const name = accessEventsStreamName(stream);
     expect(name).toBe(`accessEvents:resourceId:${stream.resourceId}:signetId:${stream.signetId}`);
     expect(parseAccessEventsStreamName(name)).toEqual(stream);

@@ -32,7 +32,7 @@ export async function writePrivateJson(path: string, value: unknown): Promise<vo
     (process.getuid && parent.uid !== process.getuid())
   )
     throw Error('Signet credential directory must be owned and private (0700)');
-  const temporary = join(dirname(path), `.credential-${crypto.randomUUID()}`);
+  const temporary = join(dirname(path), `.credential-${Bun.randomUUIDv7()}`);
   try {
     await writeFile(temporary, JSON.stringify(value), { mode: 0o600, flag: 'wx' });
     await rename(temporary, path);

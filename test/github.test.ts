@@ -10,7 +10,7 @@ import {
 } from '../src';
 
 const a = 'a'.repeat(40);
-const resourceId = crypto.randomUUID();
+const resourceId = Bun.randomUUIDv7();
 
 describe('the GitHub repository contract', () => {
   test('declares three reads on a repository, each named and taking the object id', () => {

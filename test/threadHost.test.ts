@@ -18,7 +18,7 @@ import {
   writePrivateJson,
 } from '../src';
 
-const uuid = () => crypto.randomUUID();
+const uuid = () => Bun.randomUUIDv7();
 const T1 = 'thread_0199f0aa-0000-7000-8000-000000000001';
 const received: Record<string, unknown>[] = [];
 let kingdom: ServerWebSocket<unknown> | null = null;

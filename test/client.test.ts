@@ -18,7 +18,7 @@ import {
   writePrivateJson,
 } from '../src';
 
-const uuid = () => crypto.randomUUID();
+const uuid = () => Bun.randomUUIDv7();
 const token = (prefix: string) => `${prefix}${'a'.repeat(43)}`;
 const nonce = () => Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url');
 
@@ -170,7 +170,7 @@ describe('pairing and presentation', () => {
       await registerInstallation(url, keyFile, {
         kind: 'archive',
         name: 'Laptop Archive',
-        sourceId: crypto.randomUUID(),
+        sourceId: Bun.randomUUIDv7(),
       }),
     ).toEqual({ installationId });
     expect(calls.at(-1)?.body).toMatchObject({ kind: 'archive', publicKey: { kty: 'EC' } });

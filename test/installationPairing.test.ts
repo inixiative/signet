@@ -21,17 +21,17 @@ import {
 const nonce = () => Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url');
 const owner = {
   ownerModel: 'User' as const,
-  userId: crypto.randomUUID(),
+  userId: Bun.randomUUIDv7(),
   organizationId: null,
   spaceId: null,
 };
-const inquiryId = crypto.randomUUID();
-const signetId = crypto.randomUUID();
-const integrationId = crypto.randomUUID();
-const laterSignetId = crypto.randomUUID();
-const libraryId = crypto.randomUUID();
+const inquiryId = Bun.randomUUIDv7();
+const signetId = Bun.randomUUIDv7();
+const integrationId = Bun.randomUUIDv7();
+const laterSignetId = Bun.randomUUIDv7();
+const libraryId = Bun.randomUUIDv7();
 const collected = (id: string) => ({
-  enrollmentId: crypto.randomUUID(),
+  enrollmentId: Bun.randomUUIDv7(),
   lifecycle: 'ongoing',
   taskId: null,
   accessToken: `kingdom_${'a'.repeat(43)}`,
@@ -66,7 +66,7 @@ beforeAll(() => {
         case 'nonce':
           return data({ nonce: nonce() });
         case 'registerInstallation':
-          return data({ installationId: crypto.randomUUID() });
+          return data({ installationId: Bun.randomUUIDv7() });
         case 'requestRegistration':
           setTimeout(() => {
             claimed = true;
@@ -168,7 +168,7 @@ test("pairs through polling when the socket is refused, showing Kingdom's review
   expect(existsSync(paired.credentialFile)).toBe(true);
   expect(existsSync(paired.keyFile)).toBe(true);
 
-  const stray = signetCredentialFile(paired.directory, crypto.randomUUID());
+  const stray = signetCredentialFile(paired.directory, Bun.randomUUIDv7());
   await writeFile(stray, '{}');
   const enrolls = () => calls.filter((call) => call === 'enrollInstallationSignet').length;
   const later = { signetId: laterSignetId, integrationId, name: 'Later grant', owner };
@@ -186,7 +186,7 @@ test("pairs through polling when the socket is refused, showing Kingdom's review
   ]);
   expect(enrolls()).toBe(1);
   await holdInstallationSignets(url, paired.keyFile, paired.directory, [
-    { ...later, enrollmentId: crypto.randomUUID() },
+    { ...later, enrollmentId: Bun.randomUUIDv7() },
   ]);
   expect(enrolls()).toBe(2);
   expect((await readdir(paired.directory)).sort()).toEqual(
@@ -208,7 +208,7 @@ test('refuses to collect when the owner is not confirmed', async () => {
       root,
       kind: 'archive',
       name: 'Laptop Archive',
-      sourceId: crypto.randomUUID(),
+      sourceId: Bun.randomUUIDv7(),
       terms: {
         name: 'Laptop Archive',
         lifecycle: 'ongoing',
@@ -238,7 +238,7 @@ test('treats a Kingdom that never answers the socket proof as down and polls ins
     },
     websocket: {
       open(ws) {
-        ws.send(JSON.stringify({ type: 'connected', connectionId: crypto.randomUUID() }));
+        ws.send(JSON.stringify({ type: 'connected', connectionId: Bun.randomUUIDv7() }));
       },
       message() {},
     },
@@ -270,7 +270,7 @@ test('gives up when the review code expires, even if Kingdom still reports it pe
       const data = (value: unknown) => Response.json({ data: value });
       const expiresAt = new Date(Date.now() + 100 - graceMs).toISOString();
       if (action === 'nonce') return data({ nonce: nonce() });
-      if (action === 'registerInstallation') return data({ installationId: crypto.randomUUID() });
+      if (action === 'registerInstallation') return data({ installationId: Bun.randomUUIDv7() });
       if (action === 'requestRegistration')
         return data({ reviewCode: 'ABCDEF123456', expiresAt, reviewUrl });
       if (action === 'installationInquiries')
@@ -343,7 +343,7 @@ const stubKingdom = (codeMs: number, inquiries: (read: number) => Response | obj
       const action = new URL(req.url).pathname.split('/').at(-1)!;
       const data = (value: unknown) => Response.json({ data: value });
       if (action === 'nonce') return data({ nonce: nonce() });
-      if (action === 'registerInstallation') return data({ installationId: crypto.randomUUID() });
+      if (action === 'registerInstallation') return data({ installationId: Bun.randomUUIDv7() });
       if (action === 'requestRegistration')
         return data({
           reviewCode: 'ABCDEF123456',
@@ -372,7 +372,7 @@ const outcome = (promise: Promise<unknown>, ms: number) =>
   ]);
 
 test('a claimed registration waiting for approval outlives the review code, then collects', async () => {
-  const id = crypto.randomUUID();
+  const id = Bun.randomUUIDv7();
   const started = Date.now();
   const kingdom = stubKingdom(100 - graceMs, (read) => ({
     pending: null,
@@ -399,7 +399,7 @@ test('a claimed registration waiting for approval outlives the review code, then
 });
 
 test('a claimed registration still unapproved when its inquiry expires gives up', async () => {
-  const id = crypto.randomUUID();
+  const id = Bun.randomUUIDv7();
   const inquiryExpiresAt = new Date(Date.now() + 300 - graceMs).toISOString();
   const kingdom = stubKingdom(100 - graceMs, (read) => ({
     pending: null,
@@ -524,7 +524,7 @@ const pendingCode = () => ({
 const week = () => new Date(Date.now() + 7 * 86_400_000).toISOString();
 
 test('a claim seen while the deadline check retries keeps the wait on the inquiry', async () => {
-  const id = crypto.randomUUID();
+  const id = Bun.randomUUIDv7();
   const started = Date.now();
   const kingdom = stubKingdom(150 - graceMs, (read) => {
     const elapsed = Date.now() - started;
@@ -551,7 +551,7 @@ test('a claim seen while the deadline check retries keeps the wait on the inquir
 });
 
 test('changes requested keeps waiting, and a later approval collects', async () => {
-  const id = crypto.randomUUID();
+  const id = Bun.randomUUIDv7();
   const started = Date.now();
   const kingdom = stubKingdom(100 - graceMs, (read) => ({
     pending: null,
@@ -575,7 +575,7 @@ test('changes requested keeps waiting, and a later approval collects', async () 
 });
 
 test('a claimed inquiry that vanishes (canceled) is reported as withdrawn', async () => {
-  const id = crypto.randomUUID();
+  const id = Bun.randomUUIDv7();
   const started = Date.now();
   const kingdom = stubKingdom(600_000, (read) => ({
     pending: null,
@@ -593,7 +593,7 @@ test('a claimed inquiry that vanishes (canceled) is reported as withdrawn', asyn
 });
 
 test('a claimed inquiry this package cannot read keeps the wait, then collects (review M2)', async () => {
-  const id = crypto.randomUUID();
+  const id = Bun.randomUUIDv7();
   const started = Date.now();
   const errors: unknown[] = [];
   const kingdom = stubKingdom(600_000, (read) => {

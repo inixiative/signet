@@ -41,7 +41,7 @@ import {
 } from '../src';
 
 const T1 = 'thread_0199f0aa-0000-7000-8000-000000000001';
-const uuid = () => crypto.randomUUID();
+const uuid = () => Bun.randomUUIDv7();
 
 describe('threads terms and entries', () => {
   test('floor.mayTake narrows only where it was asked for, and take is a floor action', () => {

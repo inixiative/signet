@@ -21,7 +21,7 @@ import {
 } from '../src';
 import { ownerKey, ownerKeySchema } from '../src/contracts';
 
-const uuid = () => crypto.randomUUID();
+const uuid = () => Bun.randomUUIDv7();
 const nonce = () => Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url');
 const owner = {
   ownerModel: 'Organization' as const,
