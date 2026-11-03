@@ -15,14 +15,14 @@ import {
 
 const nonce = () => Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url');
 const signet = {
-  signetId: crypto.randomUUID(),
-  integrationId: crypto.randomUUID(),
+  signetId: Bun.randomUUIDv7(),
+  integrationId: Bun.randomUUIDv7(),
   name: 'Studio Foundry',
   enrollmentId: null,
   resources: [],
   owner: {
     ownerModel: 'User' as const,
-    userId: crypto.randomUUID(),
+    userId: Bun.randomUUIDv7(),
     organizationId: null,
     spaceId: null,
   },
@@ -63,7 +63,7 @@ beforeAll(async () => {
     websocket: {
       open(ws) {
         sockets.add(ws);
-        ws.send(JSON.stringify({ type: 'connected', connectionId: crypto.randomUUID() }));
+        ws.send(JSON.stringify({ type: 'connected', connectionId: Bun.randomUUIDv7() }));
       },
       async message(ws, raw) {
         const frame = JSON.parse(String(raw));
@@ -76,7 +76,7 @@ beforeAll(async () => {
           now: new Date(),
         });
         expect(proof.keyThumbprint).toBe(thumbprint);
-        ws.send(JSON.stringify({ type: 'installation', installationId: crypto.randomUUID() }));
+        ws.send(JSON.stringify({ type: 'installation', installationId: Bun.randomUUIDv7() }));
         ws.send(
           JSON.stringify({
             type: 'installation.snapshot',

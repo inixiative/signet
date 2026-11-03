@@ -108,7 +108,7 @@ socket.start();
 await signet.execute({
   integrationId,
   operation: 'thread.prompt',
-  input: { resourceId, threadId, postId: crypto.randomUUID(), text: 'The role you wanted opened' },
+  input: { resourceId, threadId, postId: Bun.randomUUIDv7(), text: 'The role you wanted opened' },
 });
 ```
 

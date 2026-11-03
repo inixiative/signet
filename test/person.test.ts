@@ -18,7 +18,7 @@ import {
   writePrivateJson,
 } from '../src';
 
-const uuid = () => crypto.randomUUID();
+const uuid = () => Bun.randomUUIDv7();
 const token = (prefix: string) => `${prefix}${'b'.repeat(43)}`;
 const nonce = () => Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url');
 const apiToken = 'kingdom_api_token';

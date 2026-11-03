@@ -76,7 +76,7 @@ export const createSignetProof = async (input: {
       jwk: publicClientKeySchema.parse(input.publicKey),
     })
     .setIssuedAt()
-    .setJti(input.proofId ?? crypto.randomUUID())
+    .setJti(input.proofId ?? Bun.randomUUIDv7())
     .sign(await importJWK(input.privateKey, 'ES256'));
 
 export const keyThumbprint = (key: unknown) =>

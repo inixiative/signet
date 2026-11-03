@@ -31,8 +31,8 @@ async function fixture(expired = false) {
   await writePrivateJson(keyFile, generateSignetKey());
   const credential = {
     url,
-    signetId: crypto.randomUUID(),
-    enrollmentId: crypto.randomUUID(),
+    signetId: Bun.randomUUIDv7(),
+    enrollmentId: Bun.randomUUIDv7(),
     lifecycle: 'ongoing',
     taskId: null,
     keyFile,
@@ -66,7 +66,7 @@ test('already canceled caller never reads credentials or fetches', async () => {
     throw Error('unexpected network');
   });
   const signal = AbortSignal.abort(new Error('stopped'));
-  const client = new SignetClient(url, '/missing', crypto.randomUUID());
+  const client = new SignetClient(url, '/missing', Bun.randomUUIDv7());
   await expect(client.post('verifyAuthority', {}, undefined, { signal })).rejects.toThrow(
     'stopped',
   );
@@ -77,7 +77,7 @@ test('authority action retains DPoP endpoint/token binding and existing dispatch
   const f = await fixture();
   let dispatched = 0;
   const body = {
-    requestId: crypto.randomUUID(),
+    requestId: Bun.randomUUIDv7(),
     bindingDigest: 'a'.repeat(64),
     check: { kind: 'caller' },
   };
@@ -222,7 +222,7 @@ test('unknown runtime action is refused before reading credentials or requesting
   const spy = transport(() => {
     throw Error('unexpected network');
   });
-  const client = new SignetClient(url, '/missing', crypto.randomUUID());
+  const client = new SignetClient(url, '/missing', Bun.randomUUIDv7());
   await expect(client.post('deleteEverything' as 'describe', {})).rejects.toThrow(
     'Unsupported Signet action',
   );
@@ -235,9 +235,9 @@ test('a rejected subscription login is reported with the access token and its ow
   transport((target, init) => {
     if (target.endsWith('/nonce')) return nonce();
     seen.push({ target, init });
-    return data({ integrationId: crypto.randomUUID(), recorded: true });
+    return data({ integrationId: Bun.randomUUIDv7(), recorded: true });
   });
-  const body = { executionId: crypto.randomUUID(), credentialVersion: 2 };
+  const body = { executionId: Bun.randomUUIDv7(), credentialVersion: 2 };
   await f.client.post('reportCredentialRejected', body);
   expect(seen).toHaveLength(1);
   expect(seen[0]!.target).toBe(`${url}/api/v1/access/reportCredentialRejected`);
@@ -254,7 +254,7 @@ for (const seconds of [300, 15]) {
     await writePrivateJson(f.credentialFile, f.credential);
     const proofs: string[] = [];
     const body = {
-      requestId: crypto.randomUUID(),
+      requestId: Bun.randomUUIDv7(),
       deliverBefore: new Date(Date.now() + 10000).toISOString(),
     };
     const spy = transport((target, init) => {

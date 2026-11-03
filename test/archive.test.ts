@@ -27,7 +27,7 @@ import {
 } from '../src';
 
 const a = 'a'.repeat(64);
-const resourceId = crypto.randomUUID();
+const resourceId = Bun.randomUUIDv7();
 
 describe('the Archive operation contract', () => {
   test('declares four operations, each named and with its input', () => {

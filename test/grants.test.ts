@@ -30,7 +30,7 @@ import {
   threadsTermsSchema,
 } from '../src';
 
-const uuid = () => crypto.randomUUID();
+const uuid = () => Bun.randomUUIDv7();
 const integrationResourceId = uuid();
 const projectId = uuid();
 

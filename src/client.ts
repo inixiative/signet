@@ -643,7 +643,7 @@ export class SignetClient {
     return accessResultSchema.parse(
       await this.post(
         'execute',
-        { ...request, signetId: this.signetId, requestId: crypto.randomUUID() },
+        { ...request, signetId: this.signetId, requestId: Bun.randomUUIDv7() },
         undefined,
         options,
       ),
