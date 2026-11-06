@@ -35,8 +35,8 @@
   "devDependencies": {
     "@asteasolutions/zod-to-openapi": "^9.1.0",
     "@biomejs/biome": "2.5.2",
-    "@inixiative/config": "^0.5.191",
-    "@inixiative/json-rules": "^3.16.0",
+    "@inixiative/config": "^0.5.199",
+    "@inixiative/json-rules": "^3.20.0",
     "@types/bun": "1.4.4",
     "lefthook": "2.1.9",
     "typescript": "6.0.3",
