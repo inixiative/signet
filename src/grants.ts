@@ -81,12 +81,18 @@ export type IntegrationResourceGrant = z.infer<typeof integrationResourceGrantSc
 export type ProjectGrant = z.infer<typeof projectGrantSchema>;
 
 /**
- * A grant as a holder reads it: the stored row, plus the resource's `kind` so its terms can be read.
- * Read paths stay loose (a field a newer Kingdom adds is dropped, not fatal).
+ * A grant as a holder reads it: the stored row, plus the resource's `kind` so its terms can be read
+ * and the `integrationId` of the integration the resource is on. A Signet reaches resources on any
+ * number of integrations, so each row names its own. Read paths stay loose (a field a newer Kingdom
+ * adds is dropped, not fatal).
  */
 export const signetGrantSchema = z.discriminatedUnion('resourceModel', [
   z
-    .object({ ...integrationResourceShape, kind: z.string().min(1).max(80) })
+    .object({
+      ...integrationResourceShape,
+      kind: z.string().min(1).max(80),
+      integrationId: z.uuid(),
+    })
     .superRefine(fullOrOperations),
   z.object(projectGrantSchema.shape),
 ]);
@@ -113,15 +119,32 @@ export const signetResourceSchema = z.discriminatedUnion('resourceModel', [
 ]);
 export type SignetResource = z.infer<typeof signetResourceSchema>;
 
-/**
- * A resource asked for by kind, and optionally name, when the asker does not know its id: an
- * Installation registering, or a party asking to join a Foundry's `threads` (one per Foundry, so the
- * integration id names it). Kingdom resolves it to the resource's id before anyone reviews it.
- */
-export const requestedResourceKindSchema = z.strictObject({
+const askedByKind = {
   resourceKind: z.string().min(1).max(80),
   resourceName: z.string().trim().min(1).max(120).optional(),
   ...askedOperations,
+};
+/**
+ * A resource an Installation asks for by kind, and optionally name, while it registers: the
+ * integration it will become does not exist yet, so the kind alone names the resource. Kingdom
+ * resolves it to the resource's id before anyone reviews it.
+ */
+export const registeredResourceKindSchema = z.strictObject(askedByKind);
+/**
+ * A resource asked for by kind on an existing integration, when the asker does not know its id: a
+ * party asking to join a Foundry's `threads` (one per Foundry, so the kind and the Foundry's
+ * `integrationId` name it). Kingdom resolves it to the resource's id before anyone reviews it.
+ */
+export const requestedResourceKindSchema = z.strictObject({
+  ...askedByKind,
+  integrationId: z.uuid(),
 });
+/** What a registering Installation may ask for: resources by id or by kind. */
+export const registeredResourceSchema = z.union([
+  signetResourceSchema,
+  registeredResourceKindSchema,
+]);
+/** What a party may ask for: resources by id, or by kind on a named integration. */
 export const requestedResourceSchema = z.union([signetResourceSchema, requestedResourceKindSchema]);
+export type RegisteredResource = z.input<typeof registeredResourceSchema>;
 export type RequestedResource = z.input<typeof requestedResourceSchema>;

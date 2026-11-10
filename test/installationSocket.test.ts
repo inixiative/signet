@@ -16,7 +16,6 @@ import {
 const nonce = () => Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url');
 const signet = {
   signetId: Bun.randomUUIDv7(),
-  integrationId: Bun.randomUUIDv7(),
   name: 'Studio Foundry',
   enrollmentId: null,
   resources: [],

@@ -19,13 +19,13 @@ const threadsGrant = (terms: Record<string, unknown>) => ({
   resourceModel: 'IntegrationResource',
   integrationResourceId: uuid(),
   kind: 'threads',
+  integrationId: uuid(),
   full: false,
   operations: ['thread.read', 'thread.prompt'],
   terms,
 });
 const held = (resources: unknown[] = []) => ({
   signetId: uuid(),
-  integrationId: uuid(),
   name: 'Studio Foundry',
   enrollmentId: null,
   owner,
@@ -40,7 +40,6 @@ const baseLens = {
 };
 const hosted = (resources: unknown[], baseLenses: Record<string, unknown> = {}) => ({
   signetId: uuid(),
-  integrationId: uuid(),
   name: 'JobCo',
   revision: 2,
   lifecycle: 'ongoing',
@@ -56,7 +55,6 @@ const request = (terms: Record<string, unknown>) => ({
   status: 'sent',
   createdAt: new Date().toISOString(),
   expiresAt: null,
-  integrationId: uuid(),
   requester: { sourceModel: 'User', id: uuid(), displayName: 'JobCo agent' },
   terms: {
     name: 'JobCo',
@@ -159,8 +157,6 @@ describe('per-entry snapshot parsing (review U1)', () => {
     });
     const description = parseSignetDescription({
       signetId: uuid(),
-      integrationId: uuid(),
-      provider: 'foundry',
       name: 'JobCo',
       expiresAt: null,
       lifecycle: 'ongoing',
@@ -182,6 +178,41 @@ describe('per-entry snapshot parsing (review U1)', () => {
     });
     expect(description.operations[0]?.resources).toHaveLength(1);
     expect(description.dropped).toHaveLength(2);
+  });
+
+  test('describe reads a Signet whose resources sit on two integrations', () => {
+    const foundry = uuid();
+    const archive = uuid();
+    const description = parseSignetDescription({
+      signetId: uuid(),
+      name: 'Research agent',
+      expiresAt: null,
+      lifecycle: 'ongoing',
+      taskId: null,
+      currentRevision: 1,
+      remainingRequests: null,
+      holder: null,
+      operations: [
+        {
+          key: 'thread.read',
+          name: 'Read',
+          resources: [{ id: uuid(), name: 'Threads', kind: 'threads', integrationId: foundry }],
+        },
+        {
+          key: 'documents.read',
+          name: 'Read documents',
+          resources: [
+            { id: uuid(), name: 'Library', kind: 'archiveLibrary', integrationId: archive },
+          ],
+        },
+      ],
+    });
+    expect(description).not.toHaveProperty('integrationId');
+    expect(
+      description.operations.flatMap((operation) =>
+        operation.resources.map((resource) => resource.integrationId),
+      ),
+    ).toEqual([foundry, archive]);
   });
 });
 

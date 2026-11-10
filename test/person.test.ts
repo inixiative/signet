@@ -100,7 +100,6 @@ beforeAll(() => {
           ...credentials(-1),
           renewalCredential: token('signet_renew_'),
           signetId,
-          integrationId,
           owner: { ownerModel: 'User', userId: uuid(), organizationId: null, spaceId: null },
         });
       }
@@ -132,7 +131,6 @@ const newKeyFile = async () => {
 
 const proposal = {
   name: 'Agent research',
-  integrationId,
   resources: [
     {
       resourceModel: 'IntegrationResource' as const,

@@ -41,7 +41,6 @@ const collected = (id: string) => ({
   tokenType: 'DPoP',
   renewalCredential: `signet_renew_${'r'.repeat(43)}`,
   signetId: id,
-  integrationId,
   owner,
 });
 /** installationPairing's expiryGraceMs: expiries are dated this far back so deadlines fire in ms. */
@@ -164,6 +163,7 @@ test("pairs through polling when the socket is refused, showing Kingdom's review
   });
   expect(confirmed).toEqual(['Aron']);
   expect(paired.signetId).toBe(signetId);
+  expect(paired.integrationId).toBe(integrationId);
   expect(paired.owner).toEqual(owner);
   expect(existsSync(paired.credentialFile)).toBe(true);
   expect(existsSync(paired.keyFile)).toBe(true);
@@ -171,7 +171,7 @@ test("pairs through polling when the socket is refused, showing Kingdom's review
   const stray = signetCredentialFile(paired.directory, Bun.randomUUIDv7());
   await writeFile(stray, '{}');
   const enrolls = () => calls.filter((call) => call === 'enrollInstallationSignet').length;
-  const later = { signetId: laterSignetId, integrationId, name: 'Later grant', owner };
+  const later = { signetId: laterSignetId, name: 'Later grant', owner };
   const held = await holdInstallationSignets(url, paired.keyFile, paired.directory, [
     { ...later, enrollmentId: null },
   ]);
@@ -392,7 +392,38 @@ test('a claimed registration waiting for approval outlives the review code, then
       socketOptions: { pollMs: 20, retryBaseMs: 1000 },
     });
     expect(paired.signetId).toBe(signetId);
+    expect(paired.integrationId).toBe(integrationId);
     expect(Date.now() - started).toBeGreaterThan(500);
+  } finally {
+    kingdom.stop();
+  }
+});
+
+test('an approved registration that names no integration is not collected', async () => {
+  const id = Bun.randomUUIDv7();
+  const kingdom = stubKingdom(60_000, (read) => ({
+    pending: null,
+    declinedAt: null,
+    inquiries: read === 0 ? [] : [{ ...sentInquiry(id, 'approved', null), integrationId: null }],
+  }));
+  const root = await mkdtemp(join(tmpdir(), 'signet-unnamed-'));
+  try {
+    await expect(
+      pairInstallation({
+        url: kingdom.url,
+        root,
+        kind: 'foundry',
+        name: 'Studio Foundry',
+        terms,
+        onReview: () => {},
+        socketOptions: { pollMs: 20, retryBaseMs: 1000 },
+      }),
+    ).rejects.toThrow('without naming the integration');
+    expect(
+      existsSync(
+        signetCredentialFile((await installationDirectory(root, kingdom.url)).directory, signetId),
+      ),
+    ).toBe(false);
   } finally {
     kingdom.stop();
   }

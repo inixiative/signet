@@ -102,10 +102,10 @@ describe('requests by resource kind', () => {
     expiresAt: null,
     maxRequests: null,
     maxConcurrent: 1,
-    integrationId: uuid(),
   };
   const join = {
     resourceKind: threadsResourceKind,
+    integrationId: uuid(),
     operations: { picks: ['thread.read', 'thread.prompt'] },
     lens: { root: { where: { field: 'id', operator: 'in', value: [T1] } } },
     terms: { threads: { delivery: 'turn' } },
@@ -115,6 +115,7 @@ describe('requests by resource kind', () => {
     const proposal = signetProposalSchema.parse({ ...terms, resources: [join] });
     expect(proposal.resources[0]).toMatchObject({
       resourceKind: 'threads',
+      integrationId: join.integrationId,
       lens: join.lens,
       terms: { threads: { view: 'own', delivery: 'turn', outbound: 'review' } },
     });
@@ -134,13 +135,12 @@ describe('requests by resource kind', () => {
   });
 
   test('the reviewed terms name every resource by id', () => {
-    const { integrationId: _integration, ...review } = terms;
-    expect(signetReviewProposalSchema.safeParse({ ...review, resources: [join] }).success).toBe(
+    expect(signetReviewProposalSchema.safeParse({ ...terms, resources: [join] }).success).toBe(
       false,
     );
     expect(
       signetReviewProposalSchema.safeParse({
-        ...review,
+        ...terms,
         resources: [
           {
             resourceModel: 'IntegrationResource',

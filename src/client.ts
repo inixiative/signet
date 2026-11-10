@@ -45,12 +45,10 @@ export const kingdomUrl = (value: string) => {
   return url.origin;
 };
 
-/** What a presenting client keeps on disk (0600) for one enrolled Signet. */
-export const signetCredentialSchema = z
+const credentialFileSchema = z
   .object({
     url: z.string().transform(kingdomUrl),
     signetId: z.uuid(),
-    integrationId: z.uuid().optional(),
     owner: ownerRefSchema.optional(),
     enrollmentId: z.uuid(),
     lifecycle: signetLifecycleSchema,
@@ -64,16 +62,26 @@ export const signetCredentialSchema = z
     tokenType: z.literal('DPoP'),
   })
   .strict();
+/** Files written before 0.13 hold an `integrationId`, from when a Signet named one integration. */
+const withoutRetiredIntegration = (file: unknown) => {
+  if (!file || typeof file !== 'object' || Array.isArray(file)) return file;
+  const { integrationId: _retired, ...kept } = file as Record<string, unknown>;
+  return kept;
+};
+/**
+ * What a presenting client keeps on disk (0600) for one enrolled Signet. A file an earlier version
+ * wrote still reads, and is written back in this shape the next time it is saved.
+ */
+export const signetCredentialSchema = z.preprocess(withoutRetiredIntegration, credentialFileSchema);
 export type SignetCredential = z.infer<typeof signetCredentialSchema>;
 /** A collected or enrolled Signet, as `saveCollectedSignet` writes it next to its key. */
-export const deliveredSignetSchema = signetCredentialSchema.omit({ url: true, keyFile: true });
+export const deliveredSignetSchema = credentialFileSchema.omit({ url: true, keyFile: true });
 export type DeliveredSignet = z.infer<typeof deliveredSignetSchema>;
 const enrolledCredentialsSchema = signetCredentialsSchema.required({ renewalCredential: true });
 /** What `enrollSignet` returns: the enrollment's credentials and the Signet they present. */
 export type EnrolledSignet = z.infer<typeof enrolledCredentialsSchema> & { signetId: string };
 const renewalResponseSchema = deliveredSignetSchema.omit({
   signetId: true,
-  integrationId: true,
   owner: true,
   renewalCredential: true,
 });
@@ -360,8 +368,8 @@ export async function awaitSignet(
 }
 
 /**
- * Ask for a Signet on an integration, to be presented with this key. Kingdom records a
- * `signetRequest` Inquiry (approved at once when the caller manages the integration); pass the
+ * Ask for a Signet, to be presented with this key. Kingdom records a `signetRequest` Inquiry
+ * (approved at once when the caller manages every integration it asks on); pass the
  * returned `requestId` to `collectSignet` or `awaitSignet`.
  */
 export const requestSignet = async (
@@ -408,7 +416,8 @@ export const enrollSignet = async (
 });
 
 /**
- * The Signets held by this installation's integrations, and those issued on them (`hostedSignets`).
+ * The Signets held by this installation's integrations, and those that reach a resource on one of
+ * them (`hostedSignets`).
  * Read per entry: a Signet whose grants this package can't read is dropped and listed in `dropped`.
  */
 export const installationSignets = (

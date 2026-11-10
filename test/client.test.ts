@@ -7,6 +7,7 @@ import {
   generateSignetKey,
   installationInquiries,
   keyThumbprint,
+  readPrivateJson,
   registerInstallation,
   requestRegistration,
   SignetClient,
@@ -30,7 +31,6 @@ let denied = false;
 let server: ReturnType<typeof Bun.serve>;
 let url: string;
 const signetId = uuid();
-const integrationId = uuid();
 const enrollmentId = uuid();
 const installationId = uuid();
 const inquiryId = uuid();
@@ -105,7 +105,6 @@ beforeAll(() => {
             ...credentials(-1),
             renewalCredential: token('signet_renew_'),
             signetId,
-            integrationId,
             owner: { ownerModel: 'User', userId: uuid(), organizationId: null, spaceId: null },
           });
         }
@@ -194,7 +193,8 @@ describe('pairing and presentation', () => {
     expect(await collectSignet(url, keyFile, inquiryId)).toBeNull();
     approved = true;
     const collected = await collectSignet(url, keyFile, inquiryId);
-    expect(collected?.integrationId).toBe(integrationId);
+    expect(collected?.signetId).toBe(signetId);
+    expect(collected).not.toHaveProperty('integrationId');
     const credentialFile = join(directory, 'signet.json');
     await saveCollectedSignet(credentialFile, url, keyFile, collected!);
 
@@ -209,6 +209,30 @@ describe('pairing and presentation', () => {
     const execute = calls.findLast((call) => call.action === 'execute')!;
     expect(execute.headers.get('authorization')).toStartWith('DPoP kingdom_');
     expect(execute.body.signetId).toBe(signetId);
+  });
+
+  test('a credential file written when a Signet named one integration loads, and its next save drops that key', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'signet-'));
+    const keyFile = join(directory, 'key.json');
+    await writePrivateJson(keyFile, generateSignetKey());
+    approved = true;
+    const collected = await collectSignet(url, keyFile, inquiryId);
+    const credentialFile = join(directory, 'signet.json');
+    const saved = await saveCollectedSignet(credentialFile, url, keyFile, collected!);
+    await writePrivateJson(credentialFile, { ...saved, integrationId: uuid() });
+    expect(await readPrivateJson(credentialFile)).toHaveProperty('integrationId');
+
+    const client = await SignetClient.fromFile(credentialFile);
+    const renewals = calls.filter((call) => call.action === 'renewSignet').length;
+    await client.execute({
+      integrationId: uuid(),
+      operation: 'sessions.write',
+      input: { resourceId: uuid(), limit: 20 },
+    });
+    expect(calls.filter((call) => call.action === 'renewSignet')).toHaveLength(renewals + 1);
+    const rewritten = await readPrivateJson(credentialFile);
+    expect(rewritten).not.toHaveProperty('integrationId');
+    expect(rewritten).toMatchObject({ signetId, url });
   });
 
   test('a denied registration throws with the status and Kingdom message', async () => {
