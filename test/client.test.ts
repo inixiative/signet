@@ -7,7 +7,6 @@ import {
   generateSignetKey,
   installationInquiries,
   keyThumbprint,
-  readPrivateJson,
   registerInstallation,
   requestRegistration,
   SignetClient,
@@ -211,7 +210,7 @@ describe('pairing and presentation', () => {
     expect(execute.body.signetId).toBe(signetId);
   });
 
-  test('a credential file written when a Signet named one integration loads, and its next save drops that key', async () => {
+  test('a credential file holding a Signet-level integrationId is not a valid credential', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'signet-'));
     const keyFile = join(directory, 'key.json');
     await writePrivateJson(keyFile, generateSignetKey());
@@ -220,19 +219,8 @@ describe('pairing and presentation', () => {
     const credentialFile = join(directory, 'signet.json');
     const saved = await saveCollectedSignet(credentialFile, url, keyFile, collected!);
     await writePrivateJson(credentialFile, { ...saved, integrationId: uuid() });
-    expect(await readPrivateJson(credentialFile)).toHaveProperty('integrationId');
 
-    const client = await SignetClient.fromFile(credentialFile);
-    const renewals = calls.filter((call) => call.action === 'renewSignet').length;
-    await client.execute({
-      integrationId: uuid(),
-      operation: 'sessions.write',
-      input: { resourceId: uuid(), limit: 20 },
-    });
-    expect(calls.filter((call) => call.action === 'renewSignet')).toHaveLength(renewals + 1);
-    const rewritten = await readPrivateJson(credentialFile);
-    expect(rewritten).not.toHaveProperty('integrationId');
-    expect(rewritten).toMatchObject({ signetId, url });
+    await expect(SignetClient.fromFile(credentialFile)).rejects.toThrow();
   });
 
   test('a denied registration throws with the status and Kingdom message', async () => {

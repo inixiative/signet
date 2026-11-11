@@ -45,7 +45,8 @@ export const kingdomUrl = (value: string) => {
   return url.origin;
 };
 
-const credentialFileSchema = z
+/** What a presenting client keeps on disk (0600) for one enrolled Signet. */
+export const signetCredentialSchema = z
   .object({
     url: z.string().transform(kingdomUrl),
     signetId: z.uuid(),
@@ -62,20 +63,9 @@ const credentialFileSchema = z
     tokenType: z.literal('DPoP'),
   })
   .strict();
-/** Files written before 0.13 hold an `integrationId`, from when a Signet named one integration. */
-const withoutRetiredIntegration = (file: unknown) => {
-  if (!file || typeof file !== 'object' || Array.isArray(file)) return file;
-  const { integrationId: _retired, ...kept } = file as Record<string, unknown>;
-  return kept;
-};
-/**
- * What a presenting client keeps on disk (0600) for one enrolled Signet. A file an earlier version
- * wrote still reads, and is written back in this shape the next time it is saved.
- */
-export const signetCredentialSchema = z.preprocess(withoutRetiredIntegration, credentialFileSchema);
 export type SignetCredential = z.infer<typeof signetCredentialSchema>;
 /** A collected or enrolled Signet, as `saveCollectedSignet` writes it next to its key. */
-export const deliveredSignetSchema = credentialFileSchema.omit({ url: true, keyFile: true });
+export const deliveredSignetSchema = signetCredentialSchema.omit({ url: true, keyFile: true });
 export type DeliveredSignet = z.infer<typeof deliveredSignetSchema>;
 const enrolledCredentialsSchema = signetCredentialsSchema.required({ renewalCredential: true });
 /** What `enrollSignet` returns: the enrollment's credentials and the Signet they present. */

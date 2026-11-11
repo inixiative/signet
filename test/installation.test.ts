@@ -170,18 +170,17 @@ describe('installation layout', () => {
     expect(await heldCredentials(join(root, 'missing'))).toEqual([]);
   });
 
-  test('heldCredentials reads a file written when a Signet named one integration', async () => {
+  test('heldCredentials skips a file holding a Signet-level integrationId', async () => {
     const root = await newRoot();
     const { directory, keyFile } = await installationDirectory(root, url);
     const signetId = uuid();
-    const earlier = { ...credentials(), signetId, integrationId, owner, url, keyFile };
-    await writePrivateJson(signetCredentialFile(directory, signetId), earlier);
-    const [held] = await heldCredentials(directory);
-    expect(held).toMatchObject({ signetId, owner });
-    expect(held).not.toHaveProperty('integrationId');
-    expect(signetCredentialSchema.safeParse({ ...earlier, provider: 'railway' }).success).toBe(
-      false,
-    );
+    const credential = { ...credentials(), signetId, owner, url, keyFile };
+    expect(signetCredentialSchema.safeParse(credential).success).toBe(true);
+    await writePrivateJson(signetCredentialFile(directory, signetId), {
+      ...credential,
+      integrationId,
+    });
+    expect(await heldCredentials(directory)).toEqual([]);
   });
 
   test('ownerKey and ownerKeySchema agree, with absent ids empty', () => {
