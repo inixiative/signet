@@ -9,6 +9,7 @@ import { githubInputSchemas, githubOperationSchema, gitObjectIdSchema } from './
 import {
   grantTermsFitKind,
   grantTermsSchema,
+  registeredResourceSchema,
   requestedResourceSchema,
   type SignetGrant,
   signetGrantSchema,
@@ -110,7 +111,6 @@ export const signetCredentialsSchema = z.object({
 export const collectedSignetSchema = signetCredentialsSchema.extend({
   renewalCredential: z.string().regex(renewalCredentialPattern),
   signetId: z.uuid(),
-  integrationId: z.uuid(),
   owner: ownerRefSchema,
 });
 export type SignetCredentials = z.infer<typeof signetCredentialsSchema>;
@@ -127,10 +127,12 @@ const signetTerms = {
 /** A local Foundry, Archive or Oracle known to Kingdom by its key. */
 export const installationKindSchema = z.enum(['foundry', 'archive', 'oracle']);
 export type InstallationKind = z.infer<typeof installationKindSchema>;
-/** What a party asks for on an integration: resources by id or by kind (review R8). */
+/**
+ * What a party asks for: resources by id, or by kind on the integration each names (review R8). A
+ * Signet has no integration of its own; its resources may sit on several.
+ */
 export const signetProposalSchema = z.strictObject({
   ...signetTerms,
-  integrationId: z.uuid(),
   resources: z.array(requestedResourceSchema).min(1).max(100),
 });
 /** The terms as reviewed and issued: every resource named by id. */
@@ -155,9 +157,9 @@ export const registrationRequestSchema = z.strictObject({
   ...signetTerms,
   lifecycle: z.literal('ongoing'),
   owner: requestedOwnerSchema.optional(),
-  resources: z.array(requestedResourceSchema).max(100),
+  resources: z.array(registeredResourceSchema).max(100),
 });
-/** A person asks for a Signet on an integration, to be presented with `publicKey`. */
+/** A person asks for a Signet, to be presented with `publicKey`. */
 export const signetRequestSchema = signetProposalSchema.extend({
   publicKey: publicClientKeySchema,
 });
@@ -215,16 +217,14 @@ export const installationInquirySchema = z.object({
   deliverBefore: z.iso.datetime().nullable(),
 });
 /**
- * A pending `signetRequest` whose target is one of the Installation's integrations: a party asking
- * to join a Foundry's threads. The owner reviews it in Kingdom at `reviewUrl`.
+ * A pending `signetRequest` that asks for a resource on one of the Installation's integrations: a
+ * party asking to join a Foundry's threads. The owner reviews it in Kingdom at `reviewUrl`.
  */
 export const hostedSignetRequestSchema = z.object({
   id: z.uuid(),
   status: inquiryStatusSchema,
   createdAt: z.iso.datetime(),
   expiresAt: z.iso.datetime().nullable(),
-  /** The Installation's integration the request targets. */
-  integrationId: z.uuid(),
   requester: z.object({ sourceModel: z.string(), id: z.uuid(), displayName: z.string() }),
   terms: signetReviewProposalSchema,
   reviewUrl: kingdomLinkSchema,
@@ -251,23 +251,24 @@ export const signetRecipientModelSchema = z.enum([
 ]);
 export const installationSignetSchema = z.object({
   signetId: z.uuid(),
-  integrationId: z.uuid(),
   name: z.string(),
   /** The enrollment that is current for this installation's key, if any. */
   enrollmentId: z.uuid().nullable(),
   owner: ownerRefSchema,
-  /** What the Signet reaches, so a holder knows, for example, which threads it may open. */
+  /**
+   * What the Signet reaches, each row on its own integration, so a holder knows, for example,
+   * which threads it may open.
+   */
   resources: grantsSchema,
 });
 /**
- * A Signet issued on one of the Installation's integrations: a member of a Foundry's conversations.
- * For display and for cancelling a member's queued work once it is gone, never as an admission
- * gate: Kingdom admits every call.
+ * A Signet that reaches a resource on one of the Installation's integrations: a member of a
+ * Foundry's conversations. `resources` lists only the rows on the Installation's integrations, each
+ * naming which. For display and for cancelling a member's queued work once it is gone, never as an
+ * admission gate: Kingdom admits every call.
  */
 export const hostedSignetSchema = z.object({
   signetId: z.uuid(),
-  /** The Installation's integration the Signet is issued on. */
-  integrationId: z.uuid(),
   name: z.string(),
   /** The current revision; the host compares it with the `acceptedRevision` frames carry. */
   revision: z.number().int().min(1),
@@ -297,6 +298,7 @@ export const rotateInstallationKeySchema = z.strictObject({
 });
 export type InstallationInquiry = z.infer<typeof installationInquirySchema>;
 
+/** One resource a described Signet reaches, and the integration it is on. */
 export const signetDescriptionResourceSchema = z.object({
   id: z.uuid(),
   name: z.string(),
@@ -307,8 +309,6 @@ export const signetDescriptionResourceSchema = z.object({
 });
 export const signetDescriptionSchema = z.object({
   signetId: z.uuid(),
-  integrationId: z.uuid(),
-  provider: z.string().nullable(),
   name: z.string(),
   expiresAt: z.iso.datetime().nullable(),
   lifecycle: signetLifecycleSchema,

@@ -50,7 +50,6 @@ export const signetCredentialSchema = z
   .object({
     url: z.string().transform(kingdomUrl),
     signetId: z.uuid(),
-    integrationId: z.uuid().optional(),
     owner: ownerRefSchema.optional(),
     enrollmentId: z.uuid(),
     lifecycle: signetLifecycleSchema,
@@ -73,7 +72,6 @@ const enrolledCredentialsSchema = signetCredentialsSchema.required({ renewalCred
 export type EnrolledSignet = z.infer<typeof enrolledCredentialsSchema> & { signetId: string };
 const renewalResponseSchema = deliveredSignetSchema.omit({
   signetId: true,
-  integrationId: true,
   owner: true,
   renewalCredential: true,
 });
@@ -360,8 +358,8 @@ export async function awaitSignet(
 }
 
 /**
- * Ask for a Signet on an integration, to be presented with this key. Kingdom records a
- * `signetRequest` Inquiry (approved at once when the caller manages the integration); pass the
+ * Ask for a Signet, to be presented with this key. Kingdom records a `signetRequest` Inquiry
+ * (approved at once when the caller manages every integration it asks on); pass the
  * returned `requestId` to `collectSignet` or `awaitSignet`.
  */
 export const requestSignet = async (
@@ -408,7 +406,8 @@ export const enrollSignet = async (
 });
 
 /**
- * The Signets held by this installation's integrations, and those issued on them (`hostedSignets`).
+ * The Signets held by this installation's integrations, and those that reach a resource on one of
+ * them (`hostedSignets`).
  * Read per entry: a Signet whose grants this package can't read is dropped and listed in `dropped`.
  */
 export const installationSignets = (

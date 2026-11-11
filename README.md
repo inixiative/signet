@@ -4,7 +4,7 @@
 
 Pass-through execution with tracking and audit. A Signet is how anything uses an integration through Kingdom: a revocable pass on the owner's terms. Kingdom decides who may grant and use one with [`@inixiative/permissions`](https://github.com/inixiative/permissions); a grant's lens is [json-rules](https://github.com/inixiative/json-rules). This package presents Kingdom Signets.
 
-A **Signet** is Kingdom's only grant for using an integration. It names the resources, operations, lens and limits, and it can be revoked. Its grantee is a user or an integration, for example a paired Foundry or a machine's local Archive. The grantee presents it with an access token plus a DPoP proof signed by its device key (RFC 9449).
+A **Signet** is Kingdom's only grant for using integrations. It has an owner and no integration of its own: it names resources, each on its own integration, with their operations, lens and limits, and it can be revoked. Its grantee is a user or an integration, for example a paired Foundry or a machine's local Archive. The grantee presents it with an access token plus a DPoP proof signed by its device key (RFC 9449).
 
 This package is the one implementation of that protocol, shared by Kingdom (which verifies) and Archive, Foundry, Oracle and KCP (which present):
 
@@ -15,7 +15,7 @@ This package is the one implementation of that protocol, shared by Kingdom (whic
   - an **Installation** (a local Foundry, Archive or Oracle) is an actor known to Kingdom by its key: `registerInstallation`, then `requestRegistration` asks for what it needs (the owner it expects, by organization id or slug, and resources by id or by kind and name, with their operations) and returns a review code a person claims in Kingdom (a `registerIntegration` Inquiry), where the review opens with that owner and those resources selected, then `collectSignet` and `saveCollectedSignet`. `installationInquiries`, `installationSignets`, `cancelInstallationInquiry`, `enrollInstallationSignet` and `rotateInstallationKey` act as the installation;
   - `pairInstallation` does the whole pairing (register, request, wait on the socket, confirm the owner, collect) and `holdInstallationSignets` keeps one credential file per Signet the installation's integrations hold, enrolling later grants and dropping revoked ones;
   - `InstallationSocket`, Kingdom's live line to an installation: it proves the key, receives a snapshot of the installation's inquiries and Signets on connect and on every change, keeps the installation's integrations marked online, advertises its viewer URL, and polls the same reads while the socket is down;
-  - a **person or their agent** acts as themselves with a Kingdom API token plus a proof from its key: `requestSignet` asks for a Signet on an integration (a `signetRequest` Inquiry, approved at once when the caller manages the integration), `awaitSignet` polls `collectSignet` until it is approved, and `enrollSignet` enrolls the key on a Signet an owner granted directly (`owner/grant`). `saveCollectedSignet` writes either result next to the key;
+  - a **person or their agent** acts as themselves with a Kingdom API token plus a proof from its key: `requestSignet` asks for a Signet over the resources it names (a `signetRequest` Inquiry, approved at once when the caller manages every integration it asks on), `awaitSignet` polls `collectSignet` until it is approved, and `enrollSignet` enrolls the key on a Signet an owner granted directly (`owner/grant`). `saveCollectedSignet` writes either result next to the key;
   - `installation`: the layout every installation shares, under one root per product (a Foundry's `kingdom/`, `~/.kcp`): one directory per Kingdom host with its key and one file per Signet (`installationPaths`, `installationDirectory`, `signetCredentialFile`, `heldCredentials`), `privateDirectory`, and `defaultInstallationName(product)`. `listedSignets`, `heldSignetFile` and `withdrawRegistration` read and act on it. `holdPersonSignets` enrolls the key on Signets issued to a person, under the same per-directory `withHoldLock` as `holdInstallationSignets`, so a person login and an installation sync never enroll over each other;
   - `SignetHolders`, a cache of each held Signet's `access/describe` (with its `holder`), keyed by credential file or by the caller's own `keyOf`, refreshed after `stale()`;
   - `SignetClient`, which renews its access token and signs each call: `describe`, `execute`, task settlement, and the run actions a Foundry uses for inference (`resolveRun`, `delegateRun`, `renewRun`, `revokeRun`), and for a subscription run `releaseSubscription`, `reportSubscriptionLimits` and `reportCredentialRejected` (the provider rejected the login a release handed out).
@@ -41,7 +41,8 @@ new InstallationSocket({
 }).start();
 
 const signet = await SignetClient.fromFile(paired.credentialFile);
-await signet.execute({ integrationId, operation: 'sessions.write', input: { resourceId, snapshot, previousDigest: null } });
+// paired.integrationId is the integration this installation became, from the approved registration
+await signet.execute({ integrationId: paired.integrationId, operation: 'sessions.write', input: { resourceId, snapshot, previousDigest: null } });
 ```
 
 A person's agent, with an API token minted in Kingdom:
@@ -51,7 +52,7 @@ import { awaitSignet, enrollSignet, generateSignetKey, requestSignet, saveCollec
 
 await writePrivateJson(keyFile, generateSignetKey());
 const { requestId, reviewCode } = await requestSignet(kingdom, keyFile, apiToken, {
-  name: 'Research agent', integrationId, lifecycle: 'ongoing', expiresAt: null, maxRequests: null, maxConcurrent: 1,
+  name: 'Research agent', lifecycle: 'ongoing', expiresAt: null, maxRequests: null, maxConcurrent: 1,
   resources: [{ resourceModel: 'IntegrationResource', integrationResourceId, operations: { picks: ['documents.read'] } }],
 });
 const collected = await awaitSignet(kingdom, keyFile, requestId); // or, for a granted Signet:
@@ -74,7 +75,7 @@ A Signet revision grants one row per resource (`grantResourceSchema`), false pol
 
 **Terms** are neither operations nor lens: how a holder takes part (`grantTermsSchema`, strict per kind; `grantTermsFitKind(kind, terms)`). Today only `threads` has terms.
 
-What a party asks for (`signetResourceSchema` by id, `requestedResourceSchema` by id or by kind) carries picks, its own lens layer and terms (a request has no kind, so Kingdom checks `grantTermsFitKind` once it resolves the resource); what a holder reads (`signetGrantSchema`) is the stored row plus the resource's `kind`.
+What a party asks for (`signetResourceSchema` by id, `requestedResourceSchema` by id or by kind on the integration it names with `integrationId`) carries picks, its own lens layer and terms (a request has no kind, so Kingdom checks `grantTermsFitKind` once it resolves the resource). An Installation registering asks by id or by kind alone (`registeredResourceSchema`): the integration it becomes does not exist yet. What a holder reads (`signetGrantSchema`) is the stored row plus the resource's `kind` and the `integrationId` of the integration it is on; a call names that integration (`execute({ integrationId, … })`).
 
 ## Declared operations
 
@@ -85,10 +86,10 @@ An integration whose operations Kingdom executes generically declares them here,
 
 ## Agent conversations
 
-A conversation wraps a host Foundry's main thread (Kingdom `docs/AGENT-CONVERSATIONS.md`, Foundry `docs/reference/CONVERSATIONS.md`). A member is a Signet on the host Foundry's one `threads` resource; Kingdom admits each call and relays it over the host's Installation socket, and stores no conversation or message.
+A conversation wraps a host Foundry's main thread (Kingdom `docs/AGENT-CONVERSATIONS.md`, Foundry `docs/reference/CONVERSATIONS.md`). A member is a Signet that reaches the host Foundry's one `threads` resource (its grant row names the Foundry's integration); Kingdom admits each call and relays it over the host's Installation socket, and stores no conversation or message.
 
 - **Terms.** A member's `threads` terms (`threadsTermsSchema`) are `{ view: 'own' | 'thread', delivery: 'note' | 'turn', outbound: 'review' | 'auto', floor: { mayTake } }`, each defaulting to its narrowest value (`threadsTerms(terms)` reads them so). Which threads a member reaches is the grant's lens (a `where` over the thread's `id`), which Kingdom applies at admission. `narrowsThreadsTerms` is the rule for approving someone else's request: `own` < `thread`, `note` < `turn`, `review` < `auto`, `floor.mayTake` only where asked. Kingdom relays the terms on every frame (`terms`).
-- **Join requests** may name a resource by kind: `requestSignet` takes `{ resourceKind: 'threads', operations, lens, terms }`, and Kingdom resolves it before review.
+- **Join requests** may name a resource by kind: `requestSignet` takes `{ resourceKind: 'threads', integrationId, operations, lens, terms }`, the Foundry's integration naming whose threads, and Kingdom resolves it before review.
 - **Per-entry reads.** `installationInquiries`, `installationSignets`, the socket snapshot and `describe` read each entry on its own. An entry this package can't read is dropped and listed in `dropped`, and the rest is kept. Inside a Signet, resources are read one by one: a resource this package can't read (a term from a newer Kingdom, terms that don't fit its resource's kind) is dropped, and the Signet stays, so an installation never loses a held Signet, or mistakes a member for revoked, over one resource. The snapshot carries `hostedSignets` (members of this Foundry's conversations) and `hostedSignetRequests` (join requests aimed at its integrations); held Signets carry their `resources`.
 - **Host.** `InstallationSocket` takes `threads`, one handler per operation (`thread.read`, `thread.prompt`, `thread.floor`, `prompt.resolve`, `thread.subscribe`), answering `threadResult(...)` or `threadRefused(code)`. A frame this package can't read is refused `invalid_request` before any handler runs. `thread.subscribe` answers with the member's view and the `journalSeq` it was taken at, and the subscription starts there: `appendThread(subscriptionId, entry)` holds entries pushed meanwhile and never sends one twice. Each append carries a dense per-subscription `seq` (a filtered view skips journal entries, so `journalSeq` can't reveal loss); an entry that can't be sent still spends its `seq`, so Kingdom sees the gap and the member resyncs. A subscription ends on `thread.unsubscribe`, when Kingdom stops re-asserting its lease (`thread.lease`; dropped 90 s after the last one, so one late 45 s sweep is survived), or when the socket drops.
 - **Member.** An outside agent holds its live views with `SignetSocket`: it authenticates as its Signet's presentation (`authenticateSignet`, a proof bound to `POST /api/v1/access/signetSocket` with `ath`), renews it before the five-minute token expires (`renewPresentation`), and opens one `accessThread` stream per thread: a snapshot, then appends, with Kingdom's `seq`/`resync` rules. Frames are handled in order, one open is in flight per stream, and Kingdom's close carries the reason: after a revision the stream reopens under the new revision, while the host is offline it retries with backoff, when the presentation lapsed the socket re-presents and reopens, and on revocation or expiry it ends (`onClosed`). Posts are separate `execute` calls (`thread.prompt`), each admitted and metered. A Foundry holding a conversation Signet opens the same streams over its Installation socket (`threadStreams`, `openThread`).

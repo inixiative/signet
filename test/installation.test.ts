@@ -16,6 +16,7 @@ import {
   SignetHolders,
   SignetHttpError,
   signetCredentialFile,
+  signetCredentialSchema,
   withdrawRegistration,
   writePrivateJson,
 } from '../src';
@@ -66,7 +67,6 @@ beforeAll(() => {
             signets: [
               {
                 signetId: listedId,
-                integrationId,
                 name: 'Railway',
                 enrollmentId: null,
                 owner,
@@ -76,7 +76,7 @@ beforeAll(() => {
             hostedSignets: [],
           });
         case 'enrollInstallationSignet':
-          return data({ ...credentials(), signetId: body.signetId, integrationId, owner });
+          return data({ ...credentials(), signetId: body.signetId, owner });
         case 'enrollSignet':
           // Slow enough that two unlocked holders would both enroll.
           await Bun.sleep(40);
@@ -170,6 +170,19 @@ describe('installation layout', () => {
     expect(await heldCredentials(join(root, 'missing'))).toEqual([]);
   });
 
+  test('heldCredentials skips a file holding a Signet-level integrationId', async () => {
+    const root = await newRoot();
+    const { directory, keyFile } = await installationDirectory(root, url);
+    const signetId = uuid();
+    const credential = { ...credentials(), signetId, owner, url, keyFile };
+    expect(signetCredentialSchema.safeParse(credential).success).toBe(true);
+    await writePrivateJson(signetCredentialFile(directory, signetId), {
+      ...credential,
+      integrationId,
+    });
+    expect(await heldCredentials(directory)).toEqual([]);
+  });
+
   test('ownerKey and ownerKeySchema agree, with absent ids empty', () => {
     const key = ownerKey(owner);
     expect(key).toBe(`Organization::${owner.organizationId}:`);
@@ -194,7 +207,8 @@ describe('installation Signets', () => {
   test('heldSignetFile enrolls a listed Signet once, and refuses one Kingdom does not list', async () => {
     const root = await newRoot();
     const file = await heldSignetFile(root, url, listedId);
-    expect(await readPrivateJson(file)).toMatchObject({ signetId: listedId, integrationId });
+    expect(await readPrivateJson(file)).toMatchObject({ signetId: listedId, owner });
+    expect(await readPrivateJson(file)).not.toHaveProperty('integrationId');
     expect(await heldSignetFile(root, url, listedId)).toBe(file);
     expect(count('enrollInstallationSignet')).toBe(1);
     await expect(heldSignetFile(root, url, uuid())).rejects.toThrow(/does not list Signet/);
@@ -215,18 +229,16 @@ describe('installation Signets', () => {
 });
 
 describe('holdPersonSignets', () => {
-  const signet = { signetId: uuid(), expectedRevision: 3, integrationId, owner };
+  const signet = { signetId: uuid(), expectedRevision: 3, owner };
 
-  test('enrolls as the person, records the integration and owner, and never writes the token', async () => {
+  test('enrolls as the person, records the owner, and never writes the token', async () => {
     const root = await newRoot();
     const { directory, keyFile } = await installationDirectory(root, url);
     const held = await holdPersonSignets(url, keyFile, directory, apiToken, [signet], {
       name: 'KCP test',
     });
     const credentialFile = signetCredentialFile(directory, signet.signetId);
-    expect(held).toEqual([
-      { signetId: signet.signetId, integrationId, owner, credentialFile, enrolled: true },
-    ]);
+    expect(held).toEqual([{ signetId: signet.signetId, owner, credentialFile, enrolled: true }]);
     const enroll = calls.find((call) => call.action === 'enrollSignet');
     expect(enroll?.authorization).toBe(`Bearer ${apiToken}`);
     expect(enroll?.body).toMatchObject({
@@ -234,7 +246,7 @@ describe('holdPersonSignets', () => {
       expectedRevision: 3,
       name: 'KCP test',
     });
-    expect(await readPrivateJson(credentialFile)).toMatchObject({ integrationId, owner, url });
+    expect(await readPrivateJson(credentialFile)).toMatchObject({ owner, url });
     expect(JSON.stringify(await readPrivateJson(credentialFile))).not.toContain(apiToken);
 
     const again = await holdPersonSignets(url, keyFile, directory, apiToken, [signet], {
@@ -266,8 +278,6 @@ describe('SignetHolders', () => {
   const ref = (signetId: string) => ({ url, signetId, credentialFile: `/held/${signetId}.json` });
   const described = (signetId: string) => ({
     signetId,
-    integrationId,
-    provider: 'railway',
     name: 'Railway',
     expiresAt: null,
     lifecycle: 'ongoing',
@@ -291,7 +301,7 @@ describe('SignetHolders', () => {
     const id = uuid();
     const view = await holders.get(ref(id));
     expect(view).toMatchObject({ status: 'described', holder: null });
-    expect(view.description?.integrationId).toBe(integrationId);
+    expect(view.description?.signetId).toBe(id);
     await holders.get(ref(id));
     expect(reads).toBe(1);
     holders.stale();

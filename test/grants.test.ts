@@ -16,6 +16,7 @@ import {
   grantTermsSchema,
   type LensLayer,
   narrowsThreadsTerms,
+  registeredResourceSchema,
   repositoryCallRow,
   repositoryGrantRefusal,
   repositoryLensRefusal,
@@ -203,28 +204,46 @@ describe('what a party asks for', () => {
     ).toBe(false);
   });
 
-  test('by kind, when the asker does not know the id', () => {
-    const asked = requestedResourceSchema.parse({
+  test('by kind on a named integration, when the asker does not know the id', () => {
+    const byKind = {
       resourceKind: threadsResourceKind,
       operations: { picks: ['thread.read', 'thread.prompt'] },
       terms: { threads: { delivery: 'turn' } },
-    });
+    };
+    const integrationId = Bun.randomUUIDv7();
+    const asked = requestedResourceSchema.parse({ ...byKind, integrationId });
     expect(asked).toMatchObject({
       resourceKind: 'threads',
+      integrationId,
       operations: { picks: ['thread.read', 'thread.prompt'] },
     });
+    expect(requestedResourceSchema.safeParse(byKind).success).toBe(false);
+  });
+
+  test('an installation registering asks by kind alone: its integration does not exist yet', () => {
+    const byKind = {
+      resourceKind: 'archiveLibrary',
+      operations: { picks: ['sessions.write'] },
+    };
+    expect(registeredResourceSchema.parse(byKind)).toMatchObject(byKind);
+    expect(
+      registeredResourceSchema.safeParse({ ...byKind, integrationId: Bun.randomUUIDv7() }).success,
+    ).toBe(false);
   });
 });
 
 describe('the grant as a holder reads it', () => {
-  test('carries the resource kind, and reads a row Kingdom stores', () => {
-    const grant = signetGrantSchema.parse({
+  test('carries the resource kind and the integration the resource is on', () => {
+    const integrationId = Bun.randomUUIDv7();
+    const row = {
       resourceModel: 'IntegrationResource',
       integrationResourceId,
       kind: 'repository',
       full: true,
-    });
-    expect(grant).toMatchObject({ kind: 'repository', full: true });
+    };
+    const grant = signetGrantSchema.parse({ ...row, integrationId });
+    expect(grant).toMatchObject({ kind: 'repository', integrationId, full: true });
+    expect(signetGrantSchema.safeParse(row).success).toBe(false);
     expect(signetGrantSchema.parse({ resourceModel: 'Project', projectId })).toEqual({
       resourceModel: 'Project',
       projectId,
@@ -234,6 +253,7 @@ describe('the grant as a holder reads it', () => {
         resourceModel: 'IntegrationResource',
         integrationResourceId,
         kind: 'repository',
+        integrationId: Bun.randomUUIDv7(),
         full: true,
         operations: ['commits.read'],
       }).success,

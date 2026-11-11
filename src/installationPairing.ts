@@ -28,7 +28,6 @@ import { InstallationSocket } from './installationSocket';
 
 export type HeldSignet = {
   signetId: string;
-  integrationId: string;
   owner: OwnerRef;
   credentialFile: string;
 };
@@ -81,10 +80,7 @@ export async function holdInstallationSignets(
   url: string,
   keyFile: string,
   directory: string,
-  signets: Pick<
-    InstallationSnapshot['signets'][number],
-    'signetId' | 'integrationId' | 'owner' | 'enrollmentId'
-  >[],
+  signets: Pick<InstallationSnapshot['signets'][number], 'signetId' | 'owner' | 'enrollmentId'>[],
 ): Promise<HeldSignet[]> {
   return withHoldLock(directory, async () => {
     const held: HeldSignet[] = [];
@@ -98,12 +94,7 @@ export async function holdInstallationSignets(
           keyFile,
           await enrollInstallationSignet(url, keyFile, signet.signetId),
         );
-      held.push({
-        signetId: signet.signetId,
-        integrationId: signet.integrationId,
-        owner: signet.owner,
-        credentialFile,
-      });
+      held.push({ signetId: signet.signetId, owner: signet.owner, credentialFile });
     }
     return held;
   });
@@ -113,13 +104,11 @@ export type PersonSignet = {
   signetId: string;
   /** The Signet's current revision, as the person read it (`/me/overview`); Kingdom refuses a stale one. */
   expectedRevision: number;
-  integrationId: string;
   owner?: OwnerRef;
 };
 
 export type HeldPersonSignet = {
   signetId: string;
-  integrationId: string;
   owner?: OwnerRef;
   credentialFile: string;
   /** False when a credential file was already held and kept. */
@@ -156,13 +145,11 @@ export async function holdPersonSignets(
         );
         await saveCollectedSignet(credentialFile, url, keyFile, {
           ...enrolled,
-          integrationId: signet.integrationId,
           ...(signet.owner ? { owner: signet.owner } : {}),
         });
       }
       held.push({
         signetId: signet.signetId,
-        integrationId: signet.integrationId,
         ...(signet.owner ? { owner: signet.owner } : {}),
         credentialFile,
         enrolled: !kept,
@@ -363,6 +350,8 @@ export async function pairInstallation(input: InstallationPairing) {
   );
   if (input.confirmOwner && !(await input.confirmOwner(inquiry)))
     throw Error('Not collected: the owner was not confirmed');
+  if (!inquiry.integrationId)
+    throw Error('Kingdom approved the registration without naming the integration it created');
   const collected = await collectSignet(url, keyFile, inquiry.id);
   if (!collected) throw Error('Kingdom has not released the Signet yet; try again');
   const credentialFile = signetCredentialFile(directory, collected.signetId);
@@ -373,7 +362,8 @@ export async function pairInstallation(input: InstallationPairing) {
     directory,
     credentialFile,
     signetId: collected.signetId,
-    integrationId: collected.integrationId,
+    /** The integration this installation became, from the approved registration, not from its Signet. */
+    integrationId: inquiry.integrationId,
     owner: collected.owner,
     ownerName: inquiry.ownerName,
   };
