@@ -26,7 +26,7 @@ import { holdInstallationSignets, InstallationSocket, pairInstallation, SignetCl
 const paired = await pairInstallation({
   url: kingdom, root: dataDir, kind: 'archive', name: 'Laptop Archive', sourceId,
   terms: {
-    name: 'Laptop Archive', lifecycle: 'ongoing', expiresAt: null, maxRequests: null, maxConcurrent: 4,
+    name: 'Laptop Archive', lifecycle: 'ongoing', expiresAt: null, maxRequests: null,
     owner: { ownerModel: 'Organization', organization: 'inixiative' },
     resources: [{ resourceKind: 'archiveLibrary', operations: { picks: ['sessions.write'] } }],
   },
@@ -52,7 +52,7 @@ import { awaitSignet, enrollSignet, generateSignetKey, requestSignet, saveCollec
 
 await writePrivateJson(keyFile, generateSignetKey());
 const { requestId, reviewCode } = await requestSignet(kingdom, keyFile, apiToken, {
-  name: 'Research agent', lifecycle: 'ongoing', expiresAt: null, maxRequests: null, maxConcurrent: 1,
+  name: 'Research agent', lifecycle: 'ongoing', expiresAt: null, maxRequests: null,
   resources: [{ resourceModel: 'IntegrationResource', integrationResourceId, operations: { picks: ['documents.read'] } }],
 });
 const collected = await awaitSignet(kingdom, keyFile, requestId); // or, for a granted Signet:

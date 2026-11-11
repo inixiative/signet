@@ -45,7 +45,6 @@ const hosted = (resources: unknown[], baseLenses: Record<string, unknown> = {}) 
   lifecycle: 'ongoing',
   expiresAt: null,
   maxRequests: null,
-  maxConcurrent: 1,
   recipient: { recipientModel: 'User', id: uuid(), displayName: 'JobCo agent' },
   baseLenses,
   resources,
@@ -61,7 +60,6 @@ const request = (terms: Record<string, unknown>) => ({
     lifecycle: 'ongoing',
     expiresAt: null,
     maxRequests: null,
-    maxConcurrent: 1,
     resources: [
       {
         resourceModel: 'IntegrationResource',
@@ -153,6 +151,7 @@ describe('per-entry snapshot parsing (review U1)', () => {
       name: 'Threads',
       kind,
       integrationId: uuid(),
+      provider: 'foundry',
       ...extra,
     });
     const description = parseSignetDescription({
@@ -196,23 +195,41 @@ describe('per-entry snapshot parsing (review U1)', () => {
         {
           key: 'thread.read',
           name: 'Read',
-          resources: [{ id: uuid(), name: 'Threads', kind: 'threads', integrationId: foundry }],
+          resources: [
+            {
+              id: uuid(),
+              name: 'Threads',
+              kind: 'threads',
+              integrationId: foundry,
+              provider: 'foundry',
+            },
+          ],
         },
         {
           key: 'documents.read',
           name: 'Read documents',
           resources: [
-            { id: uuid(), name: 'Library', kind: 'archiveLibrary', integrationId: archive },
+            {
+              id: uuid(),
+              name: 'Library',
+              kind: 'archiveLibrary',
+              integrationId: archive,
+              provider: 'archive',
+            },
           ],
         },
       ],
     });
     expect(description).not.toHaveProperty('integrationId');
+    expect(description).not.toHaveProperty('provider');
     expect(
       description.operations.flatMap((operation) =>
-        operation.resources.map((resource) => resource.integrationId),
+        operation.resources.map(({ integrationId, provider }) => ({ integrationId, provider })),
       ),
-    ).toEqual([foundry, archive]);
+    ).toEqual([
+      { integrationId: foundry, provider: 'foundry' },
+      { integrationId: archive, provider: 'archive' },
+    ]);
   });
 });
 

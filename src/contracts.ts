@@ -122,7 +122,6 @@ const signetTerms = {
   taskId: z.uuid().optional(),
   expiresAt: z.iso.datetime().nullable(),
   maxRequests: z.number().int().min(1).max(100000).nullable(),
-  maxConcurrent: z.number().int().min(1).max(20),
 };
 /** A local Foundry, Archive or Oracle known to Kingdom by its key. */
 export const installationKindSchema = z.enum(['foundry', 'archive', 'oracle']);
@@ -275,7 +274,6 @@ export const hostedSignetSchema = z.object({
   lifecycle: signetLifecycleSchema,
   expiresAt: z.iso.datetime().nullable(),
   maxRequests: z.number().int().nullable(),
-  maxConcurrent: z.number().int(),
   recipient: z.object({
     recipientModel: signetRecipientModelSchema,
     id: z.uuid(),
@@ -304,6 +302,8 @@ export const signetDescriptionResourceSchema = z.object({
   name: z.string(),
   kind: z.string(),
   integrationId: z.uuid(),
+  /** The integration's provider family (`github`, `anthropic`…): the description has no host. */
+  provider: z.string(),
   lens: storedLensLayersSchema.optional(),
   terms: grantTermsSchema.optional(),
 });

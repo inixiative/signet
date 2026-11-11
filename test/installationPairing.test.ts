@@ -140,7 +140,6 @@ test("pairs through polling when the socket is refused, showing Kingdom's review
       ],
       expiresAt: null,
       maxRequests: null,
-      maxConcurrent: 2,
     },
     onReview: ({ reviewCode, review }) => void reviews.push(reviewCode, review),
     confirmOwner: async ({ ownerName }) => {
@@ -215,7 +214,6 @@ test('refuses to collect when the owner is not confirmed', async () => {
         resources: [],
         expiresAt: null,
         maxRequests: null,
-        maxConcurrent: 4,
       },
       onReview: () => {},
       confirmOwner: async () => false,
@@ -300,7 +298,6 @@ test('gives up when the review code expires, even if Kingdom still reports it pe
           resources: [],
           expiresAt: null,
           maxRequests: null,
-          maxConcurrent: 4,
         },
         onReview: () => {},
         socketOptions: { pollMs: 20, retryBaseMs: 1000 },
@@ -318,7 +315,6 @@ const terms = {
   resources: [],
   expiresAt: null,
   maxRequests: null,
-  maxConcurrent: 1,
 };
 const sentInquiry = (id: string, status: string, expiresAt: string | null) => ({
   id,
