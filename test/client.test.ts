@@ -178,7 +178,6 @@ describe('pairing and presentation', () => {
       resources: [],
       expiresAt: null,
       maxRequests: null,
-      maxConcurrent: 4,
     });
     expect(pending.reviewCode).toBe('ABC123ABC123');
     expect(pending.reviewUrl).toBe('https://kingdom.example/dashboard?reviewSignet=ABC123ABC123');

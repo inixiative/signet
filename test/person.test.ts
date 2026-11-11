@@ -141,7 +141,6 @@ const proposal = {
   lifecycle: 'ongoing' as const,
   expiresAt: null,
   maxRequests: null,
-  maxConcurrent: 1,
 };
 
 describe('a person asks for a Signet', () => {

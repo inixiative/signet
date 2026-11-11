@@ -101,7 +101,6 @@ describe('requests by resource kind', () => {
     lifecycle: 'ongoing' as const,
     expiresAt: null,
     maxRequests: null,
-    maxConcurrent: 1,
   };
   const join = {
     resourceKind: threadsResourceKind,
