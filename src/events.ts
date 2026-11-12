@@ -117,3 +117,31 @@ export const parseAccessEventsStreamName = (name: string) => {
 export const accessEventsSnapshotSchema = z.object({
   data: z.strictObject({ events: z.tuple([]) }),
 });
+/** A `log` stream's one op: each append's payload is one `AccessEventsAppend`. */
+export const accessEventsAppendType = 'append';
+
+/**
+ * One channel a Signet holds: a resource its current revision reaches event leaves on. `events` are
+ * those leaves (`events.<event>.<action>`) that the integration's baseline still allows, and
+ * `stream` is the `accessEvents` stream to open for it (`accessEventsStreamName`).
+ */
+export const eventChannelSchema = z.object({
+  resourceId: z.uuid(),
+  kind: z.string(),
+  name: z.string(),
+  events: z.array(z.string()),
+  stream: z.string(),
+});
+export type EventChannel = z.infer<typeof eventChannelSchema>;
+
+/**
+ * `eventChannels` on `access/describe` and on each held Signet of the Installation snapshot: the
+ * integrations a Signet can listen on and its channels on each. A holder opens any or all of them.
+ */
+export const eventChannelMapSchema = z.array(
+  z.object({
+    integration: z.object({ id: z.uuid(), provider: z.string().nullable(), name: z.string() }),
+    channels: z.array(eventChannelSchema),
+  }),
+);
+export type EventChannelMap = z.infer<typeof eventChannelMapSchema>;

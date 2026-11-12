@@ -113,6 +113,36 @@ await signet.execute({
 });
 ```
 
+## Integration events
+
+An integration that receives its provider's events (GitHub, Slack, Linear) streams each one to the Signets whose grant picks its kind (Kingdom `docs/INTEGRATION-EVENTS.md`). Event kinds are operation leaves (`events.<event>.<action>`, `eventOperationKey`), picked like any other, and they are streamed, never executed.
+
+- **Channels.** A channel is one resource a Signet holds event operations on. `describe` and each held Signet of the Installation snapshot carry `eventChannels` (`eventChannelMapSchema`): per integration `{ id, provider, name }`, per channel `{ resourceId, kind, name, events, stream }`. They are read per entry: an integration or channel this package can't read is dropped and listed in `dropped`, and the Signet is kept. The field is absent when Kingdom sent none (a Kingdom before integration events), which says nothing about what the Signet holds.
+- **Holding a channel.** `SignetSocket` takes `eventStreams` (`EventStreamHandlers`) and holds a channel by its resource: `openEventChannel(resourceId)`, `leaveEventChannel(resourceId)`, `heldEventChannels()`. `InstallationSocket` takes the same for the Signets an installation holds, keyed `{ signetId, resourceId }`. Each channel is one `accessEvents` stream on the socket that carries thread streams, run by the same code (`DataStreams`), so Kingdom's close means the same: after a revision the channel reopens under the new revision, when the presentation lapsed the socket re-presents and reopens, a dropped socket reopens what it held, and on revocation, expiry or a refused open the channel ends (`onClosed`).
+- **Live only.** A channel's snapshot is always empty and nothing is replayed. `onEvent(channel, { eventId, type, event }, seq)` receives each event as that channel's Signet projects it, from the moment Kingdom opens the channel (`onOpened`, again after every reopen). A holder that is offline misses what is published meanwhile, as it does between a close and the reopen, and there is nowhere to read it back from.
+- **Gaps.** A thread stream whose `seq` jumps reopens for a fresh snapshot, which holds what it missed. A channel's snapshot holds nothing, so every append that arrives is delivered, whatever its `seq`, and a jump is reported: `onGap(channel, { after, seq })`, just before the event that showed it. A gap means one of two things this package can't tell apart: Kingdom's counter for the stream expired after 24 quiet hours and started again from the clock (nothing was lost), or appends in between never arrived (they are gone). A reconnect reports no gap; it shows as `onOpened`.
+- **Duplicates.** Nothing is deduped here: an event is delivered once per channel it arrives on, each time it arrives. A holder with two Signets on one resource gets the event on both channels, each cut by its own Signet's lens, so the two bodies can differ. Kingdom drops a provider's retried delivery for three days; one that still comes through is delivered again. `eventId` (the provider's delivery id, unique within an integration) rides outside the projected body on every append, so a consumer that must act once dedupes on `resourceId` and `eventId`.
+
+```ts
+import { SignetClient, SignetSocket } from '@inixiative/signet';
+
+const signet = await SignetClient.fromFile(credentialFile);
+const { eventChannels = [] } = await signet.describe();
+const socket = new SignetSocket({
+  client: signet,
+  onSnapshot: () => {}, // thread views, not held here
+  onEntry: () => {},
+  eventStreams: {
+    onEvent: ({ resourceId }, { eventId, type, event }) => notify(resourceId, eventId, type, event),
+    onGap: ({ resourceId }, { after, seq }) => console.warn(`${resourceId}: seq ${after} -> ${seq}`),
+    onClosed: ({ resourceId }, reason) => console.log(`stopped listening on ${resourceId}: ${reason}`),
+  },
+});
+for (const { channels } of eventChannels)
+  for (const channel of channels) socket.openEventChannel(channel.resourceId);
+socket.start();
+```
+
 Kingdom's OpenAPI spec (`/openapi/docs`) publishes each step's raw HTTP call and credentials.
 
 MIT

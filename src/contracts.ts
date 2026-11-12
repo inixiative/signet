@@ -5,6 +5,7 @@ import {
   archiveInputSchemas,
   archiveOperationSchema,
 } from './archive';
+import { type EventChannelMap, eventChannelMapSchema, eventChannelSchema } from './events';
 import { githubInputSchemas, githubOperationSchema, gitObjectIdSchema } from './github';
 import {
   grantTermsFitKind,
@@ -259,6 +260,8 @@ export const installationSignetSchema = z.object({
    * which threads it may open.
    */
   resources: grantsSchema,
+  /** The event channels it holds; absent from a Kingdom that predates integration events. */
+  eventChannels: eventChannelMapSchema.optional(),
 });
 /**
  * A Signet that reaches a resource on one of the Installation's integrations: a member of a
@@ -322,6 +325,8 @@ export const signetDescriptionSchema = z.object({
       resources: z.array(signetDescriptionResourceSchema),
     }),
   ),
+  /** The event channels it holds; absent from a Kingdom that predates integration events. */
+  eventChannels: eventChannelMapSchema.optional(),
 });
 export type SignetDescription = z.infer<typeof signetDescriptionSchema>;
 
@@ -445,7 +450,7 @@ export type InstallationSnapshot = z.infer<typeof installationSnapshotSchema> & 
 const entryId = (value: unknown) => {
   if (typeof value !== 'object' || value === null) return null;
   const record = value as Record<string, unknown>;
-  const id = record.signetId ?? record.id;
+  const id = record.signetId ?? record.id ?? record.resourceId;
   return typeof id === 'string' ? id.slice(0, 80) : null;
 };
 /**
@@ -508,6 +513,34 @@ function parseSignetsWithGrants<S extends z.ZodObject<{ resources: typeof grants
   );
 }
 
+const eventChannelIntegrationSchema = eventChannelMapSchema.element.extend({
+  channels: z.unknown().optional(),
+});
+
+/**
+ * `eventChannels`, per integration and per channel inside it: one this package can't read is
+ * dropped and reported, and the Signet and its other channels are kept.
+ */
+export function parseEventChannelMap(
+  list: string,
+  value: unknown,
+  dropped: DroppedEntry[],
+): EventChannelMap {
+  return parseEntries(list, value, eventChannelIntegrationSchema, dropped).map((entry) => ({
+    ...entry,
+    channels: parseEntries(
+      `${list}.${entry.integration.id}.channels`,
+      entry.channels,
+      eventChannelSchema,
+      dropped,
+    ),
+  }));
+}
+
+const heldSignetIdentitySchema = installationSignetSchema.extend({
+  eventChannels: z.unknown().optional(),
+});
+
 const inquiriesScalars = installationInquiriesResponseSchema.pick({
   pending: true,
   declinedAt: true,
@@ -529,11 +562,28 @@ export function parseInstallationInquiries(value: unknown, dropped: DroppedEntry
   };
 }
 
-/** `installationSignets`, per Signet and per resource inside it. */
+/** `installationSignets`, per Signet, and per resource and event channel inside it. */
 export function parseInstallationSignets(value: unknown, dropped: DroppedEntry[] = []) {
   const record = z.object({}).loose().parse(value);
   return {
-    signets: parseSignetsWithGrants('signets', record.signets, installationSignetSchema, dropped),
+    signets: parseSignetsWithGrants(
+      'signets',
+      record.signets,
+      heldSignetIdentitySchema,
+      dropped,
+    ).map(
+      ({ eventChannels, ...signet }): InstallationSignet =>
+        eventChannels === undefined
+          ? signet
+          : {
+              ...signet,
+              eventChannels: parseEventChannelMap(
+                `signets.${signet.signetId}.eventChannels`,
+                eventChannels,
+                dropped,
+              ),
+            },
+    ),
     hostedSignets: parseSignetsWithGrants(
       'hostedSignets',
       record.hostedSignets,
@@ -554,7 +604,10 @@ export function parseInstallationSnapshot(value: unknown): InstallationSnapshot 
 
 export type ParsedSignetDescription = SignetDescription & { dropped: DroppedEntry[] };
 
-/** `access/describe`, per entry: a resource whose lens or terms don't parse, or don't fit its kind, is dropped. */
+/**
+ * `access/describe`, per entry: a resource whose lens or terms don't parse, or don't fit its kind,
+ * is dropped, and so is an event channel that doesn't parse.
+ */
 export function parseSignetDescription(value: unknown): ParsedSignetDescription {
   const dropped: DroppedEntry[] = [];
   const record = z
@@ -574,7 +627,14 @@ export function parseSignetDescription(value: unknown): ParsedSignetDescription 
           : 'terms do not fit the resource kind',
     ),
   }));
-  return { ...signetDescriptionSchema.parse({ ...record, operations }), dropped };
+  const eventChannels =
+    record.eventChannels === undefined
+      ? {}
+      : { eventChannels: parseEventChannelMap('eventChannels', record.eventChannels, dropped) };
+  return {
+    ...signetDescriptionSchema.parse({ ...record, operations, ...eventChannels }),
+    dropped,
+  };
 }
 
 /** The path a socket proof is bound to (POST), though the socket itself opens at the API origin. */

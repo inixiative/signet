@@ -1,5 +1,7 @@
 export * from './client';
 export * from './contracts';
+export * from './dataStreams';
+export * from './eventStreams';
 export * from './files';
 export * from './holders';
 export * from './installation';

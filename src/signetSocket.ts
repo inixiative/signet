@@ -2,11 +2,18 @@ import { z } from 'zod';
 import type { SignetClient } from './client';
 import { kingdomUrl } from './client';
 import { signetPresentedFrameSchema } from './contracts';
+import type { DataStreamOptions } from './dataStreams';
+import { type EventStreamHandlers, EventStreams } from './eventStreams';
 import { type ThreadStreamHandlers, ThreadStreams } from './threadStreams';
 
 export type SignetSocketOptions = ThreadStreamHandlers & {
   /** The Signet this socket presents; it renews the access token the presentation rides on. */
   client: SignetClient;
+  /**
+   * Hold this Signet's event channels (`eventChannels` on `describe`). Errors go to its own
+   * `onError`, or to this socket's when it has none.
+   */
+  eventStreams?: EventStreamHandlers;
   /** Kingdom accepted (or renewed) the presentation; it holds until `expiresAt`. */
   onPresented?: (presentation: z.infer<typeof signetPresentedFrameSchema>) => void;
   pingMs?: number;
@@ -30,7 +37,8 @@ const OPEN = 1;
  * the presentation before the token expires (`renewPresentation`), and holds the member's
  * `accessThread` streams: entering a thread is opening its stream, and Kingdom closes it on leave,
  * revocation, any revision, expiry or the host going offline. Posts are not sent here; each is its
- * own `access/execute thread.prompt` through the `SignetClient`.
+ * own `access/execute thread.prompt` through the `SignetClient`. It holds the Signet's event
+ * channels the same way (`accessEvents` streams, `eventStreams`), live only.
  */
 export class SignetSocket {
   private socket: WebSocket | null = null;
@@ -42,13 +50,24 @@ export class SignetSocket {
   private authTimer: ReturnType<typeof setTimeout> | null = null;
   private renewTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly streams: ThreadStreams;
+  private readonly events: EventStreams | null;
 
   constructor(private readonly options: SignetSocketOptions) {
-    this.streams = new ThreadStreams((frame) => this.send(frame), options, {
+    const streamOptions: DataStreamOptions = {
       retryBaseMs: options.retryBaseMs,
       // Kingdom closed streams because the presentation lapsed: re-present on a new connection.
       onPresentationExpired: () => this.socket?.close(),
-    });
+    };
+    const send = (frame: Record<string, unknown>) => this.send(frame);
+    this.streams = new ThreadStreams(send, options, streamOptions);
+    const events = options.eventStreams;
+    this.events = events
+      ? new EventStreams(
+          send,
+          { ...events, onError: (error) => (events.onError ?? options.onError)?.(error) },
+          streamOptions,
+        )
+      : null;
   }
 
   get connected() {
@@ -76,6 +95,25 @@ export class SignetSocket {
     return this.streams.held().map((stream) => stream.threadId);
   }
 
+  /**
+   * Listen on one of this Signet's event channels, by its resource (needs `eventStreams`): events
+   * from the moment Kingdom opens it, none from before.
+   */
+  openEventChannel(resourceId: string) {
+    if (!this.events) throw Error('Pass eventStreams to hold event channels');
+    this.events.open({ signetId: this.options.client.signetId, resourceId });
+  }
+
+  /** Stop listening on a channel: Kingdom closes the stream. */
+  leaveEventChannel(resourceId: string) {
+    this.events?.leave({ signetId: this.options.client.signetId, resourceId });
+  }
+
+  /** The resources whose event channels this socket holds open, or is opening. */
+  heldEventChannels() {
+    return this.events?.held().map((channel) => channel.resourceId) ?? [];
+  }
+
   close() {
     this.stopped = true;
     this.clearTimers();
@@ -83,6 +121,7 @@ export class SignetSocket {
     this.socket = null;
     this.authenticated = false;
     this.streams.down();
+    this.events?.down();
   }
 
   private connect() {
@@ -105,6 +144,7 @@ export class SignetSocket {
     }
     if (socket !== this.socket || typeof json !== 'object' || json === null) return;
     if (this.streams.receive(json as Record<string, unknown>)) return;
+    if (this.events?.receive(json as Record<string, unknown>)) return;
     const parsed = frameSchema.safeParse(json);
     if (!parsed.success) return;
     const frame = parsed.data;
@@ -135,6 +175,7 @@ export class SignetSocket {
             this.options.pingMs ?? 20_000,
           );
           this.streams.up();
+          this.events?.up();
           return;
         }
         case 'signetRejected':
@@ -196,6 +237,7 @@ export class SignetSocket {
     this.authenticated = false;
     this.clearTimers();
     this.streams.down();
+    this.events?.down();
     if (this.stopped) return;
     const base = this.options.retryBaseMs ?? 1_000;
     const delay = Math.min(base * 2 ** this.attempts++, this.options.retryMaxMs ?? 30_000);

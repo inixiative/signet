@@ -5,6 +5,7 @@ import {
   installationSocketAction,
   parseInstallationSnapshot,
 } from './contracts';
+import { type EventStreamHandlers, type EventStreamKey, EventStreams } from './eventStreams';
 import { type ThreadStreamHandlers, type ThreadStreamKey, ThreadStreams } from './threadStreams';
 import {
   type ThreadAppendFrame,
@@ -80,6 +81,8 @@ export type InstallationSocketOptions = {
   threads?: ThreadHost;
   /** Hold live views of threads on other Foundries through Signets this installation holds. */
   threadStreams?: ThreadStreamHandlers;
+  /** Hold event channels of the Signets this installation holds (their `eventChannels`). */
+  eventStreams?: EventStreamHandlers;
   pingMs?: number;
   pollMs?: number;
   retryBaseMs?: number;
@@ -111,6 +114,7 @@ const OPEN = 1;
  * snapshot of its inquiries and Signets on connect and again whenever one changes. While the
  * socket is down it polls the same reads, so nothing waits on the socket coming back. A Foundry
  * also answers its members' calls over it (`threads`) and holds its own memberships (`threadStreams`).
+ * The event channels of the Signets it holds are held here too (`eventStreams`), live only.
  */
 export class InstallationSocket {
   private socket: WebSocket | null = null;
@@ -127,13 +131,17 @@ export class InstallationSocket {
   private viewerUrl: string | null;
   private readonly subscriptions = new Map<string, HeldSubscription>();
   private readonly streams: ThreadStreams | null;
+  private readonly events: EventStreams | null;
 
   constructor(private readonly options: InstallationSocketOptions) {
     this.viewerUrl = options.viewerUrl ?? null;
+    const send = (frame: Record<string, unknown>) => this.send(frame);
+    const streamOptions = { retryBaseMs: options.retryBaseMs };
     this.streams = options.threadStreams
-      ? new ThreadStreams((frame) => this.send(frame), options.threadStreams, {
-          retryBaseMs: options.retryBaseMs,
-        })
+      ? new ThreadStreams(send, options.threadStreams, streamOptions)
+      : null;
+    this.events = options.eventStreams
+      ? new EventStreams(send, options.eventStreams, streamOptions)
       : null;
   }
 
@@ -166,6 +174,7 @@ export class InstallationSocket {
     this.authenticated = false;
     this.endSubscriptions('disconnected');
     this.streams?.down();
+    this.events?.down();
   }
 
   /** The members' views this host is pushing now. */
@@ -223,6 +232,24 @@ export class InstallationSocket {
     this.streams?.leave(stream);
   }
 
+  /**
+   * Listen on an event channel of a Signet this installation holds (needs `eventStreams`): events
+   * from the moment Kingdom opens it, none from before.
+   */
+  openEventChannel(channel: EventStreamKey) {
+    if (!this.events) throw Error('Pass eventStreams to hold event channels');
+    this.events.open(channel);
+  }
+
+  leaveEventChannel(channel: EventStreamKey) {
+    this.events?.leave(channel);
+  }
+
+  /** The event channels this socket holds open, or is opening. */
+  heldEventChannels(): EventStreamKey[] {
+    return this.events?.held() ?? [];
+  }
+
   private connect() {
     this.retryTimer = null;
     if (this.stopped) return;
@@ -243,6 +270,7 @@ export class InstallationSocket {
     }
     if (socket !== this.socket || typeof json !== 'object' || json === null) return;
     if (this.streams?.receive(json as Record<string, unknown>)) return;
+    if (this.events?.receive(json as Record<string, unknown>)) return;
     const parsed = frameSchema.safeParse(json);
     if (!parsed.success) return;
     const frame = parsed.data;
@@ -275,6 +303,7 @@ export class InstallationSocket {
           );
           if (this.viewerUrl) this.send({ action: 'advertise', viewerUrl: this.viewerUrl });
           this.streams?.up();
+          this.events?.up();
           return;
         case 'installation.snapshot':
           await this.options.onSnapshot(parseInstallationSnapshot(frame));
@@ -506,6 +535,7 @@ export class InstallationSocket {
     // Kingdom re-subscribes members after a reconnect; nothing pushes into a dead line meanwhile.
     this.endSubscriptions('disconnected');
     this.streams?.down();
+    this.events?.down();
     if (this.stopped) return;
     if (!this.polling) void this.poll();
     const base = this.options.retryBaseMs ?? 1_000;
