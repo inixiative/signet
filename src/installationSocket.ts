@@ -140,8 +140,13 @@ export class InstallationSocket {
     this.streams = options.threadStreams
       ? new ThreadStreams(send, options.threadStreams, streamOptions)
       : null;
-    this.events = options.eventStreams
-      ? new EventStreams(send, options.eventStreams, streamOptions)
+    const events = options.eventStreams;
+    this.events = events
+      ? new EventStreams(
+          send,
+          { ...events, onError: (error) => (events.onError ?? options.onError)?.(error) },
+          streamOptions,
+        )
       : null;
   }
 

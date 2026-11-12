@@ -49,6 +49,13 @@ export type DataStreamOptions = {
   openTimeoutMs?: number;
   /** Kingdom closed a stream because the socket's presentation lapsed: re-present, then reopen. */
   onPresentationExpired?: () => void;
+  /**
+   * Opens sent per window; the rest wait their turn. Kingdom closes a socket that sends more than
+   * 120 frames in ten seconds and refuses frames beyond 32 queued, so a holder of many streams
+   * that opened them all at once after every reconnect would never stay connected.
+   */
+  openBurst?: number;
+  openWindowMs?: number;
 };
 
 const reasonSchema = accessThreadCloseReasonSchema.optional().catch(undefined);
@@ -112,6 +119,10 @@ export class DataStreams<Key extends object, Snapshot, Append> {
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
   private queue: Promise<void> = Promise.resolve();
   private ready = false;
+  /** Streams whose open waits for the next window, in the order they asked. */
+  private readonly waiting = new Set<string>();
+  private opensThisWindow = 0;
+  private windowTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private readonly family: DataStreamFamily<Key, Snapshot, Append>,
@@ -144,6 +155,7 @@ export class DataStreams<Key extends object, Snapshot, Append> {
     const stream = this.family.name(key);
     if (!this.streams.delete(stream)) return;
     this.clearTimer(stream);
+    this.waiting.delete(stream);
     if (!this.ready) return;
     this.leaving.set(stream, (this.leaving.get(stream) ?? 0) + 1);
     this.send({ action: 'close', stream });
@@ -159,6 +171,10 @@ export class DataStreams<Key extends object, Snapshot, Append> {
   down() {
     this.ready = false;
     this.leaving.clear();
+    this.waiting.clear();
+    this.opensThisWindow = 0;
+    if (this.windowTimer) clearTimeout(this.windowTimer);
+    this.windowTimer = null;
     for (const stream of [...this.timers.keys()]) this.clearTimer(stream);
     for (const state of this.streams.values()) {
       state.lastSeq = null;
@@ -170,10 +186,15 @@ export class DataStreams<Key extends object, Snapshot, Append> {
   /** Handle a frame if it belongs to a stream of this family; true when it did. */
   receive(frame: Record<string, unknown>): boolean {
     if (typeof frame.stream !== 'string' || !this.family.owns(frame.stream)) return false;
-    this.queue = this.queue
-      .then(() => this.handle(frame))
-      .catch(this.handlers.onError ?? (() => {}));
+    this.queue = this.queue.then(() => this.handle(frame)).catch((error) => this.report(error));
     return true;
+  }
+
+  // A reporter that throws must not reject the queue: every later frame would be skipped.
+  private report(error: unknown) {
+    try {
+      this.handlers.onError?.(error);
+    } catch {}
   }
 
   private async handle(frame: Record<string, unknown>) {
@@ -263,6 +284,11 @@ export class DataStreams<Key extends object, Snapshot, Append> {
       state.again = true;
       return;
     }
+    if (!this.takeOpenTurn()) {
+      this.waiting.add(stream);
+      return;
+    }
+    this.waiting.delete(stream);
     state.pending = true;
     state.lastSeq = null;
     this.send({ action: 'open', stream });
@@ -270,6 +296,20 @@ export class DataStreams<Key extends object, Snapshot, Append> {
       state.pending = false;
       this.reopen(stream);
     });
+  }
+
+  private takeOpenTurn() {
+    if (this.windowTimer === null) {
+      this.opensThisWindow = 0;
+      this.windowTimer = setTimeout(() => {
+        this.windowTimer = null;
+        for (const stream of [...this.waiting]) this.sendOpen(stream);
+      }, this.options.openWindowMs ?? 2_500);
+      this.windowTimer.unref?.();
+    }
+    if (this.opensThisWindow >= (this.options.openBurst ?? 10)) return false;
+    this.opensThisWindow++;
+    return true;
   }
 
   private answered(stream: string, state: StreamState<Key>) {
@@ -327,6 +367,7 @@ export class DataStreams<Key extends object, Snapshot, Append> {
     if (!state) return;
     this.streams.delete(stream);
     this.clearTimer(stream);
+    this.waiting.delete(stream);
     this.handlers.onClosed?.(state.key, reason);
   }
 }
