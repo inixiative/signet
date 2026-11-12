@@ -6,25 +6,27 @@ import type { DataStreamOptions } from './dataStreams';
 import { type EventStreamHandlers, EventStreams } from './eventStreams';
 import { type ThreadStreamHandlers, ThreadStreams } from './threadStreams';
 
-export type SignetSocketOptions = ThreadStreamHandlers & {
-  /** The Signet this socket presents; it renews the access token the presentation rides on. */
-  client: SignetClient;
-  /**
-   * Hold this Signet's event channels (`eventChannels` on `describe`). Errors go to its own
-   * `onError`, or to this socket's when it has none.
-   */
-  eventStreams?: EventStreamHandlers;
-  /** Kingdom accepted (or renewed) the presentation; it holds until `expiresAt`. */
-  onPresented?: (presentation: z.infer<typeof signetPresentedFrameSchema>) => void;
-  pingMs?: number;
-  retryBaseMs?: number;
-  retryMaxMs?: number;
-  /** A Kingdom that never answers the presentation is treated as down. */
-  authTimeoutMs?: number;
-  /** Renew this long before the access token expires (it lives five minutes). */
-  renewBeforeMs?: number;
-  WebSocket?: typeof WebSocket;
-};
+export type SignetSocketOptions = Omit<ThreadStreamHandlers, 'onSnapshot' | 'onEntry'> &
+  /** Thread views; a holder that only listens to event channels leaves them out. */
+  Partial<Pick<ThreadStreamHandlers, 'onSnapshot' | 'onEntry'>> & {
+    /** The Signet this socket presents; it renews the access token the presentation rides on. */
+    client: SignetClient;
+    /**
+     * Hold this Signet's event channels (`eventChannels` on `describe`). Errors go to its own
+     * `onError`, or to this socket's when it has none.
+     */
+    eventStreams?: EventStreamHandlers;
+    /** Kingdom accepted (or renewed) the presentation; it holds until `expiresAt`. */
+    onPresented?: (presentation: z.infer<typeof signetPresentedFrameSchema>) => void;
+    pingMs?: number;
+    retryBaseMs?: number;
+    retryMaxMs?: number;
+    /** A Kingdom that never answers the presentation is treated as down. */
+    authTimeoutMs?: number;
+    /** Renew this long before the access token expires (it lives five minutes). */
+    renewBeforeMs?: number;
+    WebSocket?: typeof WebSocket;
+  };
 
 const frameSchema = z.object({ type: z.string() }).loose();
 /** WebSocket.OPEN, read from the spec rather than whichever WebSocket class was passed. */
@@ -59,7 +61,15 @@ export class SignetSocket {
       onPresentationExpired: () => this.socket?.close(),
     };
     const send = (frame: Record<string, unknown>) => this.send(frame);
-    this.streams = new ThreadStreams(send, options, streamOptions);
+    this.streams = new ThreadStreams(
+      send,
+      {
+        ...options,
+        onSnapshot: (stream, view) => options.onSnapshot?.(stream, view),
+        onEntry: (stream, entry) => options.onEntry?.(stream, entry),
+      },
+      streamOptions,
+    );
     const events = options.eventStreams;
     this.events = events
       ? new EventStreams(

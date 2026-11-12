@@ -1,6 +1,6 @@
 export * from './client';
 export * from './contracts';
-export * from './dataStreams';
+export type { DataStreamCloseReason, DataStreamGap, DataStreamOptions } from './dataStreams';
 export * from './eventStreams';
 export * from './files';
 export * from './holders';
