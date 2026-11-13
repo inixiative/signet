@@ -35,16 +35,24 @@ export const grantTermsFitKind = (kind: string, terms: GrantTerms | undefined) =
 export const threadsTerms = (terms: z.input<typeof grantTermsSchema> | undefined) =>
   threadsTermsSchema.parse(terms?.threads ?? {});
 
+/**
+ * A positive json-rules condition over the incoming call (its input fields): what may go in. It only
+ * narrows; Kingdom refuses a condition that could hold on a missing value. The lens says what comes out.
+ */
+export const grantWhereSchema = z.record(z.string(), z.unknown());
+
 const integrationResourceShape = {
   resourceModel: z.literal('IntegrationResource'),
   integrationResourceId: z.uuid(),
-  /** Everything the resource offers, now and as its catalog grows, capped live by the baseline. */
+  /** Everything the resource offers, now and as its catalog grows. */
   full: z.boolean(),
   /** The resolved leaves; absent when `full`. */
   operations: resolvedOperationsSchema.optional(),
   /** The layers under the kind's operations lens; absent reads every branch of it. */
   lens: storedLensLayersSchema.optional(),
   terms: grantTermsSchema.optional(),
+  /** What may go in: the grant's incoming condition, every link above it included. */
+  where: grantWhereSchema.optional(),
 };
 const fullOrOperations = (
   row: { full: boolean; operations?: string[] },
@@ -103,11 +111,6 @@ export type SignetGrant = z.infer<typeof signetGrantSchema>;
  * layer its id and chains it under the base, or under the request when an approver writes it), and
  * terms.
  */
-/**
- * A positive json-rules condition over the incoming call (its input fields): what may go in. It only
- * narrows; Kingdom refuses a condition that could hold on a missing value. The lens says what comes out.
- */
-export const grantWhereSchema = z.record(z.string(), z.unknown());
 const askedOperations = {
   operations: operationPickSchema,
   lens: lensLayerSchema.optional(),
