@@ -112,10 +112,20 @@ export const projectionVisit = (
   return (anchor && projection[`${anchor}.${operation}`]) || null;
 };
 
-/** Whether the lens holds back any of an operation's rows: a `where` at its branch, or the branch off. */
+/**
+ * Whether the lens holds back any of an operation's rows: the branch off, or a `where` on any visit
+ * from the anchor down to the operation's branch (a `where` above the branch gates all its rows).
+ */
 export const projectionFilters = (projection: PathProjection, operation: string) => {
-  const visit = projectionVisit(projection, operation);
-  return !visit || visit.whereClauses.length > 0;
+  const anchor = Object.keys(projection).find((path) => !path.includes('.'));
+  if (!anchor || !projectionVisit(projection, operation)) return true;
+  const segments = branchOf(operation);
+  return [
+    anchor,
+    ...segments.map((_, index) => [anchor, ...segments.slice(0, index + 1)].join('.')),
+  ]
+    .map((path) => projection[path])
+    .some((visit) => !visit || visit.whereClauses.length > 0);
 };
 
 /** Whether the lens shows `field` of the rows at an operation's branch. */

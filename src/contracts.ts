@@ -54,6 +54,39 @@ export const ownerRefSchema = z.object({
   spaceId: z.uuid().nullable(),
 });
 export type OwnerRef = z.infer<typeof ownerRefSchema>;
+export type OwnerModel = z.infer<typeof ownerModelSchema>;
+
+type OwnerIdField = 'userId' | 'organizationId' | 'spaceId';
+/** The ids each owner model is keyed by; every other id is null. */
+export const ownerIdFields = {
+  User: ['userId'],
+  Organization: ['organizationId'],
+  Space: ['organizationId', 'spaceId'],
+  OrganizationUser: ['organizationId', 'userId'],
+  SpaceUser: ['organizationId', 'spaceId', 'userId'],
+} as const satisfies Record<OwnerModel, readonly OwnerIdField[]>;
+const everyOwnerIdField = ['userId', 'organizationId', 'spaceId'] as const;
+
+/** An owner a party names: no other keys, the ids its model is keyed by, and no others. */
+export const namedOwnerSchema = z
+  .strictObject(ownerRefSchema.shape)
+  .superRefine((owner, context) => {
+    const needed: readonly OwnerIdField[] = ownerIdFields[owner.ownerModel];
+    for (const field of everyOwnerIdField) {
+      if (needed.includes(field) && owner[field] === null)
+        context.addIssue({
+          code: 'custom',
+          path: [field],
+          message: `A ${owner.ownerModel} owner names its ${field}`,
+        });
+      if (!needed.includes(field) && owner[field] !== null)
+        context.addIssue({
+          code: 'custom',
+          path: [field],
+          message: `A ${owner.ownerModel} owner has no ${field}`,
+        });
+    }
+  });
 
 /** Kingdom's canonical owner key: `ownerModel:userId:organizationId:spaceId`, absent ids empty. */
 export const ownerKey = (
@@ -129,16 +162,14 @@ export const installationKindSchema = z.enum(['foundry', 'archive', 'oracle']);
 export type InstallationKind = z.infer<typeof installationKindSchema>;
 /**
  * What a party asks for: resources by id, or by kind on the integration each names (review R8). A
- * Signet has no integration of its own; its resources may sit on several.
- */
-/**
- * A request names the one owner it asks. A person may be asked for a Signet over resources across
- * the tenants they reach; any other owner, over its own. With no owner named, Kingdom asks the one
- * owner every resource shares.
+ * Signet has no integration of its own; its resources may sit on several. A request names the one
+ * owner it asks, with exactly the ids its model is keyed by. A person may be asked for a Signet over
+ * resources across the tenants they reach; any other owner, over its own. With no owner named,
+ * Kingdom asks the one owner every resource shares.
  */
 export const signetProposalSchema = z.strictObject({
   ...signetTerms,
-  owner: ownerRefSchema.optional(),
+  owner: namedOwnerSchema.optional(),
   resources: z.array(requestedResourceSchema).min(1).max(100),
 });
 /** The terms as reviewed and issued: every resource named by id. */
