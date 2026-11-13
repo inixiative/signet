@@ -86,6 +86,9 @@ export type InstallationSocketOptions = {
   pingMs?: number;
   pollMs?: number;
   retryBaseMs?: number;
+  /** Stream opens sent per window, for each kind of stream (`DataStreamOptions`). */
+  openBurst?: number;
+  openWindowMs?: number;
   retryMaxMs?: number;
   /** A Kingdom that never answers the proof (one without Installation sockets) is treated as down. */
   authTimeoutMs?: number;
@@ -136,7 +139,11 @@ export class InstallationSocket {
   constructor(private readonly options: InstallationSocketOptions) {
     this.viewerUrl = options.viewerUrl ?? null;
     const send = (frame: Record<string, unknown>) => this.send(frame);
-    const streamOptions = { retryBaseMs: options.retryBaseMs };
+    const streamOptions = {
+      retryBaseMs: options.retryBaseMs,
+      openBurst: options.openBurst,
+      openWindowMs: options.openWindowMs,
+    };
     this.streams = options.threadStreams
       ? new ThreadStreams(send, options.threadStreams, streamOptions)
       : null;

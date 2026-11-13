@@ -23,6 +23,9 @@ export type SignetSocketOptions = Omit<ThreadStreamHandlers, 'onSnapshot' | 'onE
     retryMaxMs?: number;
     /** A Kingdom that never answers the presentation is treated as down. */
     authTimeoutMs?: number;
+    /** Stream opens sent per window, for each kind of stream (`DataStreamOptions`). */
+    openBurst?: number;
+    openWindowMs?: number;
     /** Renew this long before the access token expires (it lives five minutes). */
     renewBeforeMs?: number;
     WebSocket?: typeof WebSocket;
@@ -57,6 +60,8 @@ export class SignetSocket {
   constructor(private readonly options: SignetSocketOptions) {
     const streamOptions: DataStreamOptions = {
       retryBaseMs: options.retryBaseMs,
+      openBurst: options.openBurst,
+      openWindowMs: options.openWindowMs,
       // Kingdom closed streams because the presentation lapsed: re-present on a new connection.
       onPresentationExpired: () => this.socket?.close(),
     };
@@ -92,6 +97,8 @@ export class SignetSocket {
 
   /** Enter a thread this Signet's lens selects: a snapshot of the member's view, then appends. */
   open(threadId: string) {
+    if (!this.options.onSnapshot || !this.options.onEntry)
+      throw Error('Pass onSnapshot and onEntry to hold thread views');
     this.streams.open({ signetId: this.options.client.signetId, threadId });
   }
 

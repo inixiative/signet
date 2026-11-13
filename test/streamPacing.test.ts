@@ -24,7 +24,7 @@ const snapshot = (stream: string, seq: number) => ({
   action: 'snapshot',
   stream,
   seq,
-  payload: { events: [] },
+  payload: { data: { events: [] } },
 });
 
 test('many held channels are opened a few at a time, never in one burst', async () => {
@@ -122,4 +122,72 @@ test('an error handler that throws does not stop the events that follow', async 
   await settle();
 
   expect(delivered).toEqual(['second', 'third']);
+});
+
+test('a throwing error handler does not stop a channel from opening or from reporting gaps', async () => {
+  const opened: string[] = [];
+  const delivered: string[] = [];
+  const gaps: number[] = [];
+  const streams = new EventStreams(() => {}, {
+    onOpened: (channel) => void opened.push(channel.resourceId),
+    onEvent: (_channel, event) => void delivered.push(event.eventId),
+    onGap: (_channel, gap) => void gaps.push(gap.seq),
+    onError: () => {
+      throw Error('reporter failed');
+    },
+  });
+  const held = key();
+  const stream = accessEventsStreamName(held);
+  streams.open(held);
+  streams.up();
+
+  streams.receive({
+    ...snapshot(stream, 10),
+    payload: { data: { events: [{ unexpected: true }] } },
+  });
+  streams.receive(append(stream, 11, 'first'));
+  streams.receive(append(stream, 15, 'after a jump'));
+  await settle();
+
+  expect(opened).toEqual([held.resourceId]);
+  expect(delivered).toEqual(['first', 'after a jump']);
+  expect(gaps).toEqual([15]);
+});
+
+test('a gap handler that rejects is reported and the event still arrives', async () => {
+  const errors: unknown[] = [];
+  const delivered: string[] = [];
+  const streams = new EventStreams(() => {}, {
+    onEvent: (_channel, event) => void delivered.push(event.eventId),
+    onGap: (async () => {
+      throw Error('gap handler failed');
+    }) as () => void,
+    onError: (error) => void errors.push(error),
+  });
+  const held = key();
+  const stream = accessEventsStreamName(held);
+  streams.open(held);
+  streams.up();
+  streams.receive(snapshot(stream, 10));
+
+  streams.receive(append(stream, 20, 'after a jump'));
+  await settle();
+
+  expect(delivered).toEqual(['after a jump']);
+  expect(errors).toHaveLength(1);
+});
+
+test('a burst of zero still opens one stream per window', async () => {
+  const frames: Record<string, unknown>[] = [];
+  const streams = new EventStreams(
+    (frame) => frames.push(frame),
+    { onEvent: () => {} },
+    { openBurst: 0, openWindowMs: 20 },
+  );
+  streams.open(key());
+  streams.open(key());
+  streams.up();
+  await settle(120);
+
+  expect(opensOf(frames)).toHaveLength(2);
 });

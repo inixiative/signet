@@ -190,7 +190,18 @@ export class DataStreams<Key extends object, Snapshot, Append> {
     return true;
   }
 
-  // A reporter that throws must not reject the queue: every later frame would be skipped.
+  // A handler declared to return nothing may still be async: a rejection is reported, not lost.
+  private notify(call: () => unknown) {
+    try {
+      const returned = call();
+      if (returned instanceof Promise) returned.catch((error) => this.report(error));
+    } catch (error) {
+      this.report(error);
+    }
+  }
+
+  // A reporter that throws must not stop the work around it: the queue would reject and every
+  // later frame be skipped, or a snapshot be left half handled.
   private report(error: unknown) {
     try {
       this.handlers.onError?.(error);
@@ -200,11 +211,11 @@ export class DataStreams<Key extends object, Snapshot, Append> {
   private async handle(frame: Record<string, unknown>) {
     if (frame.category === 'data') {
       const data = dataFrameSchema.safeParse(frame);
-      if (!data.success) return this.handlers.onError?.(data.error);
+      if (!data.success) return this.report(data.error);
       return this.data(data.data);
     }
     const control = controlFrameSchema.safeParse(frame);
-    if (!control.success) return this.handlers.onError?.(control.error);
+    if (!control.success) return this.report(control.error);
     this.control(control.data);
   }
 
@@ -253,7 +264,7 @@ export class DataStreams<Key extends object, Snapshot, Append> {
       this.answered(frame.stream, state);
       const read = this.family.snapshot(frame.payload);
       if (!read) return this.abandon(state, Error(`${frame.stream}: unreadable snapshot`));
-      if (read.problem) this.handlers.onError?.(Error(`${frame.stream}: ${read.problem}`));
+      if (read.problem) this.report(Error(`${frame.stream}: ${read.problem}`));
       state.lastSeq = frame.seq;
       await this.handlers.onSnapshot(state.key, read.snapshot);
       if (state.again) {
@@ -267,13 +278,15 @@ export class DataStreams<Key extends object, Snapshot, Append> {
       if (frame.seq > state.lastSeq + 1) return this.reopen(frame.stream);
       state.lastSeq = frame.seq;
     } else if (state.lastSeq !== null && frame.seq > state.lastSeq) {
-      if (frame.seq > state.lastSeq + 1)
-        this.handlers.onGap?.(state.key, { after: state.lastSeq, seq: frame.seq });
+      if (frame.seq > state.lastSeq + 1) {
+        const gap = { after: state.lastSeq, seq: frame.seq };
+        this.notify(() => this.handlers.onGap?.(state.key, gap));
+      }
       state.lastSeq = frame.seq;
     }
     const append = this.family.append(frame.type, frame.payload);
     if (append === null)
-      return this.handlers.onError?.(Error(`${frame.stream}: unreadable ${frame.type} append`));
+      return this.report(Error(`${frame.stream}: unreadable ${frame.type} append`));
     await this.handlers.onAppend(state.key, append, frame.seq);
   }
 
@@ -307,7 +320,7 @@ export class DataStreams<Key extends object, Snapshot, Append> {
       }, this.options.openWindowMs ?? 2_500);
       this.windowTimer.unref?.();
     }
-    if (this.opensThisWindow >= (this.options.openBurst ?? 10)) return false;
+    if (this.opensThisWindow >= Math.max(1, this.options.openBurst ?? 10)) return false;
     this.opensThisWindow++;
     return true;
   }
@@ -357,9 +370,9 @@ export class DataStreams<Key extends object, Snapshot, Append> {
 
   // Re-opening an unreadable snapshot would read (and meter) the same thing again: leave instead.
   private abandon(state: StreamState<Key>, error: unknown) {
-    this.handlers.onError?.(error);
+    this.report(error);
     this.leave(state.key);
-    this.handlers.onClosed?.(state.key, null);
+    this.notify(() => this.handlers.onClosed?.(state.key, null));
   }
 
   private end(stream: string, reason: DataStreamCloseReason) {
@@ -368,7 +381,7 @@ export class DataStreams<Key extends object, Snapshot, Append> {
     this.streams.delete(stream);
     this.clearTimer(stream);
     this.waiting.delete(stream);
-    this.handlers.onClosed?.(state.key, reason);
+    this.notify(() => this.handlers.onClosed?.(state.key, reason));
   }
 }
 
