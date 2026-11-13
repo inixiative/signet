@@ -187,7 +187,52 @@ test('a burst of zero still opens one stream per window', async () => {
   streams.open(key());
   streams.open(key());
   streams.up();
+  expect(opensOf(frames)).toHaveLength(1);
   await settle(120);
 
   expect(opensOf(frames)).toHaveLength(2);
+});
+
+test('a burst or window that is not a usable number falls back to the default pacing', async () => {
+  for (const options of [{ openBurst: Number.NaN }, { openBurst: Number.POSITIVE_INFINITY }]) {
+    const frames: Record<string, unknown>[] = [];
+    const streams = new EventStreams((frame) => frames.push(frame), { onEvent: () => {} }, options);
+    for (let count = 0; count < 25; count++) streams.open(key());
+    streams.up();
+    expect(opensOf(frames)).toHaveLength(10);
+    streams.down();
+  }
+});
+
+test('an error handler that rejects, and a closed handler that rejects, stop nothing', async () => {
+  const delivered: string[] = [];
+  const reported: unknown[] = [];
+  const streams = new EventStreams(() => {}, {
+    onEvent: (_channel, event) => {
+      if (event.eventId === 'first') throw Error('consumer failed');
+      delivered.push(event.eventId);
+    },
+    onClosed: (async () => {
+      throw Error('closed handler failed');
+    }) as () => void,
+    onError: (async (error: unknown) => {
+      reported.push(error);
+      throw Error('reporter failed');
+    }) as (error: unknown) => void,
+  });
+  const [held, other] = [key(), key()];
+  streams.open(held);
+  streams.open(other);
+  streams.up();
+  streams.receive(snapshot(accessEventsStreamName(held), 10));
+  streams.receive(snapshot(accessEventsStreamName(other), 10));
+
+  streams.receive(append(accessEventsStreamName(held), 11, 'first'));
+  streams.receive({ type: 'closed', stream: accessEventsStreamName(other), reason: 'revoked' });
+  streams.receive(append(accessEventsStreamName(held), 12, 'second'));
+  await settle();
+
+  expect(delivered).toEqual(['second']);
+  expect(reported).toHaveLength(2);
+  expect(streams.held()).toEqual([held]);
 });

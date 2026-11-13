@@ -193,8 +193,7 @@ export class DataStreams<Key extends object, Snapshot, Append> {
   // A handler declared to return nothing may still be async: a rejection is reported, not lost.
   private notify(call: () => unknown) {
     try {
-      const returned = call();
-      if (returned instanceof Promise) returned.catch((error) => this.report(error));
+      settled(call(), (error) => this.report(error));
     } catch (error) {
       this.report(error);
     }
@@ -204,7 +203,7 @@ export class DataStreams<Key extends object, Snapshot, Append> {
   // later frame be skipped, or a snapshot be left half handled.
   private report(error: unknown) {
     try {
-      this.handlers.onError?.(error);
+      settled(this.handlers.onError?.(error), () => {});
     } catch {}
   }
 
@@ -314,13 +313,16 @@ export class DataStreams<Key extends object, Snapshot, Append> {
   private takeOpenTurn() {
     if (this.windowTimer === null) {
       this.opensThisWindow = 0;
-      this.windowTimer = setTimeout(() => {
-        this.windowTimer = null;
-        for (const stream of [...this.waiting]) this.sendOpen(stream);
-      }, this.options.openWindowMs ?? 2_500);
+      this.windowTimer = setTimeout(
+        () => {
+          this.windowTimer = null;
+          for (const stream of [...this.waiting]) this.sendOpen(stream);
+        },
+        atLeastOne(this.options.openWindowMs, 2_500),
+      );
       this.windowTimer.unref?.();
     }
-    if (this.opensThisWindow >= Math.max(1, this.options.openBurst ?? 10)) return false;
+    if (this.opensThisWindow >= atLeastOne(this.options.openBurst, 10)) return false;
     this.opensThisWindow++;
     return true;
   }
@@ -384,6 +386,16 @@ export class DataStreams<Key extends object, Snapshot, Append> {
     this.notify(() => this.handlers.onClosed?.(state.key, reason));
   }
 }
+
+// A handler typed to return nothing may still return a promise or a thenable.
+const settled = (returned: unknown, rejected: (error: unknown) => void) => {
+  const then = (returned as { then?: unknown } | null | undefined)?.then;
+  if (typeof then === 'function') then.call(returned, undefined, rejected);
+};
+
+// An option that isn't a usable number (NaN, Infinity, zero, negative) would switch pacing off.
+const atLeastOne = (value: number | undefined, fallback: number) =>
+  value !== undefined && Number.isFinite(value) ? Math.max(1, value) : fallback;
 
 const reasonIn = (
   set: Set<AccessThreadCloseReason>,
