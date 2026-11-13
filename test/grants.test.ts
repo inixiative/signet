@@ -1,5 +1,5 @@
 import { describe, expect, it, test } from 'bun:test';
-import type { ModelNarrowing, StoredLens } from '@inixiative/json-rules';
+import type { Condition, ModelNarrowing, StoredLens } from '@inixiative/json-rules';
 import {
   archiveGrantRefusal,
   archiveLensRefusal,
@@ -10,11 +10,14 @@ import {
   grantResourceSchema,
   grantTermsFitKind,
   grantTermsSchema,
+  grantWhereLimit,
+  grantWhereSchema,
   type LensLayer,
   narrowingAtOperation,
   narrowsThreadsTerms,
   operationRecord,
   operationRows,
+  projectionFilters,
   projectionVisit,
   registeredResourceSchema,
   repositoryCallRow,
@@ -384,6 +387,27 @@ describe("refusals that stay about operations, read at each operation's branch",
     );
   });
 
+  test('a where at the root or a branch above an operation holds back its rows too', () => {
+    const inP1 = { field: 'projectId', operator: 'equals', value: 'p1' } as Condition;
+    const gatedAtRoot = {
+      root: {
+        ...everyBranch(archiveOperations),
+        where: conditionAtOperation('documents.search', inP1),
+      },
+    } as LensLayer;
+    const gatedAtDocuments = everyBranch(archiveOperations);
+    (gatedAtDocuments.relations?.documents as ModelNarrowing).where = conditionAtOperation(
+      'search',
+      inP1,
+    );
+    const atDocuments = { root: gatedAtDocuments } as LensLayer;
+    for (const layer of [gatedAtRoot, atDocuments]) {
+      expect(projectionFilters(archive(layer).projection, 'documents.search')).toBe(true);
+      expect(archiveLensRefusal('documents.search', archive(layer))).not.toBeNull();
+    }
+    expect(projectionFilters(archive(documents({})).projection, 'documents.search')).toBe(false);
+  });
+
   test('a grant row is refused over every operation it reaches, full meaning all of them', () => {
     expect(
       archiveGrantRefusal({ full: false, operations: ['documents.read'] }, archive(onlyChosen)),
@@ -479,6 +503,92 @@ describe('a resource ask carries an incoming where, and a request names its owne
       ],
     });
     expect(proposal.owner).toEqual(owner);
+  });
+});
+
+describe('a where is a bounded, positive json-rules condition', () => {
+  const asks = (where: unknown) =>
+    signetResourceSchema.safeParse({
+      resourceModel: 'IntegrationResource',
+      integrationResourceId: Bun.randomUUIDv7(),
+      operations: { picks: ['messages.read'] },
+      where,
+    }).success;
+
+  it('refuses an empty object, junk, a negated rule and an oversized one', () => {
+    expect(grantWhereSchema.safeParse({}).success).toBe(false);
+    expect(grantWhereSchema.safeParse({ any: 'nope', field: 3 }).success).toBe(false);
+    expect(
+      grantWhereSchema.safeParse({ field: 'threadId', operator: 'notEquals', value: 'x' }).success,
+    ).toBe(false);
+    const huge = Object.fromEntries(
+      Array.from({ length: 10_000 }, (_, index) => [`k${index}`, 'x'.repeat(100)]),
+    );
+    expect(grantWhereSchema.safeParse(huge).success).toBe(false);
+    const longIn = { field: 'threadId', operator: 'in', value: ['x'.repeat(grantWhereLimit)] };
+    expect(grantWhereSchema.safeParse(longIn).success).toBe(false);
+    expect(asks({})).toBe(false);
+  });
+
+  it('accepts a positive condition, nested ones included', () => {
+    expect(asks({ field: 'threadId', operator: 'in', value: ['main'] })).toBe(true);
+    expect(
+      grantWhereSchema.safeParse({
+        all: [
+          { field: 'threadId', operator: 'equals', value: 'main' },
+          { any: [{ field: 'query', operator: 'startsWith', value: 'release' }] },
+        ],
+      }).success,
+    ).toBe(true);
+  });
+});
+
+describe("a request's owner names exactly the ids its model needs", () => {
+  const id = () => Bun.randomUUIDv7();
+  const propose = (owner: unknown) =>
+    signetProposalSchema.safeParse({
+      name: 'n',
+      lifecycle: 'ongoing',
+      expiresAt: null,
+      maxRequests: null,
+      owner,
+      resources: [
+        {
+          resourceModel: 'IntegrationResource',
+          integrationResourceId: id(),
+          operations: { full: true },
+        },
+      ],
+    }).success;
+  const owner = (
+    ownerModel: string,
+    ids: Partial<Record<'userId' | 'organizationId' | 'spaceId', string>>,
+  ) => ({
+    ownerModel,
+    userId: null,
+    organizationId: null,
+    spaceId: null,
+    ...ids,
+  });
+
+  it('refuses an owner missing an id it needs, or carrying a key it does not know', () => {
+    expect(propose(owner('User', {}))).toBe(false);
+    expect(propose({ ...owner('User', { userId: id() }), extra: 1 })).toBe(false);
+    expect(propose(owner('Organization', {}))).toBe(false);
+    expect(propose(owner('Space', { spaceId: id() }))).toBe(false);
+    expect(propose(owner('OrganizationUser', { organizationId: id() }))).toBe(false);
+    expect(propose(owner('SpaceUser', { organizationId: id(), spaceId: id() }))).toBe(false);
+    expect(propose(owner('User', { userId: id(), organizationId: id() }))).toBe(false);
+  });
+
+  it('accepts each owner model with its ids', () => {
+    expect(propose(owner('User', { userId: id() }))).toBe(true);
+    expect(propose(owner('Organization', { organizationId: id() }))).toBe(true);
+    expect(propose(owner('Space', { organizationId: id(), spaceId: id() }))).toBe(true);
+    expect(propose(owner('OrganizationUser', { organizationId: id(), userId: id() }))).toBe(true);
+    expect(propose(owner('SpaceUser', { organizationId: id(), spaceId: id(), userId: id() }))).toBe(
+      true,
+    );
   });
 });
 
