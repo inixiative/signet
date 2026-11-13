@@ -131,8 +131,14 @@ export type InstallationKind = z.infer<typeof installationKindSchema>;
  * What a party asks for: resources by id, or by kind on the integration each names (review R8). A
  * Signet has no integration of its own; its resources may sit on several.
  */
+/**
+ * A request names the one owner it asks. A person may be asked for a Signet over resources across
+ * the tenants they reach; any other owner, over its own. With no owner named, Kingdom asks the one
+ * owner every resource shares.
+ */
 export const signetProposalSchema = z.strictObject({
   ...signetTerms,
+  owner: ownerRefSchema.optional(),
   resources: z.array(requestedResourceSchema).min(1).max(100),
 });
 /** The terms as reviewed and issued: every resource named by id. */

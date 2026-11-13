@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, it, test } from 'bun:test';
 import {
   createLens,
   type Lens,
@@ -23,6 +23,7 @@ import {
   requestedResourceSchema,
   type StoredLensLayer,
   signetGrantSchema,
+  signetProposalSchema,
   signetResourceSchema,
   storedLensLayerSchema,
   threadRow,
@@ -407,4 +408,44 @@ test('the base lens id and the rows a where is evaluated over', () => {
   expect(baseLensId('github', 'repository')).toBe('github:repository');
   expect(threadRow('thread_1')).toEqual({ id: 'thread_1' });
   expect(() => threadRow('a:b')).toThrow();
+});
+
+describe('a resource ask carries an incoming where, and a request names its owner', () => {
+  it('a where rides beside the lens on a resource ask', () => {
+    const ask = signetResourceSchema.parse({
+      resourceModel: 'IntegrationResource',
+      integrationResourceId: Bun.randomUUIDv7(),
+      operations: { picks: ['messages.read'] },
+      where: { field: 'query', operator: 'startsWith', value: 'release' },
+    });
+    expect(ask.resourceModel === 'IntegrationResource' && ask.where).toEqual({
+      field: 'query',
+      operator: 'startsWith',
+      value: 'release',
+    });
+  });
+
+  it('a request may name the owner it asks', () => {
+    const owner = {
+      ownerModel: 'User' as const,
+      userId: Bun.randomUUIDv7(),
+      organizationId: null,
+      spaceId: null,
+    };
+    const proposal = signetProposalSchema.parse({
+      name: 'Release notes',
+      lifecycle: 'ongoing',
+      expiresAt: null,
+      maxRequests: null,
+      owner,
+      resources: [
+        {
+          resourceModel: 'IntegrationResource',
+          integrationResourceId: Bun.randomUUIDv7(),
+          operations: { full: true },
+        },
+      ],
+    });
+    expect(proposal.owner).toEqual(owner);
+  });
 });
