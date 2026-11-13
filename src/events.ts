@@ -60,7 +60,7 @@ export const accountResourceKind = 'account';
  */
 export const eventOperationKey = (type: IntegrationEvent['type']) => `events.${type}`;
 
-/** The envelope's fields, for the base event lens a provider's catalog declares over the event model. */
+/** The envelope's fields: the `IntegrationEvent` rows at every `events.*` branch of an operations lens. */
 export const integrationEventFieldSchema = z.enum([
   'eventId',
   'integrationId',

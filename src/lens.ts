@@ -1,14 +1,27 @@
-import type { LensNarrowing, PathProjection, StoredLens } from '@inixiative/json-rules';
+import type {
+  Condition,
+  LensNarrowing,
+  ModelNarrowing,
+  PathProjection,
+  ProjectedVisit,
+  StoredLens,
+} from '@inixiative/json-rules';
 import { z } from 'zod';
 
 /**
- * A grant's lens is a chain of json-rules layers over the integration's base lens for the resource's
- * model (Aron, 2026-11-01: "root `where` filters; otherwise a narrowing of shape (pick/omit)… No
- * lens means the default"). The base lives in Kingdom's catalog, as code, under the id
- * `provider:kind`; a grant row stores only the layers under it, as json-rules `StoredLens` records,
- * the request's first and an approver's after it. Every layer ANDs with the ones above it, so an
- * approver can only narrow. This package carries the layers; Kingdom validates, composes
- * (`composeLens`) and applies them (`projectRows`).
+ * A grant's lens is a chain of json-rules layers over the resource kind's operations lens (Aron,
+ * 2026-11-13, R-SIG-18: "every top-level operate has a lens over its operations with every
+ * sub-operation, generated from the operations catalog, the same shape as a Prisma map, nesting
+ * included. Grant lenses narrow it."). Kingdom generates the base from its catalog under the id
+ * `provider:kind`: its anchor is the kind's operations, each dotted segment of an operation a
+ * relation, and each operation a list of the rows it reads (an Archive document, a thread, a
+ * repository call, an integration event). Relations are off until a layer turns them on, so a layer
+ * turns on the branches it keeps and narrows the row shapes with `mapDefaults` (every branch of a
+ * row model) or one branch through `root.relations`. A grant with no layers reads every branch. A
+ * grant row stores only its layers, as json-rules `StoredLens` records, the request's first and an
+ * approver's after it. Every layer ANDs with the ones above it, so an approver can only narrow. This
+ * package carries the layers and the shape of the tree; Kingdom validates, composes (`composeLens`)
+ * and applies them (`projectRows`).
  */
 
 /** One layer as a party writes it: a json-rules narrowing without its parent. */
@@ -35,7 +48,7 @@ export const storedLensLayerSchema = z.strictObject({
 export const storedLensLayersSchema = z.array(storedLensLayerSchema).max(20);
 
 /**
- * A base lens as Kingdom's catalog carries it: the json-rules `Lens` itself (its field maps, map name
+ * An operations lens as Kingdom generates it: the json-rules `Lens` itself (its field maps, map name
  * and model) with an `id` and no parents. Only the envelope is checked here; a holder composes it
  * under a grant's layers with json-rules `composeLens`, which validates what is inside.
  */
@@ -47,21 +60,66 @@ export const storedBaseLensSchema = z.looseObject({
   maps: z.record(z.string(), z.unknown()),
 });
 
-/** The id of an integration's base lens for a resource kind's model, in Kingdom's catalog. */
+/** The id of a resource kind's operations lens, generated from Kingdom's catalog. */
 export const baseLensId = (provider: string, kind: string) => `${provider}:${kind}`;
 
 /**
- * A grant's lens as the refusals read it: its own layers (empty = the base) and json-rules'
- * `projectLens` of the composed chain, which Kingdom computes after validating the layers.
+ * A grant's lens as the refusals read it: its own layers (empty = every branch of the base) and
+ * json-rules' `projectLens` of the composed chain, which Kingdom computes after validating the
+ * layers.
  */
 export type GrantLens = { layers: readonly LensLayer[]; projection: PathProjection };
 
-/** Whether the composed lens filters rows anywhere: a `where` on the anchor or along a relation. */
-export const projectionFilters = (projection: PathProjection) =>
-  Object.values(projection).some((visit) => visit.whereClauses.length > 0);
+const branchOf = (operation: string) => operation.split('.');
 
-/** Whether the composed lens shows `field` of its anchor model (the visit keyed by the model alone). */
-export const projectionShows = (projection: PathProjection, field: string) =>
-  Object.entries(projection).some(
-    ([path, visit]) => !path.includes('.') && Object.hasOwn(visit.fields, field),
+/** One operation's rows as the record its operations lens reads: `{ documents: { read: rows } }`. */
+export const operationRecord = (operation: string, rows: readonly Record<string, unknown>[]) =>
+  branchOf(operation).reduceRight<unknown>(
+    (inner, segment) => ({ [segment]: inner }),
+    [...rows],
+  ) as Record<string, unknown>;
+
+/** The rows at one operation's branch of a record (`operationRecord`'s, after projection). */
+export const operationRows = (record: unknown, operation: string): Record<string, unknown>[] => {
+  const reached = branchOf(operation).reduce<unknown>(
+    (node, segment) =>
+      node && typeof node === 'object' ? (node as Record<string, unknown>)[segment] : undefined,
+    record,
   );
+  return Array.isArray(reached) ? (reached as Record<string, unknown>[]) : [];
+};
+
+/** A narrowing of one operation's rows, placed at its branch of the operations lens's root. */
+export const narrowingAtOperation = (
+  operation: string,
+  narrowing: ModelNarrowing,
+): ModelNarrowing =>
+  branchOf(operation).reduceRight<ModelNarrowing>(
+    (inner, segment) => ({ relations: { [segment]: inner } }),
+    narrowing,
+  );
+
+/** A condition over one operation's rows, as a rule over the operations lens (any row of it). */
+export const conditionAtOperation = (operation: string, condition: Condition): Condition =>
+  ({ field: operation, arrayOperator: 'any', condition }) as Condition;
+
+/** The visit at one operation's branch, or null when the composed lens leaves the branch off. */
+export const projectionVisit = (
+  projection: PathProjection,
+  operation: string,
+): ProjectedVisit | null => {
+  const anchor = Object.keys(projection).find((path) => !path.includes('.'));
+  return (anchor && projection[`${anchor}.${operation}`]) || null;
+};
+
+/** Whether the lens holds back any of an operation's rows: a `where` at its branch, or the branch off. */
+export const projectionFilters = (projection: PathProjection, operation: string) => {
+  const visit = projectionVisit(projection, operation);
+  return !visit || visit.whereClauses.length > 0;
+};
+
+/** Whether the lens shows `field` of the rows at an operation's branch. */
+export const projectionShows = (projection: PathProjection, operation: string, field: string) => {
+  const visit = projectionVisit(projection, operation);
+  return Boolean(visit && Object.hasOwn(visit.fields, field));
+};
