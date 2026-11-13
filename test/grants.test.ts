@@ -481,3 +481,18 @@ describe('a resource ask carries an incoming where, and a request names its owne
     expect(proposal.owner).toEqual(owner);
   });
 });
+
+describe('a grant view shows its incoming where', () => {
+  it('a holder reads the where its grant admits calls by', () => {
+    const where = { field: 'threadId', operator: 'equals', value: 'thread_a' };
+    const view = signetGrantSchema.parse({
+      resourceModel: 'IntegrationResource',
+      integrationResourceId: Bun.randomUUIDv7(),
+      integrationId: Bun.randomUUIDv7(),
+      kind: 'threads',
+      full: true,
+      where,
+    });
+    expect(view.resourceModel === 'IntegrationResource' && view.where).toEqual(where);
+  });
+});
