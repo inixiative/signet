@@ -18,8 +18,8 @@ export type EventParty = z.infer<typeof eventPartySchema>;
 /**
  * One provider event, normalized. `eventId` is the provider's delivery id (or the notification id
  * for a poll), so a retried delivery is one event. `type` is `<provider event>.<action>`, e.g.
- * `issue_comment.created`. `payload` holds only the fields Kingdom allows for that type; the rest of
- * a provider body never leaves Kingdom.
+ * `issue_comment.created`. `payload` holds only the fields Kingdom allows for that type, and stays in
+ * Kingdom: it is not a lens row field (`integrationEventFieldSchema`), so no holder receives it.
  */
 export const integrationEventSchema = z.strictObject({
   eventId: z.string().min(1).max(200),
@@ -60,22 +60,15 @@ export const accountResourceKind = 'account';
  */
 export const eventOperationKey = (type: IntegrationEvent['type']) => `events.${type}`;
 
-/** The envelope's fields, for the base event lens a provider's catalog declares over the event model. */
-export const integrationEventFieldSchema = z.enum([
-  'eventId',
-  'integrationId',
-  'provider',
-  'type',
-  'at',
-  'actor',
-  'scope',
-  'mentions',
-  'assignees',
-  'requestedReviewers',
-  'subject',
-  'excerpt',
-  'payload',
-]);
+/**
+ * The fields a lens layer can name on the `IntegrationEvent` rows at every `events.*` branch of an
+ * operations lens: the envelope without `eventId` and `type`, which ride outside the projected body
+ * (`accessEventsAppendSchema`), and without `payload`, which Kingdom never sends to a holder. A layer
+ * that picks or filters on any of the three does not compose.
+ */
+export const integrationEventFieldSchema = integrationEventSchema
+  .keyof()
+  .exclude(['eventId', 'type', 'payload']);
 export type IntegrationEventField = z.infer<typeof integrationEventFieldSchema>;
 
 /**
@@ -117,3 +110,31 @@ export const parseAccessEventsStreamName = (name: string) => {
 export const accessEventsSnapshotSchema = z.object({
   data: z.strictObject({ events: z.tuple([]) }),
 });
+/** A `log` stream's one op: each append's payload is one `AccessEventsAppend`. */
+export const accessEventsAppendType = 'append';
+
+/**
+ * One channel a Signet holds: a resource its current revision reaches event leaves on. `events` are
+ * those leaves (`events.<event>.<action>`) that the integration's baseline still allows, and
+ * `stream` is the `accessEvents` stream to open for it (`accessEventsStreamName`).
+ */
+export const eventChannelSchema = z.object({
+  resourceId: z.uuid(),
+  kind: z.string(),
+  name: z.string(),
+  events: z.array(z.string()),
+  stream: z.string(),
+});
+export type EventChannel = z.infer<typeof eventChannelSchema>;
+
+/**
+ * `eventChannels` on `access/describe` and on each held Signet of the Installation snapshot: the
+ * integrations a Signet can listen on and its channels on each. A holder opens any or all of them.
+ */
+export const eventChannelMapSchema = z.array(
+  z.object({
+    integration: z.object({ id: z.uuid(), provider: z.string().nullable(), name: z.string() }),
+    channels: z.array(eventChannelSchema),
+  }),
+);
+export type EventChannelMap = z.infer<typeof eventChannelMapSchema>;

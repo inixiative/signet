@@ -5,6 +5,7 @@ import {
   archiveInputSchemas,
   archiveOperationSchema,
 } from './archive';
+import { type EventChannelMap, eventChannelMapSchema, eventChannelSchema } from './events';
 import { githubInputSchemas, githubOperationSchema, gitObjectIdSchema } from './github';
 import {
   grantTermsFitKind,
@@ -53,6 +54,39 @@ export const ownerRefSchema = z.object({
   spaceId: z.uuid().nullable(),
 });
 export type OwnerRef = z.infer<typeof ownerRefSchema>;
+export type OwnerModel = z.infer<typeof ownerModelSchema>;
+
+type OwnerIdField = 'userId' | 'organizationId' | 'spaceId';
+/** The ids each owner model is keyed by; every other id is null. */
+export const ownerIdFields = {
+  User: ['userId'],
+  Organization: ['organizationId'],
+  Space: ['organizationId', 'spaceId'],
+  OrganizationUser: ['organizationId', 'userId'],
+  SpaceUser: ['organizationId', 'spaceId', 'userId'],
+} as const satisfies Record<OwnerModel, readonly OwnerIdField[]>;
+const everyOwnerIdField = ['userId', 'organizationId', 'spaceId'] as const;
+
+/** An owner a party names: no other keys, the ids its model is keyed by, and no others. */
+export const namedOwnerSchema = z
+  .strictObject(ownerRefSchema.shape)
+  .superRefine((owner, context) => {
+    const needed: readonly OwnerIdField[] = ownerIdFields[owner.ownerModel];
+    for (const field of everyOwnerIdField) {
+      if (needed.includes(field) && owner[field] === null)
+        context.addIssue({
+          code: 'custom',
+          path: [field],
+          message: `A ${owner.ownerModel} owner names its ${field}`,
+        });
+      if (!needed.includes(field) && owner[field] !== null)
+        context.addIssue({
+          code: 'custom',
+          path: [field],
+          message: `A ${owner.ownerModel} owner has no ${field}`,
+        });
+    }
+  });
 
 /** Kingdom's canonical owner key: `ownerModel:userId:organizationId:spaceId`, absent ids empty. */
 export const ownerKey = (
@@ -128,10 +162,14 @@ export const installationKindSchema = z.enum(['foundry', 'archive', 'oracle']);
 export type InstallationKind = z.infer<typeof installationKindSchema>;
 /**
  * What a party asks for: resources by id, or by kind on the integration each names (review R8). A
- * Signet has no integration of its own; its resources may sit on several.
+ * Signet has no integration of its own; its resources may sit on several. A request names the one
+ * owner it asks, with exactly the ids its model is keyed by. A person may be asked for a Signet over
+ * resources across the tenants they reach; any other owner, over its own. With no owner named,
+ * Kingdom asks the one owner every resource shares.
  */
 export const signetProposalSchema = z.strictObject({
   ...signetTerms,
+  owner: namedOwnerSchema.optional(),
   resources: z.array(requestedResourceSchema).min(1).max(100),
 });
 /** The terms as reviewed and issued: every resource named by id. */
@@ -259,6 +297,8 @@ export const installationSignetSchema = z.object({
    * which threads it may open.
    */
   resources: grantsSchema,
+  /** The event channels it holds; absent from a Kingdom that predates integration events. */
+  eventChannels: eventChannelMapSchema.optional(),
 });
 /**
  * A Signet that reaches a resource on one of the Installation's integrations: a member of a
@@ -279,7 +319,7 @@ export const hostedSignetSchema = z.object({
     id: z.uuid(),
     displayName: z.string(),
   }),
-  /** Each base lens the rows' `lens` layers compose under, keyed by `baseLensId(provider, kind)`. */
+  /** Each operations lens the rows' `lens` layers compose under, keyed by `baseLensId(provider, kind)`. */
   baseLenses: z.record(z.string(), storedBaseLensSchema),
   resources: grantsSchema,
 });
@@ -322,6 +362,8 @@ export const signetDescriptionSchema = z.object({
       resources: z.array(signetDescriptionResourceSchema),
     }),
   ),
+  /** The event channels it holds; absent from a Kingdom that predates integration events. */
+  eventChannels: eventChannelMapSchema.optional(),
 });
 export type SignetDescription = z.infer<typeof signetDescriptionSchema>;
 
@@ -445,7 +487,7 @@ export type InstallationSnapshot = z.infer<typeof installationSnapshotSchema> & 
 const entryId = (value: unknown) => {
   if (typeof value !== 'object' || value === null) return null;
   const record = value as Record<string, unknown>;
-  const id = record.signetId ?? record.id;
+  const id = record.signetId ?? record.id ?? record.resourceId;
   return typeof id === 'string' ? id.slice(0, 80) : null;
 };
 /**
@@ -508,6 +550,34 @@ function parseSignetsWithGrants<S extends z.ZodObject<{ resources: typeof grants
   );
 }
 
+const eventChannelIntegrationSchema = eventChannelMapSchema.element.extend({
+  channels: z.unknown().optional(),
+});
+
+/**
+ * `eventChannels`, per integration and per channel inside it: one this package can't read is
+ * dropped and reported, and the Signet and its other channels are kept.
+ */
+export function parseEventChannelMap(
+  list: string,
+  value: unknown,
+  dropped: DroppedEntry[],
+): EventChannelMap {
+  return parseEntries(list, value, eventChannelIntegrationSchema, dropped).map((entry) => ({
+    ...entry,
+    channels: parseEntries(
+      `${list}.${entry.integration.id}.channels`,
+      entry.channels,
+      eventChannelSchema,
+      dropped,
+    ),
+  }));
+}
+
+const heldSignetIdentitySchema = installationSignetSchema.extend({
+  eventChannels: z.unknown().optional(),
+});
+
 const inquiriesScalars = installationInquiriesResponseSchema.pick({
   pending: true,
   declinedAt: true,
@@ -529,11 +599,28 @@ export function parseInstallationInquiries(value: unknown, dropped: DroppedEntry
   };
 }
 
-/** `installationSignets`, per Signet and per resource inside it. */
+/** `installationSignets`, per Signet, and per resource and event channel inside it. */
 export function parseInstallationSignets(value: unknown, dropped: DroppedEntry[] = []) {
   const record = z.object({}).loose().parse(value);
   return {
-    signets: parseSignetsWithGrants('signets', record.signets, installationSignetSchema, dropped),
+    signets: parseSignetsWithGrants(
+      'signets',
+      record.signets,
+      heldSignetIdentitySchema,
+      dropped,
+    ).map(
+      ({ eventChannels, ...signet }): InstallationSignet =>
+        eventChannels === undefined
+          ? signet
+          : {
+              ...signet,
+              eventChannels: parseEventChannelMap(
+                `signets.${signet.signetId}.eventChannels`,
+                eventChannels,
+                dropped,
+              ),
+            },
+    ),
     hostedSignets: parseSignetsWithGrants(
       'hostedSignets',
       record.hostedSignets,
@@ -554,7 +641,10 @@ export function parseInstallationSnapshot(value: unknown): InstallationSnapshot 
 
 export type ParsedSignetDescription = SignetDescription & { dropped: DroppedEntry[] };
 
-/** `access/describe`, per entry: a resource whose lens or terms don't parse, or don't fit its kind, is dropped. */
+/**
+ * `access/describe`, per entry: a resource whose lens or terms don't parse, or don't fit its kind,
+ * is dropped, and so is an event channel that doesn't parse.
+ */
 export function parseSignetDescription(value: unknown): ParsedSignetDescription {
   const dropped: DroppedEntry[] = [];
   const record = z
@@ -574,7 +664,14 @@ export function parseSignetDescription(value: unknown): ParsedSignetDescription 
           : 'terms do not fit the resource kind',
     ),
   }));
-  return { ...signetDescriptionSchema.parse({ ...record, operations }), dropped };
+  const eventChannels =
+    record.eventChannels === undefined
+      ? {}
+      : { eventChannels: parseEventChannelMap('eventChannels', record.eventChannels, dropped) };
+  return {
+    ...signetDescriptionSchema.parse({ ...record, operations, ...eventChannels }),
+    dropped,
+  };
 }
 
 /** The path a socket proof is bound to (POST), though the socket itself opens at the API origin. */

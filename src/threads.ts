@@ -32,7 +32,8 @@ export const threadFloorTermsSchema = z.strictObject({ mayTake: z.boolean().defa
 
 /**
  * A member's terms on a `threads` resource: how it takes part, not which threads it reaches (that
- * is the grant's lens, a json-rules filter Kingdom applies at admission). Every term defaults to its
+ * is the grant's `where` over the call's `threadId`, which Kingdom checks at admission, and its lens
+ * over the `Thread` rows). Every term defaults to its
  * narrowest value, so terms that omit one can only be more careful.
  */
 export const threadsTermsSchema = z.strictObject({
@@ -43,7 +44,10 @@ export const threadsTermsSchema = z.strictObject({
 });
 export type ThreadsTerms = z.infer<typeof threadsTermsSchema>;
 
-/** The row a threads grant's `where` is evaluated over at admission: the thread, by `id`. */
+/**
+ * The row a thread call reads at its operation's branch of the lens: the thread, by `id`. A holder
+ * reads it through a grant's lens with `operationRecord(operation, [threadRow(id)])`.
+ */
 export const threadRow = (threadId: string) => ({ id: threadIdSchema.parse(threadId) });
 
 const order = <T extends string>(values: readonly T[]) => {

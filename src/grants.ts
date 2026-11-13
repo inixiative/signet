@@ -1,3 +1,4 @@
+import { validateRule } from '@inixiative/json-rules';
 import { z } from 'zod';
 import { lensLayerSchema, storedLensLayersSchema } from './lens';
 import { operationPickSchema, resolvedOperationsSchema } from './operations';
@@ -35,16 +36,41 @@ export const grantTermsFitKind = (kind: string, terms: GrantTerms | undefined) =
 export const threadsTerms = (terms: z.input<typeof grantTermsSchema> | undefined) =>
   threadsTermsSchema.parse(terms?.threads ?? {});
 
+/** The most characters a `where` may take as JSON, the size of a thread's text. */
+export const grantWhereLimit = 16_000;
+
+/**
+ * A positive json-rules condition over the incoming call (its input fields): what may go in. It only
+ * narrows: json-rules `validateRule(where, { positive: true })` refuses a malformed condition and one
+ * that could hold on a missing value. The lens says what comes out.
+ */
+export const grantWhereSchema = z.record(z.string(), z.unknown()).superRefine((where, context) => {
+  if (JSON.stringify(where).length > grantWhereLimit) {
+    context.addIssue({
+      code: 'custom',
+      message: `A where takes at most ${grantWhereLimit} characters as JSON`,
+    });
+    return;
+  }
+  for (const issue of validateRule(where, { positive: true }).errors)
+    context.addIssue({
+      code: 'custom',
+      message: `A where is a positive json-rules condition: ${issue.path} ${issue.message}`,
+    });
+});
+
 const integrationResourceShape = {
   resourceModel: z.literal('IntegrationResource'),
   integrationResourceId: z.uuid(),
-  /** Everything the resource offers, now and as its catalog grows, capped live by the baseline. */
+  /** Everything the resource offers, now and as its catalog grows. */
   full: z.boolean(),
   /** The resolved leaves; absent when `full`. */
   operations: resolvedOperationsSchema.optional(),
-  /** The layers under the base lens; absent means the base. */
+  /** The layers under the kind's operations lens; absent reads every branch of it. */
   lens: storedLensLayersSchema.optional(),
   terms: grantTermsSchema.optional(),
+  /** What may go in: the grant's incoming condition, every link above it included. */
+  where: grantWhereSchema.optional(),
 };
 const fullOrOperations = (
   row: { full: boolean; operations?: string[] },
@@ -107,6 +133,7 @@ const askedOperations = {
   operations: operationPickSchema,
   lens: lensLayerSchema.optional(),
   terms: grantTermsSchema.optional(),
+  where: grantWhereSchema.optional(),
 };
 /** A resource asked for by id. */
 export const signetResourceSchema = z.discriminatedUnion('resourceModel', [

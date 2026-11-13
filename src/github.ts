@@ -5,8 +5,9 @@ import { type OperationScope, scopeRefusal } from './operations';
 /**
  * GitHub repositories (Kingdom `docs/OPERATOR-ACCESS.md` §9). A GitHub integration is one GitHub
  * account; each repository it reaches is a `repository` resource, named `owner/name`. Kingdom admits
- * each call through a Signet and reads the repository with the integration's credential, so the
- * lens is applied by Kingdom. A grant pins commits with a `where` over the call's `{ sha }`; reading a
+ * each call through a Signet and reads the repository with the integration's credential. A grant
+ * pins commits twice: its `where` over the call (`objectId`) says which commits may be asked for, and
+ * its lens filters the `RepositoryCall` rows (`{ sha }`) at the operations' branches. Reading a
  * commit never reaches its tree, so a pinned grant reaches no tree or blob.
  */
 export const repositoryResourceKind = 'repository';
@@ -34,9 +35,9 @@ export const githubInputSchemas = {
   'blobs.read': z.strictObject({ objectId: gitObjectIdSchema }),
 } as const satisfies Record<GithubOperation, z.ZodObject>;
 
-/** Why a grant of `operation` can't carry `lens`, or null when it can. */
+/** Why a grant of `operation` can't carry `lens`, or null when it can, read at its own branch. */
 export const repositoryLensRefusal = (operation: GithubOperation, lens: GrantLens) =>
-  projectionFilters(lens.projection) && operation !== 'commits.read'
+  operation !== 'commits.read' && projectionFilters(lens.projection, operation)
     ? 'A grant pinned to commits reads only those commits; trees and blobs need an unpinned grant'
     : null;
 
@@ -46,5 +47,5 @@ export const repositoryGrantRefusal = (scope: OperationScope, lens: GrantLens) =
     repositoryLensRefusal(operation, lens),
   );
 
-/** The row a repository grant's `where` is evaluated over: the call's object, as `sha`. */
+/** The row a repository call reads at its operation's branch of the lens: its object, as `sha`. */
 export const repositoryCallRow = (input: { objectId: string }) => ({ sha: input.objectId });
