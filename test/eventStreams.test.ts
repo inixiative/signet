@@ -542,11 +542,10 @@ test('event errors with no handler of their own go to the socket onError', async
   const events: string[] = [];
   socket = new SignetSocket({
     client,
-    onSnapshot: () => {},
-    onEntry: () => {},
     onError: (error) => void errors.push(error),
     eventStreams: { onEvent: (_held, event) => void events.push(event.eventId) },
   });
+  expect(() => socket?.open(T1)).toThrow('Pass onSnapshot and onEntry to hold thread views');
   socket.openEventChannel(R1);
   socket.start();
   await waitFor(() => sent('open', channel(R1)) === 1);

@@ -231,3 +231,26 @@ test('an Installation socket given no eventStreams refuses to open a channel', (
   expect(socket.heldEventChannels()).toEqual([]);
   socket.leaveEventChannel(held);
 });
+
+test('an Installation reports an unreadable event through its own onError when the channel has none', async () => {
+  const errors: unknown[] = [];
+  const events: string[] = [];
+  const held = { signetId: uuid(), resourceId: uuid() };
+  socket = new InstallationSocket({
+    url,
+    keyFile,
+    retryBaseMs: 20,
+    onSnapshot: () => {},
+    onError: (error) => void errors.push(error),
+    eventStreams: { onEvent: (_held, event) => void events.push(event.eventId) },
+  });
+  socket.openEventChannel(held);
+  socket.start();
+  await waitFor(() => sent('open', accessEventsStreamName(held)) === 1);
+  opened(accessEventsStreamName(held), seeded);
+  appended(accessEventsStreamName(held), seeded + 1, { event: {} });
+  appended(accessEventsStreamName(held), seeded + 2, append('readable'));
+  await waitFor(() => events.length === 1);
+
+  expect(errors).toHaveLength(1);
+});
