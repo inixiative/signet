@@ -103,10 +103,16 @@ export type SignetGrant = z.infer<typeof signetGrantSchema>;
  * layer its id and chains it under the base, or under the request when an approver writes it), and
  * terms.
  */
+/**
+ * A positive json-rules condition over the incoming call (its input fields): what may go in. It only
+ * narrows; Kingdom refuses a condition that could hold on a missing value. The lens says what comes out.
+ */
+export const grantWhereSchema = z.record(z.string(), z.unknown());
 const askedOperations = {
   operations: operationPickSchema,
   lens: lensLayerSchema.optional(),
   terms: grantTermsSchema.optional(),
+  where: grantWhereSchema.optional(),
 };
 /** A resource asked for by id. */
 export const signetResourceSchema = z.discriminatedUnion('resourceModel', [
