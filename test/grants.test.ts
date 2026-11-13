@@ -1,21 +1,21 @@
 import { describe, expect, it, test } from 'bun:test';
-import {
-  createLens,
-  type Lens,
-  type LensNarrowing,
-  projectLens,
-  type StoredLens,
-} from '@inixiative/json-rules';
+import type { ModelNarrowing, StoredLens } from '@inixiative/json-rules';
 import {
   archiveGrantRefusal,
   archiveLensRefusal,
+  archiveOperationSchema,
   baseLensId,
-  type GrantLens,
+  conditionAtOperation,
+  githubOperationSchema,
   grantResourceSchema,
   grantTermsFitKind,
   grantTermsSchema,
   type LensLayer,
+  narrowingAtOperation,
   narrowsThreadsTerms,
+  operationRecord,
+  operationRows,
+  projectionVisit,
   registeredResourceSchema,
   repositoryCallRow,
   repositoryGrantRefusal,
@@ -31,22 +31,25 @@ import {
   threadsTerms,
   threadsTermsSchema,
 } from '../src';
+import { everyBranch, grantLensOver, operationsLens, rowLayer } from './operationsLens';
 
 const uuid = () => Bun.randomUUIDv7();
 const integrationResourceId = uuid();
 const projectId = uuid();
 
-/** The request layer over a GitHub repository's base lens: a pinned commit. */
+const commitPin = { where: { field: 'sha', operator: 'equals' as const, value: 'a'.repeat(40) } };
+/** The request layer over a GitHub repository's operations lens: a pinned commit. */
 const pinned: StoredLensLayer = {
   id: 'request',
   parents: ['github:repository'],
-  root: { where: { field: 'sha', operator: 'equals', value: 'a'.repeat(40) } },
+  root: { relations: { commits: { relations: { read: {} } } } },
+  mapDefaults: { operations: { models: { RepositoryCall: commitPin } } },
 };
 /** The approver's layer under it: it hides a field, it filters nothing. */
 const trimmed: StoredLensLayer = {
   id: 'approval',
   parents: ['github:repository', 'request'],
-  root: { omits: ['message'] },
+  mapDefaults: { operations: { models: { RepositoryCall: { omits: ['message'] } } } },
 };
 
 describe('the grant resource contract', () => {
@@ -158,9 +161,16 @@ describe('what a party asks for', () => {
       resourceModel: 'IntegrationResource',
       integrationResourceId,
       operations: { picks: ['commits.*'] },
-      lens: { root: { where: { field: 'sha', operator: 'equals', value: 'a'.repeat(40) } } },
+      where: { field: 'objectId', operator: 'equals', value: 'a'.repeat(40) },
+      lens: {
+        root: pinned.root,
+        mapDefaults: { operations: { models: { RepositoryCall: commitPin } } },
+      },
     });
-    expect(asked).toMatchObject({ operations: { picks: ['commits.*'] } });
+    expect(asked).toMatchObject({
+      operations: { picks: ['commits.*'] },
+      where: { field: 'objectId' },
+    });
     expect(
       signetResourceSchema.parse({
         resourceModel: 'IntegrationResource',
@@ -308,38 +318,29 @@ describe('threads terms', () => {
   });
 });
 
-/** A real base lens per kind, and a grant's `GrantLens` composed over it as Kingdom would. */
+/** A real operations lens per kind, and a grant's `GrantLens` composed over it as Kingdom would. */
 const document = { kind: 'scalar', type: 'String' } as const;
-const archiveBase = createLens({
-  maps: {
-    archive: {
-      models: { Document: { fields: { id: document, title: document, content: document } } },
-    },
-  },
-  mapName: 'archive',
-  model: 'Document',
+const archiveOperations = archiveOperationSchema.options;
+const archiveBase = operationsLens(archiveOperations, 'ArchiveDocument', {
+  id: document,
+  title: document,
+  content: document,
 });
-const repositoryBase = createLens({
-  maps: { github: { models: { Commit: { fields: { sha: document, message: document } } } } },
-  mapName: 'github',
-  model: 'Commit',
-});
-const grantLens = (base: Lens, layers: LensLayer[]): GrantLens => ({
-  layers,
-  projection: projectLens(
-    layers.reduce<Lens | LensNarrowing>((parent, layer) => ({ parent, ...layer }), base),
-  ),
+const githubOperations = githubOperationSchema.options;
+const repositoryBase = operationsLens(githubOperations, 'RepositoryCall', {
+  sha: document,
+  message: document,
 });
 
-describe('refusals that stay about operations', () => {
-  const archive = (...layers: LensLayer[]) => grantLens(archiveBase, layers);
-  const onlyChosen = {
-    root: { where: { field: 'id', operator: 'in', value: ['x'] } },
-  } as LensLayer;
+describe("refusals that stay about operations, read at each operation's branch", () => {
+  const archive = (...layers: LensLayer[]) => grantLensOver(archiveBase, archiveOperations, layers);
+  const documents = (narrowing: ModelNarrowing) =>
+    rowLayer(archiveOperations, 'ArchiveDocument', narrowing);
+  const onlyChosen = documents({ where: { field: 'id', operator: 'in', value: ['x'] } });
 
   test('writing or deleting Archive sessions takes no lens', () => {
     expect(archiveLensRefusal('sessions.write', archive())).toBeNull();
-    expect(archiveLensRefusal('sessions.write', archive({ root: { omits: ['title'] } }))).toBe(
+    expect(archiveLensRefusal('sessions.write', archive(documents({ omits: ['title'] })))).toBe(
       'Writing or deleting sessions takes no lens',
     );
   });
@@ -347,28 +348,40 @@ describe('refusals that stay about operations', () => {
   test('Archive search needs content over every document', () => {
     expect(archiveLensRefusal('documents.search', archive())).toBeNull();
     expect(
-      archiveLensRefusal('documents.search', archive({ root: { picks: ['content', 'title'] } })),
+      archiveLensRefusal('documents.search', archive(documents({ picks: ['content', 'title'] }))),
     ).toBeNull();
     expect(archiveLensRefusal('documents.search', archive(onlyChosen))).not.toBeNull();
     expect(
-      archiveLensRefusal('documents.search', archive({ root: { picks: ['title'] } })),
+      archiveLensRefusal('documents.search', archive(documents({ picks: ['title'] }))),
     ).not.toBeNull();
     expect(
-      archiveLensRefusal('documents.search', archive({ root: { omits: ['content'] } })),
-    ).not.toBeNull();
-    expect(
-      archiveLensRefusal(
-        'documents.search',
-        archive({
-          mapDefaults: {
-            archive: {
-              models: { Document: { where: { field: 'title', operator: 'equals', value: 'x' } } },
-            },
-          },
-        } as LensLayer),
-      ),
+      archiveLensRefusal('documents.search', archive(documents({ omits: ['content'] }))),
     ).not.toBeNull();
     expect(archiveLensRefusal('documents.read', archive(onlyChosen))).toBeNull();
+  });
+
+  test('a narrowing of one branch leaves the others as they are; a branch left off is held back', () => {
+    const readChosen = {
+      root: {
+        ...everyBranch(archiveOperations),
+        relations: {
+          ...everyBranch(archiveOperations).relations,
+          documents: {
+            relations: {
+              read: { where: { field: 'id', operator: 'in', value: ['x'] } },
+              search: {},
+            },
+          },
+        },
+      },
+    } as LensLayer;
+    expect(archiveLensRefusal('documents.search', archive(readChosen))).toBeNull();
+    const readOnly = { root: narrowingAtOperation('documents.read', {}) } as LensLayer;
+    expect(archiveLensRefusal('documents.search', archive(readOnly))).not.toBeNull();
+    expect(projectionVisit(archive(readOnly).projection, 'documents.search')).toBeNull();
+    expect(projectionVisit(archive(readOnly).projection, 'documents.read')?.model).toBe(
+      'ArchiveDocument',
+    );
   });
 
   test('a grant row is refused over every operation it reaches, full meaning all of them', () => {
@@ -381,14 +394,19 @@ describe('refusals that stay about operations', () => {
     expect(archiveGrantRefusal({ full: true }, archive())).toBeNull();
   });
 
-  const repository = (...layers: LensLayer[]) => grantLens(repositoryBase, layers);
-  const pinnedLayer = { root: pinned.root } as LensLayer;
+  const repository = (...layers: LensLayer[]) =>
+    grantLensOver(repositoryBase, githubOperations, layers);
+  const commits = (narrowing: ModelNarrowing) =>
+    rowLayer(githubOperations, 'RepositoryCall', narrowing);
+  const pinnedLayer = commits({
+    where: { field: 'sha', operator: 'equals', value: 'a'.repeat(40) },
+  });
 
   test('a repository grant pinned to commits reads only commits', () => {
     expect(repositoryLensRefusal('commits.read', repository(pinnedLayer))).toBeNull();
     expect(repositoryLensRefusal('trees.read', repository())).toBeNull();
     expect(
-      repositoryLensRefusal('trees.read', repository({ root: { omits: ['message'] } })),
+      repositoryLensRefusal('trees.read', repository(commits({ omits: ['message'] }))),
     ).toBeNull();
     expect(repositoryLensRefusal('blobs.read', repository(pinnedLayer))).toBe(
       'A grant pinned to commits reads only those commits; trees and blobs need an unpinned grant',
@@ -401,6 +419,20 @@ describe('refusals that stay about operations', () => {
     ).toBeNull();
     expect(repositoryGrantRefusal({ full: true }, repository(pinnedLayer))).not.toBeNull();
     expect(repositoryCallRow({ objectId: 'a'.repeat(40) })).toEqual({ sha: 'a'.repeat(40) });
+  });
+});
+
+test("rows sit at their operation's branch of the record a lens reads", () => {
+  const rows = [threadRow('thread_1')];
+  expect(operationRecord('thread.read', rows)).toEqual({ thread: { read: rows } });
+  expect(operationRows(operationRecord('thread.read', rows), 'thread.read')).toEqual(rows);
+  expect(operationRows({ thread: {} }, 'thread.read')).toEqual([]);
+  expect(
+    conditionAtOperation('documents.read', { field: 'id', operator: 'equals', value: 'x' }),
+  ).toEqual({
+    field: 'documents.read',
+    arrayOperator: 'any',
+    condition: { field: 'id', operator: 'equals', value: 'x' },
   });
 });
 

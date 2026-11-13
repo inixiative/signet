@@ -42,7 +42,7 @@ const integrationResourceShape = {
   full: z.boolean(),
   /** The resolved leaves; absent when `full`. */
   operations: resolvedOperationsSchema.optional(),
-  /** The layers under the base lens; absent means the base. */
+  /** The layers under the kind's operations lens; absent reads every branch of it. */
   lens: storedLensLayersSchema.optional(),
   terms: grantTermsSchema.optional(),
 };

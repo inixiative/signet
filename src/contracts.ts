@@ -288,7 +288,7 @@ export const hostedSignetSchema = z.object({
     id: z.uuid(),
     displayName: z.string(),
   }),
-  /** Each base lens the rows' `lens` layers compose under, keyed by `baseLensId(provider, kind)`. */
+  /** Each operations lens the rows' `lens` layers compose under, keyed by `baseLensId(provider, kind)`. */
   baseLenses: z.record(z.string(), storedBaseLensSchema),
   resources: grantsSchema,
 });
