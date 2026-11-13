@@ -236,3 +236,54 @@ test('an error handler that rejects, and a closed handler that rejects, stop not
   expect(reported).toHaveLength(2);
   expect(streams.held()).toEqual([held]);
 });
+
+test('a close Kingdom will be reopened after is reported with its reason before the reopen', async () => {
+  const frames: Record<string, unknown>[] = [];
+  const reopening: string[] = [];
+  const closed: unknown[] = [];
+  const streams = new EventStreams(
+    (frame) => frames.push(frame),
+    {
+      onEvent: () => {},
+      onReopening: (_channel, reason) => void reopening.push(reason),
+      onClosed: (_channel, reason) => void closed.push(reason),
+    },
+    { retryBaseMs: 10 },
+  );
+  const held = key();
+  const stream = accessEventsStreamName(held);
+  streams.open(held);
+  streams.up();
+  streams.receive(snapshot(stream, 10));
+
+  streams.receive({ type: 'closed', stream, reason: 'revised' });
+  await settle();
+  streams.receive(snapshot(stream, 20));
+  streams.receive({ type: 'closed', stream, reason: 'hostOffline' });
+  await settle(80);
+
+  expect(reopening).toEqual(['revised', 'hostOffline']);
+  expect(closed).toEqual([]);
+  expect(opensOf(frames)).toHaveLength(3);
+});
+
+test('a close that ends a channel is not reported as reopening', async () => {
+  const reopening: string[] = [];
+  const closed: unknown[] = [];
+  const streams = new EventStreams(() => {}, {
+    onEvent: () => {},
+    onReopening: (_channel, reason) => void reopening.push(reason),
+    onClosed: (_channel, reason) => void closed.push(reason),
+  });
+  const held = key();
+  const stream = accessEventsStreamName(held);
+  streams.open(held);
+  streams.up();
+  streams.receive(snapshot(stream, 10));
+
+  streams.receive({ type: 'closed', stream, reason: 'revoked' });
+  await settle();
+
+  expect(reopening).toEqual([]);
+  expect(closed).toEqual(['revoked']);
+});

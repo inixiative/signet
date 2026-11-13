@@ -40,6 +40,8 @@ export type DataStreamHandlers<Key extends object, Snapshot, Append> = {
   /** Only a `deliver` family reports gaps; a `resync` family reopens instead. */
   onGap?: (key: Key, gap: DataStreamGap) => void;
   onClosed?: (key: Key, reason: DataStreamCloseReason) => void;
+  /** Kingdom closed the stream for a reason it is reopened after; nothing is heard until it opens. */
+  onReopening?: (key: Key, reason: AccessThreadCloseReason) => void;
   onError?: (error: unknown) => void;
 };
 
@@ -245,15 +247,17 @@ export class DataStreams<Key extends object, Snapshot, Append> {
   private closedBy(stream: string, reason: DataStreamCloseReason) {
     const state = this.streams.get(stream);
     if (!state) return;
+    if (reason === null || reason === 'rejected') return this.end(stream, reason);
+    if (!reopenAfter.has(reason) && !retryAfter.has(reason)) return this.end(stream, reason);
+    this.notify(() => this.handlers.onReopening?.(state.key, reason));
     if (reason === 'presentationExpired') {
       // The socket re-presents; `up()` then reopens everything held.
       state.lastSeq = null;
       this.options.onPresentationExpired?.();
       return;
     }
-    if (reason && reasonIn(reopenAfter, reason)) return this.reopen(stream);
-    if (reason && reasonIn(retryAfter, reason)) return this.retry(stream, state);
-    this.end(stream, reason);
+    if (retryAfter.has(reason)) return this.retry(stream, state);
+    this.reopen(stream);
   }
 
   private async data(frame: z.infer<typeof dataFrameSchema>) {
@@ -396,8 +400,3 @@ const settled = (returned: unknown, rejected: (error: unknown) => void) => {
 // An option that isn't a usable number (NaN, Infinity, zero, negative) would switch pacing off.
 const atLeastOne = (value: number | undefined, fallback: number) =>
   value !== undefined && Number.isFinite(value) ? Math.max(1, value) : fallback;
-
-const reasonIn = (
-  set: Set<AccessThreadCloseReason>,
-  reason: AccessThreadCloseReason | 'rejected',
-) => reason !== 'rejected' && set.has(reason);

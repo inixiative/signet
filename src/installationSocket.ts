@@ -72,6 +72,8 @@ export type InstallationSocketOptions = {
   onSnapshot: (snapshot: InstallationSnapshot) => void | Promise<void>;
   /** Kingdom revoked this installation; the socket has stopped for good. */
   onRevoked?: () => void;
+  /** The connection was lost; the socket reconnects and reopens what it held. */
+  onDisconnected?: () => void;
   onError?: (error: unknown) => void;
   /** Where Kingdom can reach this installation's viewer (Foundry's tunnel); re-advertised on every connect. */
   viewerUrl?: string | null;
@@ -549,6 +551,7 @@ export class InstallationSocket {
     this.streams?.down();
     this.events?.down();
     if (this.stopped) return;
+    this.options.onDisconnected?.();
     if (!this.polling) void this.poll();
     const base = this.options.retryBaseMs ?? 1_000;
     const delay = Math.min(base * 2 ** this.attempts++, this.options.retryMaxMs ?? 30_000);
