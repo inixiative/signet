@@ -5,6 +5,7 @@ import {
   accountResourceKind,
   eventOperationKey,
   type IntegrationEvent,
+  integrationEventFieldSchema,
   integrationEventSchema,
   narrowsOperations,
   parseAccessEventsStreamName,
@@ -55,6 +56,23 @@ describe('integration events', () => {
     expect(narrowsOperations(pullRequests, oneKind)).toBe(false);
     expect(narrowsOperations(pullRequests, { full: true })).toBe(true);
     expect(accountResourceKind).toBe('account');
+  });
+
+  test('a lens names the row fields only: never eventId, type or payload', () => {
+    expect(integrationEventFieldSchema.options).toEqual([
+      'integrationId',
+      'provider',
+      'at',
+      'actor',
+      'scope',
+      'mentions',
+      'assignees',
+      'requestedReviewers',
+      'subject',
+      'excerpt',
+    ]);
+    for (const outside of ['eventId', 'type', 'payload'])
+      expect(integrationEventFieldSchema.safeParse(outside).success).toBe(false);
   });
 
   test('an append carries eventId and type outside the projected event', () => {
