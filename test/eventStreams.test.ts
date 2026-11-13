@@ -467,6 +467,28 @@ test('a dropped connection re-presents and reopens the held channels', async () 
   expect(seen.closed).toEqual([]);
 });
 
+test('a socket says when its connection is lost, once for each loss', async () => {
+  let disconnected = 0;
+  socket = new SignetSocket({
+    client,
+    retryBaseMs: 20,
+    onDisconnected: () => void disconnected++,
+    eventStreams: { onEvent: () => {} },
+  });
+  socket.openEventChannel(R1);
+  socket.start();
+  await waitFor(() => sent('open', channel(R1)) === 1);
+  expect(disconnected).toBe(0);
+
+  kingdom?.close();
+  await waitFor(() => sent('open', channel(R1)) === 2, 5000);
+  expect(disconnected).toBe(1);
+
+  socket.close();
+  await settle();
+  expect(disconnected).toBe(1);
+});
+
 test('a lapsed presentation re-presents, then reopens the channel', async () => {
   const { socket, seen } = await hold();
   socket.openEventChannel(R1);

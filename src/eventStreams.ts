@@ -1,3 +1,4 @@
+import type { AccessThreadCloseReason } from './contracts';
 import {
   type DataStreamCloseReason,
   type DataStreamFamily,
@@ -45,6 +46,8 @@ export type EventStreamHandlers = {
   onGap?: (channel: EventStreamKey, gap: EventStreamGap) => void;
   /** Kingdom ended the channel for good, or refused to open it (`rejected`); it is not reopened. */
   onClosed?: (channel: EventStreamKey, reason: DataStreamCloseReason) => void;
+  /** Kingdom closed the channel for a reason it is reopened after (a revision, an offline host). */
+  onReopening?: (channel: EventStreamKey, reason: AccessThreadCloseReason) => void;
   /** A frame or an append that didn't parse; the channel goes on. */
   onError?: (error: unknown) => void;
 };
@@ -92,6 +95,7 @@ export class EventStreams extends DataStreams<EventStreamKey, null, AccessEvents
         onAppend: (channel, event, seq) => handlers.onEvent(channel, event, seq),
         onGap: (channel, gap) => handlers.onGap?.(channel, gap),
         onClosed: (channel, reason) => handlers.onClosed?.(channel, reason),
+        onReopening: (channel, reason) => handlers.onReopening?.(channel, reason),
         onError: (error) => handlers.onError?.(error),
       },
       options,

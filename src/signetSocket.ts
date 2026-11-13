@@ -18,6 +18,8 @@ export type SignetSocketOptions = Omit<ThreadStreamHandlers, 'onSnapshot' | 'onE
     eventStreams?: EventStreamHandlers;
     /** Kingdom accepted (or renewed) the presentation; it holds until `expiresAt`. */
     onPresented?: (presentation: z.infer<typeof signetPresentedFrameSchema>) => void;
+    /** The connection was lost; the socket reconnects, presents again and reopens what it held. */
+    onDisconnected?: () => void;
     pingMs?: number;
     retryBaseMs?: number;
     retryMaxMs?: number;
@@ -256,6 +258,7 @@ export class SignetSocket {
     this.streams.down();
     this.events?.down();
     if (this.stopped) return;
+    this.options.onDisconnected?.();
     const base = this.options.retryBaseMs ?? 1_000;
     const delay = Math.min(base * 2 ** this.attempts++, this.options.retryMaxMs ?? 30_000);
     this.retryTimer = setTimeout(() => this.connect(), delay);
