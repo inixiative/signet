@@ -18,8 +18,8 @@ export type EventParty = z.infer<typeof eventPartySchema>;
 /**
  * One provider event, normalized. `eventId` is the provider's delivery id (or the notification id
  * for a poll), so a retried delivery is one event. `type` is `<provider event>.<action>`, e.g.
- * `issue_comment.created`. `payload` holds only the fields Kingdom allows for that type, and stays in
- * Kingdom: it is not a lens row field (`integrationEventFieldSchema`), so no holder receives it.
+ * `issue_comment.created`. `payload` is the provider's whole event as it arrived (the webhook body,
+ * or the notification for a poll); the other fields are Kingdom's normalized reading of it.
  */
 export const integrationEventSchema = z.strictObject({
   eventId: z.string().min(1).max(200),
@@ -63,23 +63,26 @@ export const eventOperationKey = (type: IntegrationEvent['type']) => `events.${t
 /**
  * The fields a lens layer can name on the `IntegrationEvent` rows at every `events.*` branch of an
  * operations lens: the envelope without `eventId` and `type`, which ride outside the projected body
- * (`accessEventsAppendSchema`), and without `payload`, which Kingdom never sends to a holder. A layer
- * that picks or filters on any of the three does not compose.
+ * (`accessEventsAppendSchema`) on every append, so a layer can neither trim them nor pick or filter
+ * on them. `payload` is one field: a layer keeps or drops it whole.
  */
 export const integrationEventFieldSchema = integrationEventSchema
   .keyof()
-  .exclude(['eventId', 'type', 'payload']);
+  .exclude(['eventId', 'type']);
 export type IntegrationEventField = z.infer<typeof integrationEventFieldSchema>;
 
 /**
  * One append on a channel's stream. `eventId` and `type` ride outside the projected body, so the
  * grant's lens trimming can never drop what a holder needs to dedupe and route; `event` is the
- * envelope as the grant's lens layers project it (json-rules `projectRows`).
+ * envelope as the grant's lens layers project it (json-rules `projectRows`). Kingdom caps the frame:
+ * when the projected event is over the cap it leaves `payload` out and sets `truncated`; every other
+ * field arrives whole.
  */
 export const accessEventsAppendSchema = z.strictObject({
   eventId: integrationEventSchema.shape.eventId,
   type: integrationEventSchema.shape.type,
   event: z.record(z.string(), z.unknown()),
+  truncated: z.literal(true).optional(),
 });
 export type AccessEventsAppend = z.infer<typeof accessEventsAppendSchema>;
 

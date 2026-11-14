@@ -12,10 +12,13 @@
   `projectionShows(projection, operation, field)`. A branch left off holds every row back, and so
   does a `where` on any visit from the anchor down to the branch, not only on the branch itself.
 - **Breaking: `integrationEventFieldSchema` lists only the fields a lens can name** on an
-  `IntegrationEvent` row: `eventId`, `type` and `payload` are gone from it. `eventId` and `type` ride
-  outside the projected body (`accessEventsAppendSchema`) and Kingdom never sends `payload` to a
-  holder, so a layer naming any of them never composed. The list is derived from
-  `integrationEventSchema`, which still describes the whole envelope.
+  `IntegrationEvent` row: `eventId` and `type` are gone from it. They ride outside the projected
+  body (`accessEventsAppendSchema`), so a layer naming either never composed. The list is derived
+  from `integrationEventSchema`, which still describes the whole envelope.
+- **`payload` is the provider's whole event**, as it arrived (the webhook body, or the notification
+  for a poll), and a lens can keep or drop it like any row field.
+- **New: `truncated` on an append.** Kingdom caps an append's size; an event over the cap arrives
+  without `payload`, every other field whole, and the append carries `truncated: true`.
 - **New: `where` on a resource ask and on a grant view.** An ask (`signetResourceSchema`,
   `requestedResourceSchema`, `registeredResourceSchema`) may carry the incoming condition its calls
   must meet; a grant view (`signetGrantSchema`) shows the composed one, every link above it
