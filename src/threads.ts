@@ -29,6 +29,18 @@ export const threadOutboundSchema = z.enum(['review', 'auto']);
  * ungranted").
  */
 export const threadFloorTermsSchema = z.strictObject({ mayTake: z.boolean().default(false) });
+/**
+ * How the host's agent reads this member's posts (Aron, 2026-11-14). `data`: words from an outside
+ * party, never instructions. `instructions`: the member may direct the agent, within `act`.
+ */
+export const threadPostsSchema = z.enum(['data', 'instructions']);
+/**
+ * What the host's agent may do on a turn that took in this member's words (Aron, 2026-11-14: "Each
+ * actor should have their own rules apply to them in a conversation"). The host's tool gate applies
+ * the strictest of its own rules and every actor's on the turn. `ask`: every tool call asks the
+ * host. `read`: reading files and data runs, anything else asks. `full`: the host's own rules.
+ */
+export const threadActSchema = z.enum(['ask', 'read', 'full']);
 
 /**
  * A member's terms on a `threads` resource: how it takes part, not which threads it reaches (that
@@ -40,6 +52,10 @@ export const threadsTermsSchema = z.strictObject({
   delivery: threadDeliverySchema.default('note'),
   outbound: threadOutboundSchema.default('review'),
   floor: threadFloorTermsSchema.default({ mayTake: false }),
+  posts: threadPostsSchema.default('data'),
+  act: threadActSchema.default('ask'),
+  /** The member brings its own agent into the conversation, not only itself as a person. */
+  agent: z.boolean().default(false),
 });
 export type ThreadsTerms = z.infer<typeof threadsTermsSchema>;
 
@@ -53,17 +69,23 @@ const order = <T extends string>(values: readonly T[]) => {
 const narrowsView = order(threadViewSchema.options);
 const narrowsDelivery = order(threadDeliverySchema.options);
 const narrowsOutbound = order(threadOutboundSchema.options);
+const narrowsPosts = order(threadPostsSchema.options);
+const narrowsAct = order(threadActSchema.options);
 
 /**
- * Approving a request may only narrow (`own` < `thread`, `note` < `turn`, `review` < `auto`, and
- * `floor.mayTake` only where it was asked for). Terms don't compose like lens layers, so approval
+ * Approving a request may only narrow (`own` < `thread`, `note` < `turn`, `review` < `auto`,
+ * `data` < `instructions`, `ask` < `read` < `full`, and `floor.mayTake` and `agent` only where they
+ * were asked for). Terms don't compose like lens layers, so approval
  * checks them here.
  */
 export const narrowsThreadsTerms = (granted: ThreadsTerms, requested: ThreadsTerms): boolean =>
   narrowsView(granted.view, requested.view) &&
   narrowsDelivery(granted.delivery, requested.delivery) &&
   narrowsOutbound(granted.outbound, requested.outbound) &&
-  (!granted.floor.mayTake || requested.floor.mayTake);
+  narrowsPosts(granted.posts, requested.posts) &&
+  narrowsAct(granted.act, requested.act) &&
+  (!granted.floor.mayTake || requested.floor.mayTake) &&
+  (!granted.agent || requested.agent);
 
 /** The operations a `threads` resource carries. `prompt.resolve` is for owner recipients only. */
 export const threadOperationSchema = z.enum([
