@@ -58,7 +58,7 @@ describe('integration events', () => {
     expect(accountResourceKind).toBe('account');
   });
 
-  test('a lens names the row fields only: never eventId, type or payload', () => {
+  test('a lens names the row fields and payload, never eventId or type', () => {
     expect(integrationEventFieldSchema.options).toEqual([
       'integrationId',
       'provider',
@@ -70,8 +70,9 @@ describe('integration events', () => {
       'requestedReviewers',
       'subject',
       'excerpt',
+      'payload',
     ]);
-    for (const outside of ['eventId', 'type', 'payload'])
+    for (const outside of ['eventId', 'type'])
       expect(integrationEventFieldSchema.safeParse(outside).success).toBe(false);
   });
 
@@ -87,6 +88,22 @@ describe('integration events', () => {
       event: { subject: event.subject },
     });
     expect(() => accessEventsAppendSchema.parse({ type: event.type, event: {} })).toThrow();
+    expect(
+      accessEventsAppendSchema.parse({
+        eventId: event.eventId,
+        type: event.type,
+        event: {},
+        truncated: true,
+      }).truncated,
+    ).toBe(true);
+    expect(() =>
+      accessEventsAppendSchema.parse({
+        eventId: event.eventId,
+        type: event.type,
+        event: {},
+        truncated: false,
+      }),
+    ).toThrow();
   });
 
   test("a channel's stream name round-trips, path fields sorted", () => {
