@@ -54,7 +54,7 @@ const request = (terms: Record<string, unknown>) => ({
   status: 'sent',
   createdAt: new Date().toISOString(),
   expiresAt: null,
-  requester: { sourceModel: 'User', id: uuid(), displayName: 'JobCo agent' },
+  requester: { sourceModel: 'User', id: uuid(), displayName: 'JobCo agent', audience: 'outside' },
   terms: {
     name: 'JobCo',
     lifecycle: 'ongoing',
@@ -103,6 +103,7 @@ describe('per-entry snapshot parsing (review U1)', () => {
     });
     expect(snapshot.hostedSignets[1]?.resources).toEqual([]);
     expect(snapshot.hostedSignetRequests).toHaveLength(1);
+    expect(snapshot.hostedSignetRequests[0]?.requester.audience).toBe('outside');
     expect(snapshot.dropped.map(({ list, index }) => ({ list, index }))).toEqual([
       { list: 'hostedSignetRequests', index: 1 },
       { list: `signets.${misfit.signetId}.resources`, index: 0 },

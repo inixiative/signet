@@ -15,6 +15,7 @@ import {
   grantTermsFitKind,
   grantTermsSchema,
   type LensLayer,
+  meetThreadsTerms,
   narrowsThreadsTerms,
   registeredResourceSchema,
   repositoryCallRow,
@@ -321,6 +322,29 @@ describe('threads terms', () => {
     expect(narrowsThreadsTerms(terms({ posts: 'instructions' }), terms({}))).toBe(false);
     expect(narrowsThreadsTerms(terms({ agent: true }), terms({}))).toBe(false);
     expect(threadsTermsSchema.safeParse({ act: 'write' }).success).toBe(false);
+  });
+
+  test('the meet of a default and a request is the narrowest of each term, inside both', () => {
+    const terms = (value: object) => threadsTermsSchema.parse(value);
+    const asked = terms({
+      view: 'thread',
+      delivery: 'turn',
+      posts: 'instructions',
+      act: 'full',
+      agent: true,
+    });
+    const inOrg = terms({
+      view: 'thread',
+      outbound: 'auto',
+      posts: 'instructions',
+      act: 'read',
+      floor: { mayTake: true },
+    });
+    const meet = meetThreadsTerms(inOrg, asked);
+    expect(meet).toEqual(terms({ view: 'thread', posts: 'instructions', act: 'read' }));
+    expect(narrowsThreadsTerms(meet, asked)).toBe(true);
+    expect(narrowsThreadsTerms(meet, inOrg)).toBe(true);
+    expect(meetThreadsTerms(asked, inOrg)).toEqual(meet);
   });
 });
 
