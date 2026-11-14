@@ -216,6 +216,14 @@ export const installationInquirySchema = z.object({
   deliverBefore: z.iso.datetime().nullable(),
 });
 /**
+ * Who a requester is to the integration's owner (Aron, 2026-11-14: "just in-org and outside-org,
+ * but something naive"): `inOrg` when they share an organization with the owner, else `outside`.
+ * Kingdom decides it, since only Kingdom knows memberships; a host picks its default terms by it.
+ */
+export const requestAudienceSchema = z.enum(['inOrg', 'outside']);
+export type RequestAudience = z.infer<typeof requestAudienceSchema>;
+
+/**
  * A pending `signetRequest` that asks for a resource on one of the Installation's integrations: a
  * party asking to join a Foundry's threads. The owner reviews it in Kingdom at `reviewUrl`.
  */
@@ -224,7 +232,12 @@ export const hostedSignetRequestSchema = z.object({
   status: inquiryStatusSchema,
   createdAt: z.iso.datetime(),
   expiresAt: z.iso.datetime().nullable(),
-  requester: z.object({ sourceModel: z.string(), id: z.uuid(), displayName: z.string() }),
+  requester: z.object({
+    sourceModel: z.string(),
+    id: z.uuid(),
+    displayName: z.string(),
+    audience: requestAudienceSchema,
+  }),
   terms: signetReviewProposalSchema,
   reviewUrl: kingdomLinkSchema,
 });
