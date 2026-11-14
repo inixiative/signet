@@ -147,6 +147,9 @@ describe('the grant resource contract', () => {
       delivery: 'turn',
       outbound: 'review',
       floor: { mayTake: false },
+      posts: 'data',
+      act: 'ask',
+      agent: false,
     });
   });
 });
@@ -268,6 +271,9 @@ describe('threads terms', () => {
       delivery: 'note',
       outbound: 'review',
       floor: { mayTake: false },
+      posts: 'data',
+      act: 'ask',
+      agent: false,
     };
     expect(threadsTermsSchema.parse({})).toEqual(narrowest as never);
     expect(threadsTerms(undefined)).toEqual(narrowest as never);
@@ -304,6 +310,17 @@ describe('threads terms', () => {
     expect(narrowsThreadsTerms(terms({ floor: { mayTake: true } }), asked)).toBe(false);
     const mayTake = terms({ floor: { mayTake: true } });
     expect(narrowsThreadsTerms(terms({}), mayTake)).toBe(true);
+  });
+
+  test('posts, act and agent narrow too', () => {
+    const terms = (value: object) => threadsTermsSchema.parse(value);
+    const asked = terms({ posts: 'instructions', act: 'read', agent: true });
+    expect(narrowsThreadsTerms(terms({}), asked)).toBe(true);
+    expect(narrowsThreadsTerms(terms({ act: 'read' }), asked)).toBe(true);
+    expect(narrowsThreadsTerms(terms({ act: 'full' }), asked)).toBe(false);
+    expect(narrowsThreadsTerms(terms({ posts: 'instructions' }), terms({}))).toBe(false);
+    expect(narrowsThreadsTerms(terms({ agent: true }), terms({}))).toBe(false);
+    expect(threadsTermsSchema.safeParse({ act: 'write' }).success).toBe(false);
   });
 });
 
