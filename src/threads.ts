@@ -87,6 +87,25 @@ export const narrowsThreadsTerms = (granted: ThreadsTerms, requested: ThreadsTer
   (!granted.floor.mayTake || requested.floor.mayTake) &&
   (!granted.agent || requested.agent);
 
+const narrower =
+  <T extends string>(values: readonly T[]) =>
+  (a: T, b: T): T =>
+    values.indexOf(a) <= values.indexOf(b) ? a : b;
+
+/**
+ * The narrowest terms both allow, field by field: where a review starts when the host has a default
+ * for the requester's audience (Aron, 2026-11-14). `narrowsThreadsTerms(meet, either)` always holds.
+ */
+export const meetThreadsTerms = (a: ThreadsTerms, b: ThreadsTerms): ThreadsTerms => ({
+  view: narrower(threadViewSchema.options)(a.view, b.view),
+  delivery: narrower(threadDeliverySchema.options)(a.delivery, b.delivery),
+  outbound: narrower(threadOutboundSchema.options)(a.outbound, b.outbound),
+  floor: { mayTake: a.floor.mayTake && b.floor.mayTake },
+  posts: narrower(threadPostsSchema.options)(a.posts, b.posts),
+  act: narrower(threadActSchema.options)(a.act, b.act),
+  agent: a.agent && b.agent,
+});
+
 /** The operations a `threads` resource carries. `prompt.resolve` is for owner recipients only. */
 export const threadOperationSchema = z.enum([
   'thread.read',
