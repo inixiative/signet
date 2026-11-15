@@ -1,0 +1,30 @@
+{
+  "id": "presenting-signets",
+  "title": "Presenting a Signet",
+  "routing": "Is this about acting as an enrolled Signet or what a Signet is: SignetClient (fromFile, renew, post, describe, execute, socketPresentation, run actions), signetPost/signetProof/kingdomUrl/SignetHttpError, DPoP proofs and device keys (createSignetProof, verifySignetProof, generateSignetKey, keyThumbprint, digestCredential, publicClientKeySchema, signetKeySchema), the access/execute and describe schemas, or the Signet envelope (ownerRefSchema, ownerKey, signetRecipientSchema, signetLifecycleSchema, signetProposalSchema)? Jobs: call an integration through Kingdom, sign a request, renew the access token, verify a proof, validate an owner or proposal.",
+  "concepts": ["signet-envelope", "keys-and-proof", "signet-client"],
+  "tokens": 10198,
+  "tokenMethod": "chars/4",
+  "files": {
+    "recognise": {
+      "path": "recognise.md",
+      "tokens": 1511,
+      "experimental": true,
+      "note": "a smaller recognise-only document; knowledge.md is the Warden document"
+    },
+    "knowledge": {
+      "path": "knowledge.md",
+      "tokens": 10198
+    }
+  },
+  "runsAgreed": 2,
+  "sources": {
+    "docs": ["README.md"],
+    "docUnits": ["doc:README.md#preface"],
+    "catalogClusters": ["client-signet-client", "contract-wire", "primitive-proof"],
+    "codeEntries": 37,
+    "docMembers": 5
+  },
+  "bypassLines": 9,
+  "glossaryTerms": 25
+}
