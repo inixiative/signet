@@ -51,6 +51,18 @@ export type HeldCredential = SignetCredential & { credentialFile: string };
 
 const credentialFileName = /^signet-[0-9a-f-]{36}\.json$/;
 
+/**
+ * The Signet credential a file holds, or null when it is missing, unreadable, or one this client
+ * cannot read (an older signet client wrote it); such a file is enrolled again on its next hold.
+ */
+export const heldSignetCredential = async (credentialFile: string) => {
+  if (!existsSync(credentialFile)) return null;
+  const parsed = signetCredentialSchema.safeParse(
+    await readPrivateJson(credentialFile).catch(() => null),
+  );
+  return parsed.success ? parsed.data : null;
+};
+
 /** Every Signet credential file in one Kingdom's installation directory that parses; others are skipped. */
 export async function heldCredentials(directory: string): Promise<HeldCredential[]> {
   const names = await readdir(directory).catch(() => [] as string[]);
@@ -59,10 +71,8 @@ export async function heldCredentials(directory: string): Promise<HeldCredential
       .filter((name) => credentialFileName.test(name))
       .map(async (name) => {
         const credentialFile = join(directory, name);
-        const parsed = signetCredentialSchema.safeParse(
-          await readPrivateJson(credentialFile).catch(() => null),
-        );
-        return parsed.success ? [{ ...parsed.data, credentialFile }] : [];
+        const credential = await heldSignetCredential(credentialFile);
+        return credential ? [{ ...credential, credentialFile }] : [];
       }),
   );
   return held.flat();

@@ -121,4 +121,8 @@ Consumers move to `^0.17.0`: none of this is in 0.15.0 or 0.16.0.
 - **Close reasons describe the holder's own Signet.** `revoked`, `revised`, `expired` and
   `enrollmentRevoked` never describe anything else; a change elsewhere closes a stream as
   `unauthorized`, with no further reason.
+- **A retired installation key re-pairs.** When Kingdom refuses a key it retired (its
+  Installation removed by the unclaimed or orphaned sweep) with `retiredKeyMessage`,
+  `pairInstallation` sets the key aside as `installation-key.retired-<ts>.json`, makes a new one
+  under the hold lock, and registers once more. Any other refusal still throws.
 - A dropped grant row is reported under its `integrationResourceId` (`dropped[].id`).

@@ -9,6 +9,7 @@ import {
   keyThumbprint,
   registerInstallation,
   requestRegistration,
+  requestSignetEntitlement,
   SignetClient,
   SignetHttpError,
   saveCollectedSignet,
@@ -80,6 +81,15 @@ beforeAll(() => {
             reviewCode: 'ABC123ABC123',
             expiresAt: new Date(Date.now() + 600000).toISOString(),
             reviewUrl: 'https://kingdom.example/dashboard?reviewSignet=ABC123ABC123',
+          });
+        }
+        if (action === 'requestSignetEntitlement') {
+          await verify(request, action);
+          return ok({
+            inquiryId,
+            status: 'sent',
+            expiresAt: new Date(Date.now() + 7 * 86400000).toISOString(),
+            reviewUrl: `https://kingdom.example/dashboard?signetEntitlement=${inquiryId}`,
           });
         }
         if (action === 'installationInquiries') {
@@ -187,6 +197,16 @@ describe('pairing and presentation', () => {
       inquiries: [],
       hostedSignetRequests: [],
       dropped: [],
+    });
+    const asked = await requestSignetEntitlement(url, keyFile, {
+      signetId,
+      resources: [{ resourceKind: 'subscription', operations: { picks: ['subscription.use'] } }],
+      reason: 'No capacity',
+    });
+    expect(asked).toMatchObject({ inquiryId, status: 'sent' });
+    expect(calls.at(-1)).toMatchObject({
+      action: 'requestSignetEntitlement',
+      body: { signetId, reason: 'No capacity' },
     });
     expect(await collectSignet(url, keyFile, inquiryId)).toBeNull();
     approved = true;
