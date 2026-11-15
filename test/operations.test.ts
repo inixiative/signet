@@ -6,6 +6,7 @@ import {
   operationPickSchema,
   operationTree,
   permitsOperation,
+  pickCovers,
   resolvedOperationsSchema,
   resolveOperationPicks,
 } from '../src';
@@ -214,4 +215,14 @@ describe('narrowing operations: the inner reaches nothing the outer does not', (
   test('equal leaf sets narrow each other', () => {
     expect(narrowsOperations(grant(['events.*']), grant(['events.*']))).toBe(true);
   });
+});
+
+test('a pick takes the leaf of its own key, or with .* every leaf under its prefix', () => {
+  expect(pickCovers('commits.read', 'commits.read')).toBe(true);
+  expect(pickCovers('events.pull_request.*', 'events.pull_request.opened')).toBe(true);
+  expect(pickCovers('events.*', 'events.pull_request.opened')).toBe(true);
+  // A bare key is a leaf, never a branch: a branch is written with `.*`.
+  expect(pickCovers('events.pull_request', 'events.pull_request.opened')).toBe(false);
+  expect(pickCovers('events.pull', 'events.pull_request.opened')).toBe(false);
+  expect(pickCovers('events.pull_request.*', 'events.pull_request')).toBe(false);
 });

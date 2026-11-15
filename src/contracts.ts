@@ -56,20 +56,32 @@ export const ownerRefSchema = z.object({
 export type OwnerRef = z.infer<typeof ownerRefSchema>;
 export type OwnerModel = z.infer<typeof ownerModelSchema>;
 
-type OwnerIdField = 'userId' | 'organizationId' | 'spaceId';
-/** The ids each owner model is keyed by; every other id is null. */
+/** What a Signet may be owned by: an owner, or an Integration in its own right. */
+export const signetOwnerModelSchema = z.enum([...ownerModelSchema.options, 'Integration']);
+export type SignetOwnerModel = z.infer<typeof signetOwnerModelSchema>;
+
+const everyOwnerIdField = ['userId', 'organizationId', 'spaceId', 'integrationId'] as const;
+type OwnerIdField = (typeof everyOwnerIdField)[number];
+/** The ids each Signet owner model is keyed by; every other id is null. */
 export const ownerIdFields = {
   User: ['userId'],
   Organization: ['organizationId'],
   Space: ['organizationId', 'spaceId'],
   OrganizationUser: ['organizationId', 'userId'],
   SpaceUser: ['organizationId', 'spaceId', 'userId'],
-} as const satisfies Record<OwnerModel, readonly OwnerIdField[]>;
-const everyOwnerIdField = ['userId', 'organizationId', 'spaceId'] as const;
+  Integration: ['integrationId'],
+} as const satisfies Record<SignetOwnerModel, readonly OwnerIdField[]>;
 
-/** An owner a party names: no other keys, the ids its model is keyed by, and no others. */
+/**
+ * A Signet owner a party names: no other keys, the ids its model is keyed by, and every other id
+ * present and null.
+ */
 export const namedOwnerSchema = z
-  .strictObject(ownerRefSchema.shape)
+  .strictObject({
+    ...ownerRefSchema.shape,
+    ownerModel: signetOwnerModelSchema,
+    integrationId: z.uuid().nullable(),
+  })
   .superRefine((owner, context) => {
     const needed: readonly OwnerIdField[] = ownerIdFields[owner.ownerModel];
     for (const field of everyOwnerIdField) {
@@ -332,7 +344,11 @@ export const hostedSignetSchema = z.object({
     id: z.uuid(),
     displayName: z.string(),
   }),
-  /** Each operations lens the rows' `lens` layers compose under, keyed by `baseLensId(provider, kind)`. */
+  /**
+   * Each operations lens the rows' `lens` layers compose under, keyed by `baseLensId(provider, kind)`.
+   * Composing them shows what these rows' own layers narrow, for display; it is not what the member
+   * reaches.
+   */
   baseLenses: z.record(z.string(), storedBaseLensSchema),
   resources: grantsSchema,
 });
@@ -500,7 +516,7 @@ export type InstallationSnapshot = z.infer<typeof installationSnapshotSchema> & 
 const entryId = (value: unknown) => {
   if (typeof value !== 'object' || value === null) return null;
   const record = value as Record<string, unknown>;
-  const id = record.signetId ?? record.id ?? record.resourceId;
+  const id = record.signetId ?? record.id ?? record.resourceId ?? record.integrationResourceId;
   return typeof id === 'string' ? id.slice(0, 80) : null;
 };
 /**

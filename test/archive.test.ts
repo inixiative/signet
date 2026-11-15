@@ -22,10 +22,11 @@ import {
   operationInputFromAccess,
   operationInputKeys,
   operationInputSchemas,
+  rowModelLayer,
   threadOperationNames,
   threadOperationSchema,
 } from '../src';
-import { operationsLens, rowLayer } from './operationsLens';
+import { operationsLens } from './operationsLens';
 
 const a = 'a'.repeat(64);
 const resourceId = Bun.randomUUIDv7();
@@ -140,7 +141,7 @@ describe('an Archive call, gated by json-rules against the grant lens at its ope
   });
   const narrowed = (narrowing: ModelNarrowing): LensNarrowing => ({
     parent: base,
-    ...rowLayer(operations, 'ArchiveDocument', narrowing),
+    ...rowModelLayer(operations, 'ArchiveDocument', narrowing),
   });
   const hidesProject = narrowed({ omits: ['projectId'] });
   const hidesTags = narrowed({ omits: ['tags'] });

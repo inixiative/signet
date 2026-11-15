@@ -5,7 +5,12 @@ import {
   archiveLensRefusal,
   archiveOperationSchema,
   baseLensId,
+  composeGrantLens,
   conditionAtOperation,
+  type DroppedEntry,
+  everyBranch,
+  GrantLensError,
+  operationsLens as generateOperationsLens,
   githubOperationSchema,
   grantResourceSchema,
   grantTermsFitKind,
@@ -18,6 +23,9 @@ import {
   narrowsThreadsTerms,
   operationRecord,
   operationRows,
+  operationsMapName,
+  ownerIdFields,
+  parseInstallationSignets,
   projectionFilters,
   projectionVisit,
   registeredResourceSchema,
@@ -25,8 +33,11 @@ import {
   repositoryGrantRefusal,
   repositoryLensRefusal,
   requestedResourceSchema,
+  rowModelLayer,
+  rowsThroughLens,
   type StoredLensLayer,
   signetGrantSchema,
+  signetOwnerModelSchema,
   signetProposalSchema,
   signetResourceSchema,
   storedLensLayerSchema,
@@ -35,7 +46,7 @@ import {
   threadsTerms,
   threadsTermsSchema,
 } from '../src';
-import { everyBranch, grantLensOver, operationsLens, rowLayer } from './operationsLens';
+import { grantLensOver, operationsLens } from './operationsLens';
 
 const uuid = () => Bun.randomUUIDv7();
 const integrationResourceId = uuid();
@@ -367,6 +378,7 @@ const document = { kind: 'scalar', type: 'String' } as const;
 const archiveOperations = archiveOperationSchema.options;
 const archiveBase = operationsLens(archiveOperations, 'ArchiveDocument', {
   id: document,
+  projectId: document,
   title: document,
   content: document,
 });
@@ -377,9 +389,9 @@ const repositoryBase = operationsLens(githubOperations, 'RepositoryCall', {
 });
 
 describe("refusals that stay about operations, read at each operation's branch", () => {
-  const archive = (...layers: LensLayer[]) => grantLensOver(archiveBase, archiveOperations, layers);
+  const archive = (...layers: LensLayer[]) => grantLensOver(archiveBase, layers);
   const documents = (narrowing: ModelNarrowing) =>
-    rowLayer(archiveOperations, 'ArchiveDocument', narrowing);
+    rowModelLayer(archiveOperations, 'ArchiveDocument', narrowing);
   const onlyChosen = documents({ where: { field: 'id', operator: 'in', value: ['x'] } });
 
   test('writing or deleting Archive sessions takes no lens', () => {
@@ -402,6 +414,8 @@ describe("refusals that stay about operations, read at each operation's branch",
       archiveLensRefusal('documents.search', archive(documents({ omits: ['content'] }))),
     ).not.toBeNull();
     expect(archiveLensRefusal('documents.read', archive(onlyChosen))).toBeNull();
+    expect(projectionFilters(archive(onlyChosen).projection, 'documents.search')).toBe(true);
+    expect(projectionFilters(archive(documents({})).projection, 'documents.search')).toBe(false);
   });
 
   test('a narrowing of one branch leaves the others as they are; a branch left off is held back', () => {
@@ -428,25 +442,132 @@ describe("refusals that stay about operations, read at each operation's branch",
     );
   });
 
-  test('a where at the root or a branch above an operation holds back its rows too', () => {
-    const inP1 = { field: 'projectId', operator: 'equals', value: 'p1' } as Condition;
-    const gatedAtRoot = {
+  const projects = operationsLens(['documents.read', 'documents.search'], 'ArchiveDocument', {
+    id: document,
+    projectId: document,
+  });
+  const inP1 = { field: 'projectId', operator: 'equals', value: 'p1' } as Condition;
+  const rows = [
+    { id: 'a', projectId: 'p1' },
+    { id: 'b', projectId: 'p2' },
+  ];
+  const read = (layer: LensLayer, operation: string) => {
+    return rowsThroughLens({ parent: projects, ...layer }, operation, rows);
+  };
+
+  test("a where at an operation's own branch filters its rows and leaves other branches alone", () => {
+    const atLeaf = {
+      root: everyBranch(['documents.read', 'documents.search'], (operation) =>
+        operation === 'documents.read' ? { where: inP1 } : {},
+      ),
+    } as LensLayer;
+    expect(read(atLeaf, 'documents.read')).toEqual([{ id: 'a', projectId: 'p1' }]);
+    expect(read(atLeaf, 'documents.search')).toEqual(rows);
+    const lens = grantLensOver(projects, [atLeaf]);
+    expect(archiveLensRefusal('documents.read', lens)).toBeNull();
+  });
+
+  test('a where above a branch would show every row once one matched, so it is refused', () => {
+    const aboveBranch = {
       root: {
-        ...everyBranch(archiveOperations),
-        where: conditionAtOperation('documents.search', inP1),
+        ...everyBranch(['documents.read', 'documents.search']),
+        where: conditionAtOperation('documents.read', inP1),
       },
     } as LensLayer;
-    const gatedAtDocuments = everyBranch(archiveOperations);
-    (gatedAtDocuments.relations?.documents as ModelNarrowing).where = conditionAtOperation(
+    // The leak the refusal is for: p2's document comes back beside p1's.
+    expect(read(aboveBranch, 'documents.read')).toEqual(rows);
+    const refusal = /never above it/;
+    expect(() => grantLensOver(projects, [aboveBranch])).toThrow(GrantLensError);
+    expect(() => grantLensOver(projects, [aboveBranch])).toThrow(refusal);
+    const atDocuments = everyBranch(['documents.read', 'documents.search']);
+    (atDocuments.relations?.documents as ModelNarrowing).where = conditionAtOperation(
       'search',
       inP1,
     );
-    const atDocuments = { root: gatedAtDocuments } as LensLayer;
-    for (const layer of [gatedAtRoot, atDocuments]) {
-      expect(projectionFilters(archive(layer).projection, 'documents.search')).toBe(true);
-      expect(archiveLensRefusal('documents.search', archive(layer))).not.toBeNull();
-    }
-    expect(projectionFilters(archive(documents({})).projection, 'documents.search')).toBe(false);
+    expect(() => grantLensOver(projects, [{ root: atDocuments } as LensLayer])).toThrow(refusal);
+    const pinned = {
+      root: {
+        ...everyBranch(githubOperations),
+        where: conditionAtOperation('commits.read', {
+          field: 'sha',
+          operator: 'equals',
+          value: 'a'.repeat(40),
+        }),
+      },
+    } as LensLayer;
+    expect(() => repository(pinned)).toThrow(refusal);
+  });
+
+  test('layers compose only as one chain under the base, and none reads every branch', () => {
+    const layer = { root: everyBranch(['documents.read']) };
+    const first = { ...layer, id: 'request', parents: ['base'] };
+    const second = { ...layer, id: 'approval', parents: ['base', 'request'] };
+    expect(composeGrantLens('base', projects, [first, second])).toHaveProperty('parent');
+    expect(
+      rowsThroughLens(composeGrantLens('base', projects, []), 'documents.search', rows),
+    ).toEqual(rows);
+    expect(
+      rowsThroughLens(composeGrantLens('base', projects, [first]), 'documents.search', rows),
+    ).toEqual([]);
+    for (const stored of [
+      [first, { ...second, parents: ['base'] }],
+      [{ ...first, parents: ['other'] }],
+      [second],
+      [{ id: 'request' }],
+      [{ ...first, root: { relations: { nowhere: {} } } }],
+    ])
+      expect(() => composeGrantLens('base', projects, stored)).toThrow(GrantLensError);
+  });
+
+  test('every branch is turned on once, each leaf with its own narrowing', () => {
+    expect(everyBranch(['documents.read', 'documents.search', 'sessions.write'])).toEqual({
+      relations: {
+        documents: { relations: { read: {}, search: {} } },
+        sessions: { relations: { write: {} } },
+      },
+    });
+    expect(everyBranch(['thread.read'], () => ({ picks: ['id'] }))).toEqual({
+      relations: { thread: { relations: { read: { picks: ['id'] } } } },
+    });
+  });
+
+  test('an operations lens has a branch per operation; one that reads no rows has no leaf to turn on', () => {
+    const operations = ['documents.read', 'sessions.delete'];
+    const rowModel = (operation: string) =>
+      operation === 'documents.read' ? 'ArchiveDocument' : undefined;
+    const base = generateOperationsLens({
+      model: 'ArchiveLibraryOperation',
+      operations,
+      rowModel,
+      rowModels: { ArchiveDocument: { id: document } },
+    });
+    expect(base.model).toBe('ArchiveLibraryOperation');
+    expect(base.maps[operationsMapName]?.models).toEqual({
+      ArchiveLibraryOperation: {
+        fields: {
+          documents: expect.objectContaining({ type: 'ArchiveLibraryOperation_documents' }),
+          sessions: expect.objectContaining({ type: 'ArchiveLibraryOperation_sessions' }),
+        },
+      },
+      ArchiveLibraryOperation_documents: {
+        fields: { read: expect.objectContaining({ type: 'ArchiveDocument', isList: true }) },
+      },
+      ArchiveLibraryOperation_sessions: {
+        fields: { delete: { kind: 'scalar', type: 'Boolean', isRequired: false } },
+      },
+      ArchiveDocument: { fields: { id: document } },
+    });
+    const root = everyBranch(operations, (operation) => (rowModel(operation) ? {} : undefined));
+    expect(root).toEqual({ relations: { documents: { relations: { read: {} } }, sessions: {} } });
+    expect(rowsThroughLens({ parent: base, root }, 'documents.read', [{ id: 'a' }])).toEqual([
+      { id: 'a' },
+    ]);
+    // A row with no layers reads exactly that root: every branch the base has.
+    expect(composeGrantLens('base', base, undefined)).toEqual({ parent: base, root });
+    expect(rowModelLayer(['documents.read'], 'ArchiveDocument', { picks: ['id'] })).toEqual({
+      root: { relations: { documents: { relations: { read: {} } } } },
+      mapDefaults: { operations: { models: { ArchiveDocument: { picks: ['id'] } } } },
+    });
   });
 
   test('a grant row is refused over every operation it reaches, full meaning all of them', () => {
@@ -459,10 +580,9 @@ describe("refusals that stay about operations, read at each operation's branch",
     expect(archiveGrantRefusal({ full: true }, archive())).toBeNull();
   });
 
-  const repository = (...layers: LensLayer[]) =>
-    grantLensOver(repositoryBase, githubOperations, layers);
+  const repository = (...layers: LensLayer[]) => grantLensOver(repositoryBase, layers);
   const commits = (narrowing: ModelNarrowing) =>
-    rowLayer(githubOperations, 'RepositoryCall', narrowing);
+    rowModelLayer(githubOperations, 'RepositoryCall', narrowing);
   const pinnedLayer = commits({
     where: { field: 'sha', operator: 'equals', value: 'a'.repeat(40) },
   });
@@ -528,6 +648,7 @@ describe('a resource ask carries an incoming where, and a request names its owne
       userId: Bun.randomUUIDv7(),
       organizationId: null,
       spaceId: null,
+      integrationId: null,
     };
     const proposal = signetProposalSchema.parse({
       name: 'Release notes',
@@ -571,6 +692,15 @@ describe('a where is a bounded, positive json-rules condition', () => {
     expect(asks({})).toBe(false);
   });
 
+  it('refuses an empty all or any at any depth: one admits everything, the other nothing', () => {
+    const rule = { field: 'threadId', operator: 'equals', value: 'main' };
+    expect(asks({ all: [] })).toBe(false);
+    expect(asks({ any: [] })).toBe(false);
+    expect(asks({ all: [rule, { any: [] }] })).toBe(false);
+    expect(asks({ any: [{ all: [rule, { all: [] }] }] })).toBe(false);
+    expect(asks({ all: [rule, { any: [rule] }] })).toBe(true);
+  });
+
   it('accepts a positive condition, nested ones included', () => {
     expect(asks({ field: 'threadId', operator: 'in', value: ['main'] })).toBe(true);
     expect(
@@ -603,12 +733,13 @@ describe("a request's owner names exactly the ids its model needs", () => {
     }).success;
   const owner = (
     ownerModel: string,
-    ids: Partial<Record<'userId' | 'organizationId' | 'spaceId', string>>,
+    ids: Partial<Record<'userId' | 'organizationId' | 'spaceId' | 'integrationId', string>>,
   ) => ({
     ownerModel,
     userId: null,
     organizationId: null,
     spaceId: null,
+    integrationId: null,
     ...ids,
   });
 
@@ -620,6 +751,12 @@ describe("a request's owner names exactly the ids its model needs", () => {
     expect(propose(owner('OrganizationUser', { organizationId: id() }))).toBe(false);
     expect(propose(owner('SpaceUser', { organizationId: id(), spaceId: id() }))).toBe(false);
     expect(propose(owner('User', { userId: id(), organizationId: id() }))).toBe(false);
+    expect(propose(owner('Integration', {}))).toBe(false);
+    expect(propose(owner('Integration', { integrationId: id(), userId: id() }))).toBe(false);
+    expect(propose(owner('User', { userId: id(), integrationId: id() }))).toBe(false);
+    expect(propose({ ownerModel: 'User', userId: id(), organizationId: null, spaceId: null })).toBe(
+      false,
+    );
   });
 
   it('accepts each owner model with its ids', () => {
@@ -630,6 +767,8 @@ describe("a request's owner names exactly the ids its model needs", () => {
     expect(propose(owner('SpaceUser', { organizationId: id(), spaceId: id(), userId: id() }))).toBe(
       true,
     );
+    expect(propose(owner('Integration', { integrationId: id() }))).toBe(true);
+    expect(Object.keys(ownerIdFields).sort()).toEqual([...signetOwnerModelSchema.options].sort());
   });
 });
 
@@ -645,5 +784,48 @@ describe('a grant view shows its incoming where', () => {
       where,
     });
     expect(view.resourceModel === 'IntegrationResource' && view.where).toEqual(where);
+  });
+
+  it("a stored where past an ask's cap is read whole: the holder keeps its own row", () => {
+    const where = {
+      all: Array.from({ length: 400 }, (_, index) => ({
+        field: `f${index}`,
+        operator: 'equals',
+        value: 'x'.repeat(30),
+      })),
+    };
+    expect(JSON.stringify(where).length).toBeGreaterThan(grantWhereLimit);
+    expect(grantWhereSchema.safeParse(where).success).toBe(false);
+    const row = {
+      resourceModel: 'IntegrationResource' as const,
+      integrationResourceId: Bun.randomUUIDv7(),
+      integrationId: Bun.randomUUIDv7(),
+      kind: 'threads',
+      full: true,
+      where,
+    };
+    const dropped: DroppedEntry[] = [];
+    const { signets } = parseInstallationSignets(
+      {
+        signets: [
+          {
+            signetId: Bun.randomUUIDv7(),
+            name: 'held',
+            enrollmentId: null,
+            owner: {
+              ownerModel: 'User',
+              userId: Bun.randomUUIDv7(),
+              organizationId: null,
+              spaceId: null,
+            },
+            resources: [row],
+          },
+        ],
+        hostedSignets: [],
+      },
+      dropped,
+    );
+    expect(dropped).toEqual([]);
+    expect(signets[0]?.resources).toEqual([row]);
   });
 });
