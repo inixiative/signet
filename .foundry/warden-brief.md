@@ -13,7 +13,8 @@ first.
 - Three entries, shipped as TypeScript source (`files: ["src"]`): `.` (`src/index.ts`),
   `./contracts` (`src/contracts.ts`, the wire schemas) and `./proof` (`src/proof.ts`).
 - Wire contracts: `contracts.ts`, which re-exports `grants.ts`, `lens.ts`, `operations.ts`, and one
-  module per declared resource kind: `threads.ts`, `archive.ts`, `github.ts`, `events.ts`.
+  module per declared resource kind: `threads.ts` (the `conversation` kind), `archive.ts`,
+  `github.ts`, `events.ts`.
 - Presenting: `client.ts` (Installation and person calls, `SignetClient`), `proof.ts`, `files.ts`
   (private 0600 JSON), `installation.ts` (the on-disk layout), `installationPairing.ts`
   (pairing and holding credentials), `holders.ts` (the describe cache).
@@ -25,8 +26,14 @@ first.
 
 - Every schema Kingdom and the presenters share; Kingdom's catalog, input check and dispatch read
   the declared operations, so a new operation is added here first.
-- Grant rows: operation picks resolved once (`resolveOperationPicks`), json-rules lens layers over
-  a base lens (`baseLensId`), per-kind terms (only `threads` today).
+- Grant rows: a row names one resource or a scope (a whole integration, or a project's resources of
+  one kind), so a reader never assumes one resource per row. Operation picks are resolved once
+  (`resolveOperationPicks`), and json-rules lens layers narrow a base lens (`baseLensId`). Grants
+  carry no terms.
+- Conversations: one `conversation` resource per shared thread, its `externalId` the thread id.
+  Its catalog holds the calls (`thread.*`, `prompt.resolve`) and seven permissions nothing calls
+  (`member.*`, `agent.*`), picked like any other operation; `full` holds them all. Whether a
+  member's sends wait for review (`outbound`) is the host's own setting, not on the grant.
 - Per-entry reads: an entry this package can't read is dropped into `dropped`, never failing the
   whole read.
 - `SignetClient` (shared per-file token renewal), `pairInstallation`, `holdInstallationSignets`
@@ -36,7 +43,8 @@ first.
 ## Words used here
 
 Signet, owner, recipient, holder, grant row, resource, IntegrationResource, Project, operation
-pick, leaf, `full`, lens, layer, base lens, terms, Installation, integration, inquiry, registration,
+pick, leaf, `full`, lens, layer, base lens, scope, Installation, integration, inquiry, registration,
 review code, enrollment, presentation, credential file, access token, renewal credential, DPoP
-proof, nonce, describe, execute, declared operation, snapshot, `dropped`, conversation, member,
-host, threads terms, floor, conch, subscription, lease, journalSeq, seq, resync.
+proof, nonce, describe, execute, declared operation, snapshot, `dropped`, conversation, conversation
+permission, member, host, audience, `externalId`, floor, conch, subscription, lease, journalSeq,
+seq, resync.
