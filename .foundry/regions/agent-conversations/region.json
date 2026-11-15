@@ -1,0 +1,36 @@
+{
+  "id": "agent-conversations",
+  "title": "Agent conversations over threads",
+  "routing": "Is this about a host Foundry's conversation thread and its members: threadsTermsSchema/threadsTerms (view, delivery, outbound, floor, posts, act, agent), narrowsThreadsTerms/meetThreadsTerms, thread.read/thread.prompt/thread.floor/prompt.resolve, answering members through InstallationSocket's threads option with threadResult/threadRefused and appendThread, subscriptions and leases, or a member watching a thread live with SignetSocket / openThread (accessThread streams, snapshot, seq, resync, close reasons)?",
+  "concepts": ["threads-terms", "thread-host", "thread-member-streams"],
+  "tokens": 13759,
+  "tokenMethod": "chars/4",
+  "files": {
+    "recognise": {
+      "path": "recognise.md",
+      "tokens": 2537,
+      "experimental": true,
+      "note": "a smaller recognise-only document; knowledge.md is the Warden document"
+    },
+    "knowledge": {
+      "path": "knowledge.md",
+      "tokens": 13759
+    }
+  },
+  "runsAgreed": 3,
+  "sources": {
+    "docs": ["README.md"],
+    "docUnits": ["doc:README.md#agent-conversations"],
+    "catalogClusters": [
+      "contract-wire",
+      "installation-socket",
+      "threads-contract",
+      "threads-host",
+      "threads-member-streams"
+    ],
+    "codeEntries": 55,
+    "docMembers": 13
+  },
+  "bypassLines": 13,
+  "glossaryTerms": 30
+}

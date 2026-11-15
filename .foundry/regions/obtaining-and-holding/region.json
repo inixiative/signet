@@ -1,0 +1,49 @@
+{
+  "id": "obtaining-and-holding",
+  "title": "Obtaining and holding Signets",
+  "routing": "Is this about getting a Signet and keeping it on disk: pairing an Installation (pairInstallation, registerInstallation, requestRegistration, collectSignet, saveCollectedSignet), a person's or agent's request (requestSignet, awaitSignet, enrollSignet), syncing held Signets (holdInstallationSignets, holdPersonSignets, withHoldLock, heldSignetFile, listedSignets, withdrawRegistration), the installation directory layout (installationPaths, installationDirectory, signetCredentialFile, heldCredentials), 0600 private files (readPrivateJson, writePrivateJson), the InstallationSocket snapshots, tolerant per-entry reads (parseEntries, parseInstallation*) or the SignetHolders describe cache? Jobs: pair a local app with Kingdom, wait for approval, store keys and credentials securely, keep one credential file per Signet, react to Kingdom's live updates.",
+  "concepts": [
+    "installation-calls",
+    "person-calls",
+    "installation-layout",
+    "pairing-and-holding",
+    "private-files",
+    "installation-socket",
+    "per-entry-reads",
+    "holder-cache"
+  ],
+  "tokens": 16918,
+  "tokenMethod": "chars/4",
+  "files": {
+    "recognise": {
+      "path": "recognise.md",
+      "tokens": 2129,
+      "experimental": true,
+      "note": "a smaller recognise-only document; knowledge.md is the Warden document"
+    },
+    "knowledge": {
+      "path": "knowledge.md",
+      "tokens": 16918
+    }
+  },
+  "runsAgreed": 3,
+  "sources": {
+    "docs": ["README.md"],
+    "docUnits": ["doc:README.md#preface", "doc:README.md#agent-conversations"],
+    "catalogClusters": [
+      "client-installation-calls",
+      "client-person-calls",
+      "contract-per-entry-reads",
+      "contract-wire",
+      "holders-describe-cache",
+      "installation-layout",
+      "installation-pairing-and-holding",
+      "installation-socket",
+      "primitive-private-files"
+    ],
+    "codeEntries": 58,
+    "docMembers": 2
+  },
+  "bypassLines": 13,
+  "glossaryTerms": 24
+}

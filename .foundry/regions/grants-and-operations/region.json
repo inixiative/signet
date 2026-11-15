@@ -1,0 +1,47 @@
+{
+  "id": "grants-and-operations",
+  "title": "Grants and declared operations",
+  "routing": "Is this about what a Signet grant row allows: grant rows (grantResourceSchema, signetGrantSchema, requested/registered resource schemas), operation picks ({ full } | { picks }, `.*` prefixes, resolveOperationPicks, permitsOperation, narrowsOperations, scopeRefusal), the json-rules lens chain (lensLayerSchema, storedLensLayerSchema, baseLensId, projectionFilters/projectionShows), per-kind terms (grantTermsSchema, grantTermsFitKind, threadsTerms), or the declared operations Kingdom executes (declaredOperationSchema, operationInputSchemas, archive.ts, github.ts, events.ts)? Jobs: decide which operations a grant reaches, check a scope only narrows another, add a new operation, refuse a lens an operation can't carry, name an event's operation key.",
+  "concepts": [
+    "grant-rows",
+    "operation-picks",
+    "grant-lens",
+    "declared-operations",
+    "archive-operations",
+    "github-operations",
+    "integration-events"
+  ],
+  "tokens": 17171,
+  "tokenMethod": "chars/4",
+  "files": {
+    "recognise": {
+      "path": "recognise.md",
+      "tokens": 2701,
+      "experimental": true,
+      "note": "a smaller recognise-only document; knowledge.md is the Warden document"
+    },
+    "knowledge": {
+      "path": "knowledge.md",
+      "tokens": 17171
+    }
+  },
+  "runsAgreed": 2,
+  "sources": {
+    "docs": ["README.md"],
+    "docUnits": ["doc:README.md#grants", "doc:README.md#declared-operations"],
+    "catalogClusters": [
+      "client-signet-client",
+      "contract-declared-operations",
+      "contract-grants",
+      "contract-lens",
+      "contract-operation-picks",
+      "operations-archive",
+      "operations-github",
+      "operations-integration-events"
+    ],
+    "codeEntries": 64,
+    "docMembers": 13
+  },
+  "bypassLines": 15,
+  "glossaryTerms": 28
+}
