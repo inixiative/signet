@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { existsSync } from 'node:fs';
-import { mkdtemp, readdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
@@ -11,10 +11,13 @@ import {
   pairInstallation,
   readPrivateJson,
   signetCredentialFile,
+  signetPublicKey,
 } from '../src';
 import {
+  registerInstallationSchema,
   requestRegistrationResponseSchema,
   requestRegistrationSchema,
+  retiredKeyMessage,
   signetHolderSchema,
 } from '../src/contracts';
 
@@ -715,4 +718,60 @@ test("a Signet holder's Kingdom links must be http(s)", () => {
   expect(holder(`https://kingdom.example/dashboard?integration=${integrationId}`)).toBe(true);
   expect(holder('javascript:alert(1)')).toBe(false);
   expect(holder('file:///Applications/Calculator.app')).toBe(false);
+});
+
+test('a key Kingdom retired is set aside and a new one registers, once', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'signet-retired-'));
+  const registered: string[] = [];
+  let retiredX = '';
+  const kingdom = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const action = new URL(req.url).pathname.split('/').at(-1)!;
+      if (action === 'nonce') return Response.json({ data: { nonce: nonce() } });
+      if (action !== 'registerInstallation') return new Response(null, { status: 404 });
+      const { publicKey } = registerInstallationSchema.parse(await req.json());
+      registered.push(publicKey.x);
+      if (publicKey.x === retiredX)
+        return Response.json({ message: retiredKeyMessage }, { status: 403 });
+      return new Response(null, { status: 503 });
+    },
+  });
+  const { keyFile } = await installationDirectory(root, `http://localhost:${kingdom.port}`);
+  const retired = await readFile(keyFile, 'utf8');
+  retiredX = signetPublicKey(JSON.parse(retired)).x;
+  try {
+    // The stub stops at the next step (503), past the registration this test is about.
+    await expect(pair(`http://localhost:${kingdom.port}`, root, {})).rejects.toThrow('(503)');
+  } finally {
+    kingdom.stop();
+  }
+  const freshX = signetPublicKey(JSON.parse(await readFile(keyFile, 'utf8'))).x;
+  expect(freshX).not.toBe(retiredX);
+  expect(registered).toEqual([retiredX, freshX]);
+  const kept = (await readdir(join(keyFile, '..'))).filter((name) => name.includes('retired'));
+  expect(kept).toHaveLength(1);
+  expect(await readFile(join(keyFile, '..', kept[0]!), 'utf8')).toBe(retired);
+});
+
+test('another 403 at registration is not answered with a new key', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'signet-wrong-key-'));
+  const kingdom = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const action = new URL(req.url).pathname.split('/').at(-1)!;
+      if (action === 'nonce') return Response.json({ data: { nonce: nonce() } });
+      return Response.json({ message: 'Wrong client key' }, { status: 403 });
+    },
+  });
+  const { keyFile } = await installationDirectory(root, `http://localhost:${kingdom.port}`);
+  const before = await readFile(keyFile, 'utf8');
+  try {
+    await expect(pair(`http://localhost:${kingdom.port}`, root, {})).rejects.toThrow(
+      'Wrong client key',
+    );
+  } finally {
+    kingdom.stop();
+  }
+  expect(await readFile(keyFile, 'utf8')).toBe(before);
 });

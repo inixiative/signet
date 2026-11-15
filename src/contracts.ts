@@ -235,6 +235,11 @@ export const registerInstallationSchema = z
   .refine((value) => value.kind !== 'archive' || Boolean(value.sourceId), {
     message: 'A local Archive registers with its sourceId',
   });
+/**
+ * Kingdom's refusal when a key it retired (its Installation removed, or the key rotated away)
+ * registers again. The client answers it with a new key.
+ */
+export const retiredKeyMessage = 'This key was retired; use a new key';
 export const registerInstallationResponseSchema = z.object({ installationId: z.uuid() });
 export const requestRegistrationSchema = z.strictObject({ terms: registrationRequestSchema });
 /** A link into Kingdom's web app that callers open, so http(s) only. */
