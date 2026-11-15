@@ -44,7 +44,8 @@ export const threadActSchema = z.enum(['ask', 'read', 'full']);
 
 /**
  * A member's terms on a `threads` resource: how it takes part, not which threads it reaches (that
- * is the grant's lens, a json-rules filter Kingdom applies at admission). Every term defaults to its
+ * is the grant's `where` over the call's `threadId`, which Kingdom checks at admission, and its lens
+ * over the `Thread` rows). Every term defaults to its
  * narrowest value, so terms that omit one can only be more careful.
  */
 export const threadsTermsSchema = z.strictObject({
@@ -59,7 +60,10 @@ export const threadsTermsSchema = z.strictObject({
 });
 export type ThreadsTerms = z.infer<typeof threadsTermsSchema>;
 
-/** The row a threads grant's `where` is evaluated over at admission: the thread, by `id`. */
+/**
+ * The row a thread call reads at its operation's branch of the lens: the thread, by `id`. A holder
+ * reads it through a grant's lens with `operationRecord(operation, [threadRow(id)])`.
+ */
 export const threadRow = (threadId: string) => ({ id: threadIdSchema.parse(threadId) });
 
 const order = <T extends string>(values: readonly T[]) => {
@@ -444,12 +448,17 @@ export const accessThreadSnapshotSchema = z.object({ data: threadViewResultSchem
 /** A `log` stream's one op: each append's payload is one `ThreadEntry`. */
 export const accessThreadAppendType = 'append';
 
-/** Why Kingdom closed a member's stream (sent on `closed` and `openRejected`). */
+/**
+ * Why Kingdom closed a holder's stream (sent on `closed` and `openRejected`). `revoked`, `revised`,
+ * `expired` and `enrollmentRevoked` are about the holder's own Signet and nothing else. Whatever
+ * changed elsewhere (a Signet it was issued from, a budget) closes as `unauthorized`, with no
+ * further reason, and only when nothing admits the stream any more.
+ */
 export const accessThreadCloseReasonSchema = z.enum([
-  /** The member closed it. */
+  /** The holder closed it. */
   'left',
   'revoked',
-  /** Any revision closes the stream; the member reopens under the new revision. */
+  /** Any revision of the holder's Signet closes the stream; the holder reopens under the new one. */
   'revised',
   'enrollmentRevoked',
   'expired',

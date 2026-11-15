@@ -2,22 +2,46 @@ import { z } from 'zod';
 import type { SignetClient } from './client';
 import { kingdomUrl } from './client';
 import { signetPresentedFrameSchema } from './contracts';
-import { type ThreadStreamHandlers, ThreadStreams } from './threadStreams';
+import type { EventStreamHandlers } from './eventStreams';
+import { HolderStreams } from './holderStreams';
+import type { ThreadStreamHandlers } from './threadStreams';
 
-export type SignetSocketOptions = ThreadStreamHandlers & {
-  /** The Signet this socket presents; it renews the access token the presentation rides on. */
-  client: SignetClient;
-  /** Kingdom accepted (or renewed) the presentation; it holds until `expiresAt`. */
-  onPresented?: (presentation: z.infer<typeof signetPresentedFrameSchema>) => void;
-  pingMs?: number;
-  retryBaseMs?: number;
-  retryMaxMs?: number;
-  /** A Kingdom that never answers the presentation is treated as down. */
-  authTimeoutMs?: number;
-  /** Renew this long before the access token expires (it lives five minutes). */
-  renewBeforeMs?: number;
-  WebSocket?: typeof WebSocket;
-};
+export type SignetSocketOptions = Omit<ThreadStreamHandlers, 'onSnapshot' | 'onEntry'> &
+  /** Thread views; a holder that only listens to event channels leaves them out. */
+  Partial<Pick<ThreadStreamHandlers, 'onSnapshot' | 'onEntry'>> & {
+    /** The Signet this socket presents; it renews the access token the presentation rides on. */
+    client: SignetClient;
+    /**
+     * Hold this Signet's event channels (`eventChannels` on `describe`). Errors go to its own
+     * `onError`, or to this socket's when it has none.
+     */
+    eventStreams?: EventStreamHandlers;
+    /** Kingdom accepted (or renewed) the presentation; it holds until `expiresAt`. */
+    onPresented?: (presentation: z.infer<typeof signetPresentedFrameSchema>) => void;
+    /** The connection was lost; the socket reconnects, presents again and reopens what it held. */
+    onDisconnected?: () => void;
+    pingMs?: number;
+    retryBaseMs?: number;
+    retryMaxMs?: number;
+    /** A Kingdom that never answers the presentation is treated as down. */
+    authTimeoutMs?: number;
+    /** Stream opens sent per window, for each kind of stream (`DataStreamOptions`). */
+    openBurst?: number;
+    openWindowMs?: number;
+    /** The most frames that may wait on the handlers, for each kind of stream (`DataStreamOptions`). */
+    maxQueuedFrames?: number;
+    /** Renew this long before the access token expires (it lives five minutes). */
+    renewBeforeMs?: number;
+    WebSocket?: typeof WebSocket;
+  };
+
+/** Kingdom answered a presentation `signetRejected`: reported through `onError`, then retried. */
+export class SignetPresentationRefused extends Error {
+  constructor() {
+    super('Kingdom refused this Signet presentation');
+    this.name = 'SignetPresentationRefused';
+  }
+}
 
 const frameSchema = z.object({ type: z.string() }).loose();
 /** WebSocket.OPEN, read from the spec rather than whichever WebSocket class was passed. */
@@ -30,7 +54,8 @@ const OPEN = 1;
  * the presentation before the token expires (`renewPresentation`), and holds the member's
  * `accessThread` streams: entering a thread is opening its stream, and Kingdom closes it on leave,
  * revocation, any revision, expiry or the host going offline. Posts are not sent here; each is its
- * own `access/execute thread.prompt` through the `SignetClient`.
+ * own `access/execute thread.prompt` through the `SignetClient`. It holds the Signet's event
+ * channels the same way (`accessEvents` streams, `eventStreams`), live only.
  */
 export class SignetSocket {
   private socket: WebSocket | null = null;
@@ -41,14 +66,29 @@ export class SignetSocket {
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private authTimer: ReturnType<typeof setTimeout> | null = null;
   private renewTimer: ReturnType<typeof setTimeout> | null = null;
-  private readonly streams: ThreadStreams;
+  private readonly streams: HolderStreams;
 
   constructor(private readonly options: SignetSocketOptions) {
-    this.streams = new ThreadStreams((frame) => this.send(frame), options, {
-      retryBaseMs: options.retryBaseMs,
-      // Kingdom closed streams because the presentation lapsed: re-present on a new connection.
-      onPresentationExpired: () => this.socket?.close(),
-    });
+    this.streams = new HolderStreams(
+      (frame) => this.send(frame),
+      {
+        threadStreams: {
+          ...options,
+          onSnapshot: (stream, view) => options.onSnapshot?.(stream, view),
+          onEntry: (stream, entry) => options.onEntry?.(stream, entry),
+        },
+        eventStreams: options.eventStreams,
+        onError: options.onError,
+      },
+      {
+        retryBaseMs: options.retryBaseMs,
+        openBurst: options.openBurst,
+        openWindowMs: options.openWindowMs,
+        maxQueuedFrames: options.maxQueuedFrames,
+        // Kingdom closed streams because the presentation lapsed: re-present on a new connection.
+        onPresentationExpired: () => this.socket?.close(),
+      },
+    );
   }
 
   get connected() {
@@ -63,17 +103,37 @@ export class SignetSocket {
 
   /** Enter a thread this Signet's lens selects: a snapshot of the member's view, then appends. */
   open(threadId: string) {
-    this.streams.open({ signetId: this.options.client.signetId, threadId });
+    if (!this.options.onSnapshot || !this.options.onEntry)
+      throw Error('Pass onSnapshot and onEntry to hold thread views');
+    this.streams.openThread({ signetId: this.options.client.signetId, threadId });
   }
 
   /** Leave a thread: Kingdom closes the stream. */
   leave(threadId: string) {
-    this.streams.leave({ signetId: this.options.client.signetId, threadId });
+    this.streams.leaveThread({ signetId: this.options.client.signetId, threadId });
   }
 
   /** The threads this socket holds open, or is opening. */
   threads() {
-    return this.streams.held().map((stream) => stream.threadId);
+    return this.streams.heldThreads().map((stream) => stream.threadId);
+  }
+
+  /**
+   * Listen on one of this Signet's event channels, by its resource (needs `eventStreams`): events
+   * from the moment Kingdom opens it, none from before.
+   */
+  openEventChannel(resourceId: string) {
+    this.streams.openEventChannel({ signetId: this.options.client.signetId, resourceId });
+  }
+
+  /** Stop listening on a channel: Kingdom closes the stream. */
+  leaveEventChannel(resourceId: string) {
+    this.streams.leaveEventChannel({ signetId: this.options.client.signetId, resourceId });
+  }
+
+  /** The resources whose event channels this socket holds open, or is opening. */
+  heldEventChannels() {
+    return this.streams.heldEventChannels().map((channel) => channel.resourceId);
   }
 
   close() {
@@ -138,7 +198,7 @@ export class SignetSocket {
           return;
         }
         case 'signetRejected':
-          this.options.onError?.(Error('Kingdom refused this Signet presentation'));
+          this.options.onError?.(new SignetPresentationRefused());
           socket.close();
           return;
         case 'reconnect':
@@ -197,6 +257,7 @@ export class SignetSocket {
     this.clearTimers();
     this.streams.down();
     if (this.stopped) return;
+    this.options.onDisconnected?.();
     const base = this.options.retryBaseMs ?? 1_000;
     const delay = Math.min(base * 2 ** this.attempts++, this.options.retryMaxMs ?? 30_000);
     this.retryTimer = setTimeout(() => this.connect(), delay);

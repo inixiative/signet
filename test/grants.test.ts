@@ -1,29 +1,44 @@
-import { describe, expect, test } from 'bun:test';
-import {
-  createLens,
-  type Lens,
-  type LensNarrowing,
-  projectLens,
-  type StoredLens,
-} from '@inixiative/json-rules';
+import { describe, expect, it, test } from 'bun:test';
+import type { Condition, ModelNarrowing, StoredLens } from '@inixiative/json-rules';
 import {
   archiveGrantRefusal,
   archiveLensRefusal,
+  archiveOperationSchema,
   baseLensId,
-  type GrantLens,
+  composeGrantLens,
+  conditionAtOperation,
+  type DroppedEntry,
+  everyBranch,
+  GrantLensError,
+  operationsLens as generateOperationsLens,
+  githubOperationSchema,
   grantResourceSchema,
   grantTermsFitKind,
   grantTermsSchema,
+  grantWhereLimit,
+  grantWhereSchema,
   type LensLayer,
   meetThreadsTerms,
+  narrowingAtOperation,
   narrowsThreadsTerms,
+  operationRecord,
+  operationRows,
+  operationsMapName,
+  ownerIdFields,
+  parseInstallationSignets,
+  projectionFilters,
+  projectionVisit,
   registeredResourceSchema,
   repositoryCallRow,
   repositoryGrantRefusal,
   repositoryLensRefusal,
   requestedResourceSchema,
+  rowModelLayer,
+  rowsThroughLens,
   type StoredLensLayer,
   signetGrantSchema,
+  signetOwnerModelSchema,
+  signetProposalSchema,
   signetResourceSchema,
   storedLensLayerSchema,
   threadRow,
@@ -31,22 +46,25 @@ import {
   threadsTerms,
   threadsTermsSchema,
 } from '../src';
+import { grantLensOver, operationsLens } from './operationsLens';
 
 const uuid = () => Bun.randomUUIDv7();
 const integrationResourceId = uuid();
 const projectId = uuid();
 
-/** The request layer over a GitHub repository's base lens: a pinned commit. */
+const commitPin = { where: { field: 'sha', operator: 'equals' as const, value: 'a'.repeat(40) } };
+/** The request layer over a GitHub repository's operations lens: a pinned commit. */
 const pinned: StoredLensLayer = {
   id: 'request',
   parents: ['github:repository'],
-  root: { where: { field: 'sha', operator: 'equals', value: 'a'.repeat(40) } },
+  root: { relations: { commits: { relations: { read: {} } } } },
+  mapDefaults: { operations: { models: { RepositoryCall: commitPin } } },
 };
 /** The approver's layer under it: it hides a field, it filters nothing. */
 const trimmed: StoredLensLayer = {
   id: 'approval',
   parents: ['github:repository', 'request'],
-  root: { omits: ['message'] },
+  mapDefaults: { operations: { models: { RepositoryCall: { omits: ['message'] } } } },
 };
 
 describe('the grant resource contract', () => {
@@ -161,9 +179,16 @@ describe('what a party asks for', () => {
       resourceModel: 'IntegrationResource',
       integrationResourceId,
       operations: { picks: ['commits.*'] },
-      lens: { root: { where: { field: 'sha', operator: 'equals', value: 'a'.repeat(40) } } },
+      where: { field: 'objectId', operator: 'equals', value: 'a'.repeat(40) },
+      lens: {
+        root: pinned.root,
+        mapDefaults: { operations: { models: { RepositoryCall: commitPin } } },
+      },
     });
-    expect(asked).toMatchObject({ operations: { picks: ['commits.*'] } });
+    expect(asked).toMatchObject({
+      operations: { picks: ['commits.*'] },
+      where: { field: 'objectId' },
+    });
     expect(
       signetResourceSchema.parse({
         resourceModel: 'IntegrationResource',
@@ -348,38 +373,30 @@ describe('threads terms', () => {
   });
 });
 
-/** A real base lens per kind, and a grant's `GrantLens` composed over it as Kingdom would. */
+/** A real operations lens per kind, and a grant's `GrantLens` composed over it as Kingdom would. */
 const document = { kind: 'scalar', type: 'String' } as const;
-const archiveBase = createLens({
-  maps: {
-    archive: {
-      models: { Document: { fields: { id: document, title: document, content: document } } },
-    },
-  },
-  mapName: 'archive',
-  model: 'Document',
+const archiveOperations = archiveOperationSchema.options;
+const archiveBase = operationsLens(archiveOperations, 'ArchiveDocument', {
+  id: document,
+  projectId: document,
+  title: document,
+  content: document,
 });
-const repositoryBase = createLens({
-  maps: { github: { models: { Commit: { fields: { sha: document, message: document } } } } },
-  mapName: 'github',
-  model: 'Commit',
-});
-const grantLens = (base: Lens, layers: LensLayer[]): GrantLens => ({
-  layers,
-  projection: projectLens(
-    layers.reduce<Lens | LensNarrowing>((parent, layer) => ({ parent, ...layer }), base),
-  ),
+const githubOperations = githubOperationSchema.options;
+const repositoryBase = operationsLens(githubOperations, 'RepositoryCall', {
+  sha: document,
+  message: document,
 });
 
-describe('refusals that stay about operations', () => {
-  const archive = (...layers: LensLayer[]) => grantLens(archiveBase, layers);
-  const onlyChosen = {
-    root: { where: { field: 'id', operator: 'in', value: ['x'] } },
-  } as LensLayer;
+describe("refusals that stay about operations, read at each operation's branch", () => {
+  const archive = (...layers: LensLayer[]) => grantLensOver(archiveBase, layers);
+  const documents = (narrowing: ModelNarrowing) =>
+    rowModelLayer(archiveOperations, 'ArchiveDocument', narrowing);
+  const onlyChosen = documents({ where: { field: 'id', operator: 'in', value: ['x'] } });
 
   test('writing or deleting Archive sessions takes no lens', () => {
     expect(archiveLensRefusal('sessions.write', archive())).toBeNull();
-    expect(archiveLensRefusal('sessions.write', archive({ root: { omits: ['title'] } }))).toBe(
+    expect(archiveLensRefusal('sessions.write', archive(documents({ omits: ['title'] })))).toBe(
       'Writing or deleting sessions takes no lens',
     );
   });
@@ -387,28 +404,181 @@ describe('refusals that stay about operations', () => {
   test('Archive search needs content over every document', () => {
     expect(archiveLensRefusal('documents.search', archive())).toBeNull();
     expect(
-      archiveLensRefusal('documents.search', archive({ root: { picks: ['content', 'title'] } })),
+      archiveLensRefusal('documents.search', archive(documents({ picks: ['content', 'title'] }))),
     ).toBeNull();
     expect(archiveLensRefusal('documents.search', archive(onlyChosen))).not.toBeNull();
     expect(
-      archiveLensRefusal('documents.search', archive({ root: { picks: ['title'] } })),
+      archiveLensRefusal('documents.search', archive(documents({ picks: ['title'] }))),
     ).not.toBeNull();
     expect(
-      archiveLensRefusal('documents.search', archive({ root: { omits: ['content'] } })),
-    ).not.toBeNull();
-    expect(
-      archiveLensRefusal(
-        'documents.search',
-        archive({
-          mapDefaults: {
-            archive: {
-              models: { Document: { where: { field: 'title', operator: 'equals', value: 'x' } } },
-            },
-          },
-        } as LensLayer),
-      ),
+      archiveLensRefusal('documents.search', archive(documents({ omits: ['content'] }))),
     ).not.toBeNull();
     expect(archiveLensRefusal('documents.read', archive(onlyChosen))).toBeNull();
+    expect(projectionFilters(archive(onlyChosen).projection, 'documents.search')).toBe(true);
+    expect(projectionFilters(archive(documents({})).projection, 'documents.search')).toBe(false);
+  });
+
+  test('a narrowing of one branch leaves the others as they are; a branch left off is held back', () => {
+    const readChosen = {
+      root: {
+        ...everyBranch(archiveOperations),
+        relations: {
+          ...everyBranch(archiveOperations).relations,
+          documents: {
+            relations: {
+              read: { where: { field: 'id', operator: 'in', value: ['x'] } },
+              search: {},
+            },
+          },
+        },
+      },
+    } as LensLayer;
+    expect(archiveLensRefusal('documents.search', archive(readChosen))).toBeNull();
+    const readOnly = { root: narrowingAtOperation('documents.read', {}) } as LensLayer;
+    expect(archiveLensRefusal('documents.search', archive(readOnly))).not.toBeNull();
+    expect(projectionVisit(archive(readOnly).projection, 'documents.search')).toBeNull();
+    expect(projectionVisit(archive(readOnly).projection, 'documents.read')?.model).toBe(
+      'ArchiveDocument',
+    );
+  });
+
+  const projects = operationsLens(['documents.read', 'documents.search'], 'ArchiveDocument', {
+    id: document,
+    projectId: document,
+  });
+  const inP1 = { field: 'projectId', operator: 'equals', value: 'p1' } as Condition;
+  const rows = [
+    { id: 'a', projectId: 'p1' },
+    { id: 'b', projectId: 'p2' },
+  ];
+  const read = (layer: LensLayer, operation: string) => {
+    return rowsThroughLens({ parent: projects, ...layer }, operation, rows);
+  };
+
+  test("a where at an operation's own branch filters its rows and leaves other branches alone", () => {
+    const atLeaf = {
+      root: everyBranch(['documents.read', 'documents.search'], (operation) =>
+        operation === 'documents.read' ? { where: inP1 } : {},
+      ),
+    } as LensLayer;
+    expect(read(atLeaf, 'documents.read')).toEqual([{ id: 'a', projectId: 'p1' }]);
+    expect(read(atLeaf, 'documents.search')).toEqual(rows);
+    const lens = grantLensOver(projects, [atLeaf]);
+    expect(archiveLensRefusal('documents.read', lens)).toBeNull();
+  });
+
+  test('a where above a branch would show every row once one matched, so it is refused', () => {
+    const aboveBranch = {
+      root: {
+        ...everyBranch(['documents.read', 'documents.search']),
+        where: conditionAtOperation('documents.read', inP1),
+      },
+    } as LensLayer;
+    // The leak the refusal is for: p2's document comes back beside p1's.
+    expect(read(aboveBranch, 'documents.read')).toEqual(rows);
+    const refusal = /never above it/;
+    expect(() => grantLensOver(projects, [aboveBranch])).toThrow(GrantLensError);
+    expect(() => grantLensOver(projects, [aboveBranch])).toThrow(refusal);
+    const atDocuments = everyBranch(['documents.read', 'documents.search']);
+    (atDocuments.relations?.documents as ModelNarrowing).where = conditionAtOperation(
+      'search',
+      inP1,
+    );
+    expect(() => grantLensOver(projects, [{ root: atDocuments } as LensLayer])).toThrow(refusal);
+    const pinned = {
+      root: {
+        ...everyBranch(githubOperations),
+        where: conditionAtOperation('commits.read', {
+          field: 'sha',
+          operator: 'equals',
+          value: 'a'.repeat(40),
+        }),
+      },
+    } as LensLayer;
+    expect(() => repository(pinned)).toThrow(refusal);
+  });
+
+  test('layers compose only as one chain under the base, and none reads every branch', () => {
+    const layer = { root: everyBranch(['documents.read']) };
+    const first = { ...layer, id: 'request', parents: ['base'] };
+    const second = { ...layer, id: 'approval', parents: ['base', 'request'] };
+    expect(composeGrantLens('base', projects, [first, second])).toHaveProperty('parent');
+    expect(
+      rowsThroughLens(composeGrantLens('base', projects, []), 'documents.search', rows),
+    ).toEqual(rows);
+    expect(
+      rowsThroughLens(composeGrantLens('base', projects, [first]), 'documents.search', rows),
+    ).toEqual([]);
+    for (const stored of [
+      [first, { ...second, parents: ['base'] }],
+      [{ ...first, parents: ['other'] }],
+      [second],
+      [{ id: 'request' }],
+      [{ ...first, root: { relations: { nowhere: {} } } }],
+    ])
+      expect(() => composeGrantLens('base', projects, stored)).toThrow(GrantLensError);
+  });
+
+  test('every branch is turned on once, each leaf with its own narrowing', () => {
+    expect(everyBranch(['documents.read', 'documents.search', 'sessions.write'])).toEqual({
+      relations: {
+        documents: { relations: { read: {}, search: {} } },
+        sessions: { relations: { write: {} } },
+      },
+    });
+    expect(everyBranch(['thread.read'], () => ({ picks: ['id'] }))).toEqual({
+      relations: { thread: { relations: { read: { picks: ['id'] } } } },
+    });
+  });
+
+  test('an operations lens has a branch per operation; one that reads no rows has no leaf to turn on', () => {
+    const operations = ['documents.read', 'sessions.delete'];
+    const rowModel = (operation: string) =>
+      operation === 'documents.read' ? 'ArchiveDocument' : undefined;
+    const base = generateOperationsLens({
+      model: 'ArchiveLibraryOperation',
+      operations,
+      rowModel,
+      rowModels: { ArchiveDocument: { id: document } },
+    });
+    expect(base.model).toBe('ArchiveLibraryOperation');
+    expect(base.maps[operationsMapName]?.models).toEqual({
+      ArchiveLibraryOperation: {
+        fields: {
+          documents: expect.objectContaining({ type: 'ArchiveLibraryOperation_documents' }),
+          sessions: expect.objectContaining({ type: 'ArchiveLibraryOperation_sessions' }),
+        },
+      },
+      ArchiveLibraryOperation_documents: {
+        fields: { read: expect.objectContaining({ type: 'ArchiveDocument', isList: true }) },
+      },
+      ArchiveLibraryOperation_sessions: {
+        fields: { delete: { kind: 'scalar', type: 'Boolean', isRequired: false } },
+      },
+      ArchiveDocument: { fields: { id: document } },
+    });
+    const generate = (catalog: string[], row = 'ArchiveDocument') =>
+      generateOperationsLens({
+        model: 'Ops',
+        operations: catalog,
+        rowModel: () => row,
+        rowModels: {},
+      });
+    // A catalog the tree can't hold apart is refused, never merged into operations nobody declared.
+    expect(() => generate(['x_y.read', 'x.y.write'])).toThrow();
+    expect(() => generate(['documents', 'documents.read'])).toThrow();
+    expect(() => generate(['documents.read'], 'Ops_documents')).toThrow();
+    const root = everyBranch(operations, (operation) => (rowModel(operation) ? {} : undefined));
+    expect(root).toEqual({ relations: { documents: { relations: { read: {} } }, sessions: {} } });
+    expect(rowsThroughLens({ parent: base, root }, 'documents.read', [{ id: 'a' }])).toEqual([
+      { id: 'a' },
+    ]);
+    // A row with no layers reads exactly that root: every branch the base has.
+    expect(composeGrantLens('base', base, undefined)).toEqual({ parent: base, root });
+    expect(rowModelLayer(['documents.read'], 'ArchiveDocument', { picks: ['id'] })).toEqual({
+      root: { relations: { documents: { relations: { read: {} } } } },
+      mapDefaults: { operations: { models: { ArchiveDocument: { picks: ['id'] } } } },
+    });
   });
 
   test('a grant row is refused over every operation it reaches, full meaning all of them', () => {
@@ -421,14 +591,18 @@ describe('refusals that stay about operations', () => {
     expect(archiveGrantRefusal({ full: true }, archive())).toBeNull();
   });
 
-  const repository = (...layers: LensLayer[]) => grantLens(repositoryBase, layers);
-  const pinnedLayer = { root: pinned.root } as LensLayer;
+  const repository = (...layers: LensLayer[]) => grantLensOver(repositoryBase, layers);
+  const commits = (narrowing: ModelNarrowing) =>
+    rowModelLayer(githubOperations, 'RepositoryCall', narrowing);
+  const pinnedLayer = commits({
+    where: { field: 'sha', operator: 'equals', value: 'a'.repeat(40) },
+  });
 
   test('a repository grant pinned to commits reads only commits', () => {
     expect(repositoryLensRefusal('commits.read', repository(pinnedLayer))).toBeNull();
     expect(repositoryLensRefusal('trees.read', repository())).toBeNull();
     expect(
-      repositoryLensRefusal('trees.read', repository({ root: { omits: ['message'] } })),
+      repositoryLensRefusal('trees.read', repository(commits({ omits: ['message'] }))),
     ).toBeNull();
     expect(repositoryLensRefusal('blobs.read', repository(pinnedLayer))).toBe(
       'A grant pinned to commits reads only those commits; trees and blobs need an unpinned grant',
@@ -444,8 +618,228 @@ describe('refusals that stay about operations', () => {
   });
 });
 
+test("rows sit at their operation's branch of the record a lens reads", () => {
+  const rows = [threadRow('thread_1')];
+  expect(operationRecord('thread.read', rows)).toEqual({ thread: { read: rows } });
+  expect(operationRows(operationRecord('thread.read', rows), 'thread.read')).toEqual(rows);
+  expect(operationRows({ thread: {} }, 'thread.read')).toEqual([]);
+  expect(
+    conditionAtOperation('documents.read', { field: 'id', operator: 'equals', value: 'x' }),
+  ).toEqual({
+    field: 'documents.read',
+    arrayOperator: 'any',
+    condition: { field: 'id', operator: 'equals', value: 'x' },
+  });
+});
+
 test('the base lens id and the rows a where is evaluated over', () => {
   expect(baseLensId('github', 'repository')).toBe('github:repository');
   expect(threadRow('thread_1')).toEqual({ id: 'thread_1' });
   expect(() => threadRow('a:b')).toThrow();
+});
+
+describe('a resource ask carries an incoming where, and a request names its owner', () => {
+  it('a where rides beside the lens on a resource ask', () => {
+    const ask = signetResourceSchema.parse({
+      resourceModel: 'IntegrationResource',
+      integrationResourceId: Bun.randomUUIDv7(),
+      operations: { picks: ['messages.read'] },
+      where: { field: 'query', operator: 'startsWith', value: 'release' },
+    });
+    expect(ask.resourceModel === 'IntegrationResource' && ask.where).toEqual({
+      field: 'query',
+      operator: 'startsWith',
+      value: 'release',
+    });
+  });
+
+  it('a request may name the owner it asks', () => {
+    const owner = {
+      ownerModel: 'User' as const,
+      userId: Bun.randomUUIDv7(),
+      organizationId: null,
+      spaceId: null,
+      integrationId: null,
+    };
+    const proposal = signetProposalSchema.parse({
+      name: 'Release notes',
+      lifecycle: 'ongoing',
+      expiresAt: null,
+      maxRequests: null,
+      owner,
+      resources: [
+        {
+          resourceModel: 'IntegrationResource',
+          integrationResourceId: Bun.randomUUIDv7(),
+          operations: { full: true },
+        },
+      ],
+    });
+    expect(proposal.owner).toEqual(owner);
+  });
+});
+
+describe('a where is a bounded, positive json-rules condition', () => {
+  const asks = (where: unknown) =>
+    signetResourceSchema.safeParse({
+      resourceModel: 'IntegrationResource',
+      integrationResourceId: Bun.randomUUIDv7(),
+      operations: { picks: ['messages.read'] },
+      where,
+    }).success;
+
+  it('refuses an empty object, junk, a negated rule and an oversized one', () => {
+    expect(grantWhereSchema.safeParse({}).success).toBe(false);
+    expect(grantWhereSchema.safeParse({ any: 'nope', field: 3 }).success).toBe(false);
+    expect(
+      grantWhereSchema.safeParse({ field: 'threadId', operator: 'notEquals', value: 'x' }).success,
+    ).toBe(false);
+    const huge = Object.fromEntries(
+      Array.from({ length: 10_000 }, (_, index) => [`k${index}`, 'x'.repeat(100)]),
+    );
+    expect(grantWhereSchema.safeParse(huge).success).toBe(false);
+    const longIn = { field: 'threadId', operator: 'in', value: ['x'.repeat(grantWhereLimit)] };
+    expect(grantWhereSchema.safeParse(longIn).success).toBe(false);
+    expect(asks({})).toBe(false);
+  });
+
+  it('refuses an empty all or any at any depth: one admits everything, the other nothing', () => {
+    const rule = { field: 'threadId', operator: 'equals', value: 'main' };
+    expect(asks({ all: [] })).toBe(false);
+    expect(asks({ any: [] })).toBe(false);
+    expect(asks({ all: [rule, { any: [] }] })).toBe(false);
+    expect(asks({ any: [{ all: [rule, { all: [] }] }] })).toBe(false);
+    expect(asks({ all: [true] })).toBe(false);
+    expect(asks({ any: [true, rule] })).toBe(false);
+    expect(asks({ all: [rule, { any: [false] }] })).toBe(false);
+    expect(asks({ all: [rule, { any: [rule] }] })).toBe(true);
+  });
+
+  it('accepts a positive condition, nested ones included', () => {
+    expect(asks({ field: 'threadId', operator: 'in', value: ['main'] })).toBe(true);
+    expect(
+      grantWhereSchema.safeParse({
+        all: [
+          { field: 'threadId', operator: 'equals', value: 'main' },
+          { any: [{ field: 'query', operator: 'startsWith', value: 'release' }] },
+        ],
+      }).success,
+    ).toBe(true);
+  });
+});
+
+describe("a request's owner names exactly the ids its model needs", () => {
+  const id = () => Bun.randomUUIDv7();
+  const propose = (owner: unknown) =>
+    signetProposalSchema.safeParse({
+      name: 'n',
+      lifecycle: 'ongoing',
+      expiresAt: null,
+      maxRequests: null,
+      owner,
+      resources: [
+        {
+          resourceModel: 'IntegrationResource',
+          integrationResourceId: id(),
+          operations: { full: true },
+        },
+      ],
+    }).success;
+  const owner = (
+    ownerModel: string,
+    ids: Partial<Record<'userId' | 'organizationId' | 'spaceId' | 'integrationId', string>>,
+  ) => ({
+    ownerModel,
+    userId: null,
+    organizationId: null,
+    spaceId: null,
+    integrationId: null,
+    ...ids,
+  });
+
+  it('refuses an owner missing an id it needs, or carrying a key it does not know', () => {
+    expect(propose(owner('User', {}))).toBe(false);
+    expect(propose({ ...owner('User', { userId: id() }), extra: 1 })).toBe(false);
+    expect(propose(owner('Organization', {}))).toBe(false);
+    expect(propose(owner('Space', { spaceId: id() }))).toBe(false);
+    expect(propose(owner('OrganizationUser', { organizationId: id() }))).toBe(false);
+    expect(propose(owner('SpaceUser', { organizationId: id(), spaceId: id() }))).toBe(false);
+    expect(propose(owner('User', { userId: id(), organizationId: id() }))).toBe(false);
+    expect(propose(owner('Integration', {}))).toBe(false);
+    expect(propose(owner('Integration', { integrationId: id(), userId: id() }))).toBe(false);
+    expect(propose(owner('User', { userId: id(), integrationId: id() }))).toBe(false);
+    expect(propose({ ownerModel: 'User', userId: id(), organizationId: null, spaceId: null })).toBe(
+      false,
+    );
+  });
+
+  it('accepts each owner model with its ids', () => {
+    expect(propose(owner('User', { userId: id() }))).toBe(true);
+    expect(propose(owner('Organization', { organizationId: id() }))).toBe(true);
+    expect(propose(owner('Space', { organizationId: id(), spaceId: id() }))).toBe(true);
+    expect(propose(owner('OrganizationUser', { organizationId: id(), userId: id() }))).toBe(true);
+    expect(propose(owner('SpaceUser', { organizationId: id(), spaceId: id(), userId: id() }))).toBe(
+      true,
+    );
+    expect(propose(owner('Integration', { integrationId: id() }))).toBe(true);
+    expect(Object.keys(ownerIdFields).sort()).toEqual([...signetOwnerModelSchema.options].sort());
+  });
+});
+
+describe('a grant view shows its incoming where', () => {
+  it('a holder reads the where its grant admits calls by', () => {
+    const where = { field: 'threadId', operator: 'equals', value: 'thread_a' };
+    const view = signetGrantSchema.parse({
+      resourceModel: 'IntegrationResource',
+      integrationResourceId: Bun.randomUUIDv7(),
+      integrationId: Bun.randomUUIDv7(),
+      kind: 'threads',
+      full: true,
+      where,
+    });
+    expect(view.resourceModel === 'IntegrationResource' && view.where).toEqual(where);
+  });
+
+  it("a stored where past an ask's cap is read whole: the holder keeps its own row", () => {
+    const where = {
+      all: Array.from({ length: 400 }, (_, index) => ({
+        field: `f${index}`,
+        operator: 'equals',
+        value: 'x'.repeat(30),
+      })),
+    };
+    expect(JSON.stringify(where).length).toBeGreaterThan(grantWhereLimit);
+    expect(grantWhereSchema.safeParse(where).success).toBe(false);
+    const row = {
+      resourceModel: 'IntegrationResource' as const,
+      integrationResourceId: Bun.randomUUIDv7(),
+      integrationId: Bun.randomUUIDv7(),
+      kind: 'threads',
+      full: true,
+      where,
+    };
+    const dropped: DroppedEntry[] = [];
+    const { signets } = parseInstallationSignets(
+      {
+        signets: [
+          {
+            signetId: Bun.randomUUIDv7(),
+            name: 'held',
+            enrollmentId: null,
+            owner: {
+              ownerModel: 'User',
+              userId: Bun.randomUUIDv7(),
+              organizationId: null,
+              spaceId: null,
+            },
+            resources: [row],
+          },
+        ],
+        hostedSignets: [],
+      },
+      dropped,
+    );
+    expect(dropped).toEqual([]);
+    expect(signets[0]?.resources).toEqual([row]);
+  });
 });

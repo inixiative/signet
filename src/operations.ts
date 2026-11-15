@@ -49,7 +49,13 @@ export class OperationPickError extends Error {
   }
 }
 
-const prefixOf = (pick: string) => (pick.endsWith('.*') ? pick.slice(0, -1) : null);
+/**
+ * Whether a pick takes a leaf: a pick ending `.*` takes every leaf under its prefix, and any other
+ * pick takes the leaf of exactly that key and nothing under it. One spelling per meaning: a branch
+ * is always written with `.*`.
+ */
+export const pickCovers = (pick: string, leaf: string) =>
+  pick.endsWith('.*') ? leaf.startsWith(pick.slice(0, -1)) : leaf === pick;
 
 /**
  * The leaves `picks` reach among `leaves` (a resource kind's catalog keys), in catalog order. A
@@ -62,10 +68,7 @@ export const resolveOperationPicks = (
   if ('full' in pick) return { full: true };
   const chosen = new Set<string>();
   for (const key of pick.picks) {
-    const prefix = prefixOf(key);
-    const reached = prefix
-      ? leaves.filter((leaf) => leaf.startsWith(prefix))
-      : leaves.filter((leaf) => leaf === key);
+    const reached = leaves.filter((leaf) => pickCovers(key, leaf));
     if (reached.length === 0) throw new OperationPickError(key);
     for (const leaf of reached) chosen.add(leaf);
   }

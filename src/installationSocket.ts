@@ -5,7 +5,9 @@ import {
   installationSocketAction,
   parseInstallationSnapshot,
 } from './contracts';
-import { type ThreadStreamHandlers, type ThreadStreamKey, ThreadStreams } from './threadStreams';
+import type { EventStreamHandlers, EventStreamKey } from './eventStreams';
+import { HolderStreams } from './holderStreams';
+import type { ThreadStreamHandlers, ThreadStreamKey } from './threadStreams';
 import {
   type ThreadAppendFrame,
   type ThreadEntry,
@@ -71,6 +73,8 @@ export type InstallationSocketOptions = {
   onSnapshot: (snapshot: InstallationSnapshot) => void | Promise<void>;
   /** Kingdom revoked this installation; the socket has stopped for good. */
   onRevoked?: () => void;
+  /** The connection was lost; the socket reconnects and reopens what it held. */
+  onDisconnected?: () => void;
   onError?: (error: unknown) => void;
   /** Where Kingdom can reach this installation's viewer (Foundry's tunnel); re-advertised on every connect. */
   viewerUrl?: string | null;
@@ -80,9 +84,16 @@ export type InstallationSocketOptions = {
   threads?: ThreadHost;
   /** Hold live views of threads on other Foundries through Signets this installation holds. */
   threadStreams?: ThreadStreamHandlers;
+  /** Hold event channels of the Signets this installation holds (their `eventChannels`). */
+  eventStreams?: EventStreamHandlers;
   pingMs?: number;
   pollMs?: number;
   retryBaseMs?: number;
+  /** Stream opens sent per window, for each kind of stream (`DataStreamOptions`). */
+  openBurst?: number;
+  openWindowMs?: number;
+  /** The most frames that may wait on the handlers, for each kind of stream (`DataStreamOptions`). */
+  maxQueuedFrames?: number;
   retryMaxMs?: number;
   /** A Kingdom that never answers the proof (one without Installation sockets) is treated as down. */
   authTimeoutMs?: number;
@@ -111,6 +122,7 @@ const OPEN = 1;
  * snapshot of its inquiries and Signets on connect and again whenever one changes. While the
  * socket is down it polls the same reads, so nothing waits on the socket coming back. A Foundry
  * also answers its members' calls over it (`threads`) and holds its own memberships (`threadStreams`).
+ * The event channels of the Signets it holds are held here too (`eventStreams`), live only.
  */
 export class InstallationSocket {
   private socket: WebSocket | null = null;
@@ -126,15 +138,18 @@ export class InstallationSocket {
   private pollGeneration = 0;
   private viewerUrl: string | null;
   private readonly subscriptions = new Map<string, HeldSubscription>();
-  private readonly streams: ThreadStreams | null;
+  private readonly streams: HolderStreams;
 
   constructor(private readonly options: InstallationSocketOptions) {
     this.viewerUrl = options.viewerUrl ?? null;
-    this.streams = options.threadStreams
-      ? new ThreadStreams((frame) => this.send(frame), options.threadStreams, {
-          retryBaseMs: options.retryBaseMs,
-        })
-      : null;
+    this.streams = new HolderStreams((frame) => this.send(frame), options, {
+      retryBaseMs: options.retryBaseMs,
+      openBurst: options.openBurst,
+      openWindowMs: options.openWindowMs,
+      maxQueuedFrames: options.maxQueuedFrames,
+      // Reconnecting authenticates afresh, and `up()` then reopens everything held.
+      onPresentationExpired: () => this.socket?.close(),
+    });
   }
 
   get connected() {
@@ -165,7 +180,7 @@ export class InstallationSocket {
     this.socket = null;
     this.authenticated = false;
     this.endSubscriptions('disconnected');
-    this.streams?.down();
+    this.streams.down();
   }
 
   /** The members' views this host is pushing now. */
@@ -215,12 +230,28 @@ export class InstallationSocket {
 
   /** Open a live view of a thread through a Signet this installation holds (needs `threadStreams`). */
   openThread(stream: ThreadStreamKey) {
-    if (!this.streams) throw Error('Pass threadStreams to hold thread views');
-    this.streams.open(stream);
+    this.streams.openThread(stream);
   }
 
   leaveThread(stream: ThreadStreamKey) {
-    this.streams?.leave(stream);
+    this.streams.leaveThread(stream);
+  }
+
+  /**
+   * Listen on an event channel of a Signet this installation holds (needs `eventStreams`): events
+   * from the moment Kingdom opens it, none from before.
+   */
+  openEventChannel(channel: EventStreamKey) {
+    this.streams.openEventChannel(channel);
+  }
+
+  leaveEventChannel(channel: EventStreamKey) {
+    this.streams.leaveEventChannel(channel);
+  }
+
+  /** The event channels this socket holds open, or is opening. */
+  heldEventChannels(): EventStreamKey[] {
+    return this.streams.heldEventChannels();
   }
 
   private connect() {
@@ -242,7 +273,7 @@ export class InstallationSocket {
       return;
     }
     if (socket !== this.socket || typeof json !== 'object' || json === null) return;
-    if (this.streams?.receive(json as Record<string, unknown>)) return;
+    if (this.streams.receive(json as Record<string, unknown>)) return;
     const parsed = frameSchema.safeParse(json);
     if (!parsed.success) return;
     const frame = parsed.data;
@@ -274,7 +305,7 @@ export class InstallationSocket {
             Math.min(this.leaseMs() / 3, 5_000),
           );
           if (this.viewerUrl) this.send({ action: 'advertise', viewerUrl: this.viewerUrl });
-          this.streams?.up();
+          this.streams.up();
           return;
         case 'installation.snapshot':
           await this.options.onSnapshot(parseInstallationSnapshot(frame));
@@ -505,8 +536,9 @@ export class InstallationSocket {
     this.leaseTimer = null;
     // Kingdom re-subscribes members after a reconnect; nothing pushes into a dead line meanwhile.
     this.endSubscriptions('disconnected');
-    this.streams?.down();
+    this.streams.down();
     if (this.stopped) return;
+    this.options.onDisconnected?.();
     if (!this.polling) void this.poll();
     const base = this.options.retryBaseMs ?? 1_000;
     const delay = Math.min(base * 2 ** this.attempts++, this.options.retryMaxMs ?? 30_000);

@@ -5,6 +5,7 @@ import {
   accountResourceKind,
   eventOperationKey,
   type IntegrationEvent,
+  integrationEventFieldSchema,
   integrationEventSchema,
   narrowsOperations,
   parseAccessEventsStreamName,
@@ -12,6 +13,7 @@ import {
 } from '../src/contracts';
 
 const event: IntegrationEvent = {
+  id: Bun.randomUUIDv7(),
   eventId: 'delivery-1',
   integrationId: Bun.randomUUIDv7(),
   provider: 'github',
@@ -57,18 +59,45 @@ describe('integration events', () => {
     expect(accountResourceKind).toBe('account');
   });
 
-  test('an append carries eventId and type outside the projected event', () => {
-    const append = accessEventsAppendSchema.parse({
-      eventId: event.eventId,
-      type: event.type,
-      event: { subject: event.subject },
-    });
-    expect(append).toEqual({
-      eventId: 'delivery-1',
-      type: 'issue_comment.created',
-      event: { subject: event.subject },
-    });
+  test('a lens names the row fields, id and payload among them, never eventId or type', () => {
+    expect(integrationEventFieldSchema.options).toEqual([
+      'id',
+      'integrationId',
+      'provider',
+      'at',
+      'actor',
+      'scope',
+      'mentions',
+      'assignees',
+      'requestedReviewers',
+      'subject',
+      'excerpt',
+      'payload',
+    ]);
+    for (const outside of ['eventId', 'type'])
+      expect(integrationEventFieldSchema.safeParse(outside).success).toBe(false);
+  });
+
+  test("an append carries type outside the projected event, and the event always carries Kingdom's id", () => {
+    const projected = { id: event.id, subject: event.subject };
+    const append = accessEventsAppendSchema.parse({ type: event.type, event: projected });
+    expect(append).toEqual({ type: 'issue_comment.created', event: projected });
     expect(() => accessEventsAppendSchema.parse({ type: event.type, event: {} })).toThrow();
+    expect(() =>
+      accessEventsAppendSchema.parse({ type: event.type, event: { id: 'delivery-1' } }),
+    ).toThrow();
+    // The provider's delivery id stays in Kingdom: it is no part of an append.
+    expect(() =>
+      accessEventsAppendSchema.parse({ eventId: 'delivery-1', type: event.type, event: projected }),
+    ).toThrow();
+    expect(
+      accessEventsAppendSchema.parse({ type: event.type, event: projected, truncated: true })
+        .truncated,
+    ).toBe(true);
+    expect(() =>
+      accessEventsAppendSchema.parse({ type: event.type, event: projected, truncated: false }),
+    ).toThrow();
+    expect(() => integrationEventSchema.parse({ ...event, id: 'delivery-1' })).toThrow();
   });
 
   test("a channel's stream name round-trips, path fields sorted", () => {

@@ -1,3 +1,4 @@
+import { validateRule } from '@inixiative/json-rules';
 import { z } from 'zod';
 import { lensLayerSchema, storedLensLayersSchema } from './lens';
 import { operationPickSchema, resolvedOperationsSchema } from './operations';
@@ -35,16 +36,69 @@ export const grantTermsFitKind = (kind: string, terms: GrantTerms | undefined) =
 export const threadsTerms = (terms: z.input<typeof grantTermsSchema> | undefined) =>
   threadsTermsSchema.parse(terms?.threads ?? {});
 
+/** The most characters a `where` may take as JSON, the size of a thread's text. */
+export const grantWhereLimit = 16_000;
+
+/** Whether a condition holds, at any depth, an `all` or `any` that is empty or lists a bare `true` or `false`. */
+const hasVacuousGroup = (condition: unknown): boolean => {
+  if (typeof condition === 'boolean') return true;
+  if (typeof condition !== 'object' || condition === null) return false;
+  const { all, any } = condition as { all?: unknown; any?: unknown };
+  return [all, any].some(
+    (group) => Array.isArray(group) && (group.length === 0 || group.some(hasVacuousGroup)),
+  );
+};
+
+/**
+ * A where as a party asks for it: a positive json-rules condition over the incoming call (its input
+ * fields), what may go in. It only narrows: json-rules `validateRule(where, { positive: true })`
+ * refuses a malformed condition and one that could hold on a missing value, and an `all` or `any`
+ * that is empty or lists a bare `true` or `false` (it admits everything, or nothing) is refused at
+ * any depth. Negated operators are
+ * refused here and allowed in a lens, which decides no permission. The size cap is an ask's only: a
+ * stored where grows as it is passed on (`storedWhereSchema`). The lens says what comes out.
+ */
+export const grantWhereSchema = z.record(z.string(), z.unknown()).superRefine((where, context) => {
+  if (hasVacuousGroup(where))
+    context.addIssue({
+      code: 'custom',
+      message: 'A where has no empty all or any, and no bare true or false',
+    });
+  if (JSON.stringify(where).length > grantWhereLimit) {
+    context.addIssue({
+      code: 'custom',
+      message: `A where takes at most ${grantWhereLimit} characters as JSON`,
+    });
+    return;
+  }
+  for (const issue of validateRule(where, { positive: true }).errors)
+    context.addIssue({
+      code: 'custom',
+      message: `A where is a positive json-rules condition: ${issue.path} ${issue.message}`,
+    });
+});
+
+/**
+ * A where as Kingdom stores and shows it: read as it is, whatever its size. Kingdom checked it when
+ * it was asked, and a holder must never lose its own grant row over a condition it can't act on.
+ */
+export const storedWhereSchema = z.record(z.string(), z.unknown());
+
 const integrationResourceShape = {
   resourceModel: z.literal('IntegrationResource'),
   integrationResourceId: z.uuid(),
-  /** Everything the resource offers, now and as its catalog grows, capped live by the baseline. */
+  /** Everything the resource offers, now and as its catalog grows. */
   full: z.boolean(),
   /** The resolved leaves; absent when `full`. */
   operations: resolvedOperationsSchema.optional(),
-  /** The layers under the base lens; absent means the base. */
+  /** The layers under the kind's operations lens; absent reads every branch of it. */
   lens: storedLensLayersSchema.optional(),
   terms: grantTermsSchema.optional(),
+  /**
+   * What may go in: the condition this row's calls must meet, whole. Kingdom checks it at
+   * admission; a holder never gates on it. It names no other Signet and no path.
+   */
+  where: storedWhereSchema.optional(),
 };
 const fullOrOperations = (
   row: { full: boolean; operations?: string[] },
@@ -107,6 +161,7 @@ const askedOperations = {
   operations: operationPickSchema,
   lens: lensLayerSchema.optional(),
   terms: grantTermsSchema.optional(),
+  where: grantWhereSchema.optional(),
 };
 /** A resource asked for by id. */
 export const signetResourceSchema = z.discriminatedUnion('resourceModel', [

@@ -1,11 +1,12 @@
 import { existsSync } from 'node:fs';
-import { mkdir, rm, stat } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   cancelInstallationInquiry,
   collectSignet,
   enrollInstallationSignet,
   enrollSignet,
+  generateSignetKey,
   installationInquiries,
   installationSignets,
   kingdomUrl,
@@ -16,14 +17,20 @@ import {
   saveCollectedSignet,
   signetCredentialSchema,
 } from './client';
-import type {
-  InstallationKind,
-  InstallationSnapshot,
-  OwnerRef,
-  RegistrationRequest,
+import {
+  type InstallationKind,
+  type InstallationSnapshot,
+  type OwnerRef,
+  type RegistrationRequest,
+  retiredKeyMessage,
 } from './contracts';
-import { readPrivateJson } from './files';
-import { installationDirectory, installationPaths, signetCredentialFile } from './installation';
+import { readPrivateJson, writePrivateJson } from './files';
+import {
+  heldSignetCredential,
+  installationDirectory,
+  installationPaths,
+  signetCredentialFile,
+} from './installation';
 import { InstallationSocket } from './installationSocket';
 
 export type HeldSignet = {
@@ -32,13 +39,8 @@ export type HeldSignet = {
   credentialFile: string;
 };
 
-const heldEnrollment = async (credentialFile: string) => {
-  if (!existsSync(credentialFile)) return null;
-  const parsed = signetCredentialSchema.safeParse(
-    await readPrivateJson(credentialFile).catch(() => null),
-  );
-  return parsed.success ? parsed.data.enrollmentId : null;
-};
+const heldEnrollment = async (credentialFile: string) =>
+  (await heldSignetCredential(credentialFile))?.enrollmentId ?? null;
 
 const lockStaleMs = 60_000;
 
@@ -177,17 +179,22 @@ export async function listedSignets(root: string, urls: readonly string[]) {
   return listed;
 }
 
-/** The local file of a Signet this installation holds, enrolling it now if Kingdom lists it but no file exists yet. */
+/**
+ * The local file of a Signet this installation holds. A missing file, or one this client cannot
+ * read (an older signet client wrote it), is enrolled again now if Kingdom still lists the Signet.
+ */
 export async function heldSignetFile(root: string, url: string, signetId: string) {
   const { keyFile, directory } = await installationDirectory(root, url);
   const file = signetCredentialFile(directory, signetId);
-  if (existsSync(file)) return file;
+  if (await heldSignetCredential(file)) return file;
   const listed = (await installationSignets(url, keyFile)).signets.filter(
     (signet) => signet.signetId === signetId,
   );
-  if (!listed.length) throw Error(`Kingdom does not list Signet ${signetId} for this installation`);
+  if (!listed.length)
+    throw Error(`${url} no longer lists Signet ${signetId} for this installation`);
   await holdInstallationSignets(url, keyFile, directory, listed);
-  if (!existsSync(file)) throw Error(`Signet ${signetId} could not be enrolled here`);
+  if (!(await heldSignetCredential(file)))
+    throw Error(`Signet ${signetId} could not be enrolled here`);
   return file;
 }
 
@@ -227,6 +234,33 @@ export type InstallationPairing = {
 };
 
 /**
+ * Registers the installation's key. Kingdom retires the key of an Installation it removed (its
+ * unclaimed or orphaned sweep, or a disconnect), so a machine still around answers that refusal
+ * by setting the old key aside, making a new one, and registering once more. Under the hold lock,
+ * and only if the key is still the refused one, so two pairings rotate it once.
+ */
+async function registerWithLiveKey(
+  url: string,
+  directory: string,
+  keyFile: string,
+  registration: Parameters<typeof registerInstallation>[2],
+) {
+  const refusedKey = await readFile(keyFile, 'utf8');
+  try {
+    return await registerInstallation(url, keyFile, registration);
+  } catch (error) {
+    if (!(error instanceof SignetHttpError && error.status === 403)) throw error;
+    if (error.detail !== retiredKeyMessage) throw error;
+  }
+  await withHoldLock(directory, async () => {
+    if ((await readFile(keyFile, 'utf8')) !== refusedKey) return;
+    await rename(keyFile, join(directory, `installation-key.retired-${Date.now()}.json`));
+    await writePrivateJson(keyFile, generateSignetKey());
+  });
+  return registerInstallation(url, keyFile, registration);
+}
+
+/**
  * Registers this installation with Kingdom and asks to become an owner's integration. A person
  * claims the review code in Kingdom; the installation hears the outcome over its socket (polling
  * while the socket is down), confirms the owner, and collects its Signet.
@@ -234,7 +268,7 @@ export type InstallationPairing = {
 export async function pairInstallation(input: InstallationPairing) {
   const url = kingdomUrl(input.url);
   const { directory, keyFile } = await installationDirectory(input.root, url);
-  await registerInstallation(url, keyFile, {
+  await registerWithLiveKey(url, directory, keyFile, {
     kind: input.kind,
     name: input.name,
     ...(input.sourceId ? { sourceId: input.sourceId } : {}),
