@@ -18,7 +18,7 @@
         "zod": "^4.3.6",
       },
       "peerDependencies": {
-        "@inixiative/json-rules": "^3.16.0",
+        "@inixiative/json-rules": "^3.21.0",
         "zod": "^4.3.6",
       },
     },
