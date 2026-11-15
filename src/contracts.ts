@@ -262,9 +262,32 @@ export const installationInquirySchema = z.object({
   owner: ownerRefSchema.nullable(),
   ownerName: z.string().nullable(),
   integrationId: z.uuid().nullable(),
+  /** The Signet the inquiry minted, or for a `signetEntitlement` the Signet it asks to widen. */
   signetId: z.uuid().nullable(),
   deliverBefore: z.iso.datetime().nullable(),
+  /** Where a person reviews it in Kingdom's web app, while it awaits review. */
+  reviewUrl: kingdomLinkSchema.nullable().optional(),
 });
+/**
+ * An Installation asks for more on a Signet it already holds (Aron, 2026-11-14: "grant me new
+ * entitlement"): resources by id or by kind, as a registration asks, and projects by id. Kingdom
+ * sends it to the person who issued the Signet; approval adds what they approve, never more than
+ * asked, as a new revision of the same Signet.
+ */
+export const signetEntitlementRequestSchema = z.strictObject({
+  signetId: z.uuid(),
+  resources: z.array(registeredResourceSchema).min(1).max(100),
+  /** Why it asks, shown to the reviewer: what stopped working, for example. */
+  reason: z.string().trim().min(1).max(500).optional(),
+});
+export const signetEntitlementResponseSchema = z.object({
+  inquiryId: z.uuid(),
+  status: inquiryStatusSchema,
+  expiresAt: z.iso.datetime().nullable(),
+  reviewUrl: kingdomLinkSchema,
+});
+export type SignetEntitlementRequest = z.input<typeof signetEntitlementRequestSchema>;
+export type SignetEntitlementResponse = z.infer<typeof signetEntitlementResponseSchema>;
 /**
  * Who a requester is to the integration's owner (Aron, 2026-11-14: "just in-org and outside-org,
  * but something naive"): `inOrg` when they share an organization with the owner, else `outside`.

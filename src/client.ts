@@ -17,9 +17,11 @@ import {
   registerInstallationResponseSchema,
   renewalCredentialPattern,
   requestRegistrationResponseSchema,
+  type SignetEntitlementRequest,
   type SignetRequestResponse,
   setInstallationCredentialResponseSchema,
   signetCredentialsSchema,
+  signetEntitlementResponseSchema,
   signetKeySchema,
   signetLifecycleSchema,
   signetProposalSchema,
@@ -288,6 +290,25 @@ export const installationInquiries = (
     'installationInquiries',
     {},
     z.unknown().transform((value) => parseInstallationInquiries(value)),
+    options,
+  );
+
+/**
+ * Ask the person who issued one of this installation's Signets to grant it more. One open request
+ * per Signet: asking again while one awaits review returns that one.
+ */
+export const requestSignetEntitlement = (
+  url: string,
+  keyFile: string,
+  request: SignetEntitlementRequest,
+  options: SignetRequestOptions = {},
+) =>
+  keyPost(
+    url,
+    keyFile,
+    'requestSignetEntitlement',
+    request,
+    signetEntitlementResponseSchema,
     options,
   );
 
