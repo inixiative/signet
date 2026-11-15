@@ -226,7 +226,7 @@ describe('what a party asks for', () => {
     const byKind = {
       resourceKind: conversationResourceKind,
       externalId: 'thread_a',
-      operations: { picks: ['thread.read', 'thread.prompt', 'thread.wake'] },
+      operations: { picks: ['thread.read', 'thread.prompt', 'member.wake'] },
     };
     const integrationId = Bun.randomUUIDv7();
     const asked = requestedResourceSchema.parse({ ...byKind, integrationId });
@@ -234,9 +234,17 @@ describe('what a party asks for', () => {
       resourceKind: 'conversation',
       externalId: 'thread_a',
       integrationId,
-      operations: { picks: ['thread.read', 'thread.prompt', 'thread.wake'] },
+      operations: { picks: ['thread.read', 'thread.prompt', 'member.wake'] },
     });
     expect(requestedResourceSchema.safeParse(byKind).success).toBe(false);
+    // A conversation is asked for one at a time: no thread id would reach every conversation.
+    const { externalId: _thread, ...everyConversation } = byKind;
+    expect(requestedResourceSchema.safeParse({ ...everyConversation, integrationId }).success).toBe(
+      false,
+    );
+    expect(
+      requestedResourceSchema.safeParse({ ...byKind, integrationId, externalId: 'a:b' }).success,
+    ).toBe(false);
   });
 
   test('an installation registering asks by kind alone: its integration does not exist yet', () => {
@@ -258,10 +266,16 @@ describe('the grant as a holder reads it', () => {
       resourceModel: 'IntegrationResource',
       integrationResourceId,
       kind: 'repository',
+      externalId: 'inixiative/signet',
       full: true,
     };
     const grant = signetGrantSchema.parse({ ...row, integrationId });
-    expect(grant).toMatchObject({ kind: 'repository', integrationId, full: true });
+    expect(grant).toMatchObject({
+      kind: 'repository',
+      externalId: 'inixiative/signet',
+      integrationId,
+      full: true,
+    });
     expect(signetGrantSchema.safeParse(row).success).toBe(false);
     expect(signetGrantSchema.parse({ resourceModel: 'Project', projectId })).toEqual({
       resourceModel: 'Project',
@@ -272,6 +286,7 @@ describe('the grant as a holder reads it', () => {
         resourceModel: 'IntegrationResource',
         integrationResourceId,
         kind: 'repository',
+        externalId: 'inixiative/signet',
         integrationId: Bun.randomUUIDv7(),
         full: true,
         operations: ['commits.read'],
@@ -295,19 +310,23 @@ describe('conversation permissions', () => {
     const leaves = [...threadOperationSchema.options, ...conversationPermissionSchema.options];
     const asked = resolveOperationPicks(leaves, { picks: ['thread.read', 'thread.prompt'] });
     const wider = resolveOperationPicks(leaves, {
-      picks: ['thread.read', 'thread.prompt', 'thread.take'],
+      picks: ['thread.read', 'thread.prompt', 'member.take'],
     });
     expect(narrowsOperations(asked, wider)).toBe(true);
     expect(narrowsOperations(wider, asked)).toBe(false);
+    expect(resolveOperationPicks(leaves, { picks: ['thread.*'] })).toEqual({
+      full: false,
+      operations: ['thread.read', 'thread.prompt', 'thread.floor'],
+    });
     expect(resolveOperationPicks(leaves, { picks: ['agent.*'] })).toEqual({
       full: false,
       operations: ['agent.instruct', 'agent.read', 'agent.act'],
     });
   });
 
-  test('the act level is the highest held: a permission implies no other', () => {
+  test('the act level is the highest held', () => {
     expect(conversationActLevel(held())).toBe('ask');
-    expect(conversationActLevel(held('agent.instruct', 'thread.wake'))).toBe('ask');
+    expect(conversationActLevel(held('agent.instruct', 'member.wake'))).toBe('ask');
     expect(conversationActLevel(held('agent.read'))).toBe('read');
     expect(conversationActLevel(held('agent.act'))).toBe('full');
     expect(conversationActLevel(held('agent.read', 'agent.act'))).toBe('full');
@@ -734,7 +753,8 @@ describe('a grant view shows its incoming where', () => {
       resourceModel: 'IntegrationResource',
       integrationResourceId: Bun.randomUUIDv7(),
       integrationId: Bun.randomUUIDv7(),
-      kind: 'threads',
+      kind: 'conversation',
+      externalId: 'thread_a',
       full: true,
       where,
     });
@@ -755,7 +775,8 @@ describe('a grant view shows its incoming where', () => {
       resourceModel: 'IntegrationResource' as const,
       integrationResourceId: Bun.randomUUIDv7(),
       integrationId: Bun.randomUUIDv7(),
-      kind: 'threads',
+      kind: 'conversation',
+      externalId: 'thread_a',
       full: true,
       where,
     };

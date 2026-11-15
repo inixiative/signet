@@ -20,14 +20,18 @@ narrowing (`narrowsThreadsTerms`, Kingdom's `termsNarrow`).
   `narrowsThreadsTerms`, `meetThreadsTerms`, `grantTermsSchema`, `grantTermsFitKind`, `threadsTerms`,
   and `terms` on grant rows, asks, descriptions and frames.
 - **Conversation permissions** (`conversationPermissionSchema`, `conversationPermissionNames`):
-  `thread.log`, `thread.wake`, `thread.take`, `agent.instruct`, `agent.read`, `agent.act`. Catalog
-  entries a grant picks and nothing calls. Frames carry `permissions` where they carried `terms`.
+  `member.log`, `member.wake`, `member.take`, `member.agent`, `agent.instruct`, `agent.read`,
+  `agent.act`. Catalog entries a grant picks and nothing calls, on their own branches, so `thread.*`
+  picks the calls alone. Frames carry `permissions` where they carried `terms`.
   `conversationActLevel` reads the act level from them. From the old terms: `view: thread` is
-  `thread.log`, `delivery: turn` is `thread.wake`, `floor.mayTake` is `thread.take`,
-  `posts: instructions` is `agent.instruct`, `act: read` is `agent.read`, `act: full` is `agent.read`
-  and `agent.act`. `outbound` is the host's own setting (`conversationOutboundSchema`), and `agent`
-  (the member brings its own agent) is the host's to record; neither is on the grant.
-- **A join request by kind may carry `externalId`** (`requestedResourceKindSchema`): the thread's id.
+  `member.log`, `delivery: turn` is `member.wake`, `floor.mayTake` is `member.take`,
+  `posts: instructions` is `agent.instruct`, `act: read` is `agent.read`, `act: full` is `agent.act`,
+  `agent: true` is `member.agent`. `outbound` is the host's own setting
+  (`conversationOutboundSchema`), not on the grant.
+- **A join request by kind may carry `externalId`** (`requestedResourceKindSchema`); a `conversation`
+  ask must, as a thread id.
+- **A holder reads each resource's `externalId`** on its grant rows (`signetGrantSchema`) and in
+  `describe` (`signetDescriptionResourceSchema`): a conversation's thread id.
 - **A hosted Signet's `recipient` carries `audience`** (`inOrg` or `outside`).
 
 ## 0.17.0 — grant lenses narrow the operations lens; a where goes in, a lens comes out; events carry Kingdom's id

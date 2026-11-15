@@ -43,8 +43,8 @@ const T1 = 'thread_0199f0aa-0000-7000-8000-000000000001';
 const uuid = () => Bun.randomUUIDv7();
 
 describe('conversation permissions and entries', () => {
-  test('taking the floor is a floor action, admitted by holding thread.take', () => {
-    expect(conversationPermissionSchema.safeParse('thread.take').success).toBe(true);
+  test('take is a floor action, and member.take is the permission a host admits it by', () => {
+    expect(conversationPermissionSchema.safeParse('member.take').success).toBe(true);
     expect(threadFloorActionSchema.safeParse({ action: 'take' }).success).toBe(true);
   });
 
@@ -101,7 +101,7 @@ describe('requests by resource kind', () => {
     resourceKind: conversationResourceKind,
     integrationId: uuid(),
     externalId: T1,
-    operations: { picks: ['thread.read', 'thread.prompt', 'thread.wake'] },
+    operations: { picks: ['thread.read', 'thread.prompt', 'member.wake'] },
   };
 
   test('a join request names a conversation by kind and thread id', () => {
@@ -201,7 +201,7 @@ describe('thread operations through access/execute', () => {
       acceptedRevision: 2,
       member: { signetId: uuid(), displayName: 'JobCo' },
       threadId: T1,
-      permissions: ['thread.wake'],
+      permissions: ['member.wake'],
     };
     const prompt = threadRequestFrameSchema.parse({
       ...base,
@@ -209,7 +209,7 @@ describe('thread operations through access/execute', () => {
       input: { postId: uuid(), text: 'hi' },
     });
     expect(prompt.operation === 'thread.prompt' && prompt.input.text).toBe('hi');
-    expect(prompt.permissions).toEqual(['thread.wake']);
+    expect(prompt.permissions).toEqual(['member.wake']);
     expect(
       threadRequestFrameSchema.safeParse({ ...prompt, permissions: ['thread.read'] }).success,
     ).toBe(false);

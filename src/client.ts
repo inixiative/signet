@@ -611,7 +611,7 @@ export class SignetClient {
       { signal, timeoutMs: options.timeoutMs },
     );
   }
-  /** Read per entry: a resource whose lens or terms this package can't read is dropped, listed in `dropped`. */
+  /** Read per entry: a resource whose lens this package can't read is dropped, listed in `dropped`. */
   async describe(options: SignetRequestOptions = {}) {
     return parseSignetDescription(
       await this.post('describe', { signetId: this.signetId }, undefined, options),

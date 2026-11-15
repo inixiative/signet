@@ -3,7 +3,8 @@ import { z } from 'zod';
 /**
  * Agent conversations (Kingdom `docs/AGENT-CONVERSATIONS.md`, Foundry `docs/reference/CONVERSATIONS.md`).
  * A conversation is an integration resource of its host Foundry (Aron, 2026-11-14): one `conversation`
- * resource per shared thread, its `externalId` the thread's id. A member reaches it through a Signet
+ * resource per shared thread, its `externalId` the thread's id (which a holder reads on its grant
+ * row and uses to open the thread's stream). A member reaches it through a Signet
  * entitlement on that resource. Kingdom admits each call and relays it over the host's Installation
  * socket; the host answers. Kingdom stores no post.
  */
@@ -24,13 +25,15 @@ export type ConversationOutbound = z.infer<typeof conversationOutboundSchema>;
 /**
  * What a member holds on a conversation beyond the calls it may make (Aron, 2026-11-14: "they should
  * be operations in a conversation"). Catalog entries a Signet picks like any operation and that
- * nothing calls, as with the `events.*` leaves: Kingdom sends the host the ones a call was admitted
- * under, and the host reads them. Holding none is the narrowest member.
+ * nothing calls, as with the `events.*` leaves. They sit on their own branches (`member.`, `agent.`),
+ * so `thread.*` picks the calls and none of these. Kingdom sends the host the ones the Signet holds
+ * on the conversation, and the host reads them. Holding none is the narrowest member.
  */
 export const conversationPermissionSchema = z.enum([
-  'thread.log',
-  'thread.wake',
-  'thread.take',
+  'member.log',
+  'member.wake',
+  'member.take',
+  'member.agent',
   'agent.instruct',
   'agent.read',
   'agent.act',
@@ -38,9 +41,10 @@ export const conversationPermissionSchema = z.enum([
 export type ConversationPermission = z.infer<typeof conversationPermissionSchema>;
 
 export const conversationPermissionNames: Record<ConversationPermission, string> = {
-  'thread.log': 'Read the whole conversation, not only its own posts and the sends to it',
-  'thread.wake': "Wake the host's agent with a post, which otherwise rides its next turn",
-  'thread.take': "Take the conversation's floor without being given it",
+  'member.log': 'Read the whole conversation, not only its own posts and the sends to it',
+  'member.wake': "Wake the host's agent with a post, which otherwise rides its next turn",
+  'member.take': "Take the conversation's floor without being given it",
+  'member.agent': 'Bring its own agent into the conversation, not only itself as a person',
   'agent.instruct': "Direct the host's agent: its posts are instructions, not data",
   'agent.read': "Have the host's agent read files and data on its word without asking the host",
   'agent.act': "Have the host's agent act on its word under the host's own rules",
@@ -48,8 +52,7 @@ export const conversationPermissionNames: Record<ConversationPermission, string>
 
 /**
  * What the host's agent may do on a turn that took in a member's words: `full` with `agent.act`,
- * `read` with `agent.read`, else `ask` (every call asks the host). The highest held wins, since a
- * permission implies no other.
+ * `read` with `agent.read`, else `ask` (every call asks the host). The highest held wins.
  */
 export const conversationActLevel = (permissions: readonly ConversationPermission[]) =>
   permissions.includes('agent.act') ? 'full' : permissions.includes('agent.read') ? 'read' : 'ask';
@@ -95,7 +98,7 @@ export const threadTextLimit = 16_000;
 
 export const threadFloorActionSchema = z.discriminatedUnion('action', [
   z.strictObject({ action: z.literal('request') }),
-  /** Take the conch without being given it: only holding `thread.take`. */
+  /** Take the conch without being given it: only holding `member.take`. */
   z.strictObject({ action: z.literal('take') }),
   z.strictObject({ action: z.literal('release') }),
   z.strictObject({ action: z.literal('pass'), to: conversationMemberSchema }),
@@ -251,7 +254,10 @@ const relayed = {
   member: threadMemberSchema,
   /** The conversation's thread: its resource's `externalId`. */
   threadId: threadIdSchema,
-  /** What the member holds on this conversation, over every path that admitted the call. */
+  /**
+   * The permissions this Signet holds on the conversation now, each admitted on its own, as Kingdom
+   * admits each event leaf. A subscription's are read again on every lease sweep.
+   */
   permissions: z.array(conversationPermissionSchema),
 };
 const requestFrame = <O extends ThreadOperation>(operation: O) =>

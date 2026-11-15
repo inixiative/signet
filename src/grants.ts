@@ -2,6 +2,7 @@ import { validateRule } from '@inixiative/json-rules';
 import { z } from 'zod';
 import { lensLayerSchema, storedLensLayersSchema } from './lens';
 import { operationPickSchema, resolvedOperationsSchema } from './operations';
+import { conversationResourceKind, threadIdSchema } from './threads';
 
 /**
  * What a Signet revision grants, one row per resource (Aron, 2026-11-01). False polymorphism on
@@ -110,9 +111,10 @@ export type IntegrationResourceGrant = z.infer<typeof integrationResourceGrantSc
 export type ProjectGrant = z.infer<typeof projectGrantSchema>;
 
 /**
- * A grant as a holder reads it: the stored row, plus the resource's `kind`
- * and the `integrationId` of the integration the resource is on. A Signet reaches resources on any
- * number of integrations, so each row names its own. Read paths stay loose (a field a newer Kingdom
+ * A grant as a holder reads it: the stored row, plus the resource's `kind`, its `externalId` (the
+ * provider's own id for it: a conversation's thread id) and the `integrationId` of the integration
+ * the resource is on. A Signet reaches resources on any number of integrations, so each row names
+ * its own. Read paths stay loose (a field a newer Kingdom
  * adds is dropped, not fatal).
  */
 export const signetGrantSchema = z.discriminatedUnion('resourceModel', [
@@ -120,6 +122,7 @@ export const signetGrantSchema = z.discriminatedUnion('resourceModel', [
     .object({
       ...integrationResourceShape,
       kind: z.string().min(1).max(80),
+      externalId: z.string().min(1).max(256),
       integrationId: z.uuid(),
     })
     .superRefine(fullOrOperations),
@@ -129,8 +132,7 @@ export type SignetGrant = z.infer<typeof signetGrantSchema>;
 
 /**
  * What a party asks for on one resource: `full` or picks, its own lens layer (Kingdom assigns the
- * layer its id and chains it under the base, or under the request when an approver writes it), and
- * terms.
+ * layer its id and chains it under the base, or under the request when an approver writes it).
  */
 const askedOperations = {
   operations: operationPickSchema,
@@ -160,17 +162,27 @@ const askedByKind = {
  */
 export const registeredResourceKindSchema = z.strictObject(askedByKind);
 /**
- * A resource asked for by kind on an existing integration, when the asker does not know its id: a
- * party asking to join one of a Foundry's conversations names the Foundry's `integrationId`, the
- * `conversation` kind and the thread's id as `externalId`. Without `externalId` the kind alone names
- * the resource (one per integration). Kingdom resolves it to the resource's id before anyone reviews
- * it.
+ * A resource asked for by kind on an existing integration, when the asker does not know its id.
+ * `externalId` names one resource of that kind; without it the ask reaches every resource of the
+ * kind on the integration. A conversation is always asked for one at a time: a party asking to join
+ * names the Foundry's `integrationId`, the `conversation` kind and the thread's id as `externalId`.
+ * Kingdom resolves the ask to resource ids before anyone reviews it.
  */
-export const requestedResourceKindSchema = z.strictObject({
-  ...askedByKind,
-  integrationId: z.uuid(),
-  externalId: z.string().min(1).max(256).optional(),
-});
+export const requestedResourceKindSchema = z
+  .strictObject({
+    ...askedByKind,
+    integrationId: z.uuid(),
+    externalId: z.string().min(1).max(256).optional(),
+  })
+  .superRefine((ask, context) => {
+    if (ask.resourceKind !== conversationResourceKind) return;
+    if (!threadIdSchema.safeParse(ask.externalId).success)
+      context.addIssue({
+        code: 'custom',
+        path: ['externalId'],
+        message: 'A conversation is asked for by its thread id',
+      });
+  });
 /** What a registering Installation may ask for: resources by id or by kind. */
 export const registeredResourceSchema = z.union([
   signetResourceSchema,

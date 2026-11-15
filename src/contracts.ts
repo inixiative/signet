@@ -340,7 +340,11 @@ export const hostedSignetSchema = z.object({
     recipientModel: signetRecipientModelSchema,
     id: z.uuid(),
     displayName: z.string(),
-    /** Who the recipient is to the integration's owner: the host's member settings start from it. */
+    /**
+     * Who the recipient is to the integration's owner: the host's member settings start from it. A
+     * User by the organizations they share; an Integration as its owner; an Organization as itself;
+     * a Space or a member as its organization.
+     */
     audience: requestAudienceSchema,
   }),
   /**
@@ -369,6 +373,8 @@ export const signetDescriptionResourceSchema = z.object({
   id: z.uuid(),
   name: z.string(),
   kind: z.string(),
+  /** The provider's own id for the resource: a conversation's thread id. */
+  externalId: z.string(),
   integrationId: z.uuid(),
   /** The integration's provider family (`github`, `anthropic`…): the description has no host. */
   provider: z.string(),

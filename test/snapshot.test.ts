@@ -19,9 +19,10 @@ const conversationGrant = (extra: Record<string, unknown> = {}) => ({
   resourceModel: 'IntegrationResource',
   integrationResourceId: uuid(),
   kind: 'conversation',
+  externalId: T1,
   integrationId: uuid(),
   full: false,
-  operations: ['thread.read', 'thread.prompt', 'thread.wake'],
+  operations: ['thread.read', 'thread.prompt', 'member.wake'],
   ...extra,
 });
 const held = (resources: unknown[] = []) => ({
@@ -102,7 +103,7 @@ describe('per-entry snapshot parsing (review U1)', () => {
     expect(ids(snapshot.hostedSignets)).toEqual([member.signetId, standing.signetId]);
     expect(snapshot.hostedSignets[0]?.resources[0]).toMatchObject({
       kind: 'conversation',
-      operations: ['thread.read', 'thread.prompt', 'thread.wake'],
+      operations: ['thread.read', 'thread.prompt', 'member.wake'],
     });
     expect(snapshot.hostedSignets[0]?.recipient.audience).toBe('outside');
     expect(snapshot.hostedSignets[1]?.resources).toEqual([]);
@@ -154,6 +155,7 @@ describe('per-entry snapshot parsing (review U1)', () => {
       id: uuid(),
       name: 'Design review',
       kind,
+      externalId: T1,
       integrationId: uuid(),
       provider: 'foundry',
       ...extra,
@@ -203,7 +205,8 @@ describe('per-entry snapshot parsing (review U1)', () => {
             {
               id: uuid(),
               name: 'Threads',
-              kind: 'threads',
+              kind: 'conversation',
+              externalId: T1,
               integrationId: foundry,
               provider: 'foundry',
             },
@@ -217,6 +220,7 @@ describe('per-entry snapshot parsing (review U1)', () => {
               id: uuid(),
               name: 'Library',
               kind: 'archiveLibrary',
+              externalId: 'library',
               integrationId: archive,
               provider: 'archive',
             },
