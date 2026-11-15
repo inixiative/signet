@@ -1,12 +1,11 @@
-import type { Condition } from '@inixiative/json-rules';
+import { type Condition, walkLensPath } from '@inixiative/json-rules';
 import { z } from 'zod';
 import {
-  conditionAtOperation,
+  conditionOverOperationRows,
   type GrantLens,
   type LensBody,
-  narrowingAtOperation,
-  projectionFilters,
-  projectionShows,
+  lensFiltersOperationRows,
+  narrowOperationBranch,
 } from './lens';
 import { type OperationScope, scopeRefusal } from './operations';
 
@@ -95,16 +94,16 @@ export const archiveInputSchemas = {
 } as const satisfies Record<ArchiveOperation, z.ZodObject>;
 
 /**
- * Why a grant of `operation` can't carry `lens`, or null when it can. No narrowing reads every branch.
+ * Why a grant of `operation` can't carry its lens, or null when it can. A chain with no lens reads every branch.
  * Each check reads the visit at the operation's own branch.
  */
-export const archiveLensRefusal = (operation: ArchiveOperation, lens: GrantLens) => {
-  if (!lens.narrowed) return null;
+export const refuseArchiveOperationLens = (operation: ArchiveOperation, grant: GrantLens) => {
+  if (!grant.narrowed) return null;
   if (isArchiveSourceOperation(operation)) return 'Writing or deleting sessions takes no lens';
   if (
     operation === 'documents.search' &&
-    (projectionFilters(lens.projection, operation) ||
-      !projectionShows(lens.projection, operation, 'content'))
+    (lensFiltersOperationRows(grant.lens, operation) ||
+      walkLensPath(grant.lens, `${operation}.content`).outcome !== 'resolved')
   )
     return 'Search needs a lens that shows content and is not limited to chosen documents';
   return null;
@@ -118,7 +117,7 @@ type ArchiveInput<O extends ArchiveOperation> = z.infer<(typeof archiveInputSche
  * grant's composed lens: a filter on a field the lens hides there (`projectId`, a `tag`) would say
  * which documents carry a value the holder can't see, and is refused with the lens's own code.
  */
-export const archiveCallCondition = <O extends ArchiveOperation>(
+export const conditionOverArchiveCallFilters = <O extends ArchiveOperation>(
   operation: O,
   input: ArchiveInput<O>,
 ): Condition | undefined => {
@@ -131,7 +130,7 @@ export const archiveCallCondition = <O extends ArchiveOperation>(
       : []),
   ];
   if (rules.length === 0) return undefined;
-  return conditionAtOperation(operation, rules.length === 1 ? rules[0]! : { all: rules });
+  return conditionOverOperationRows(operation, rules.length === 1 ? rules[0]! : { all: rules });
 };
 
 /**
@@ -139,16 +138,16 @@ export const archiveCallCondition = <O extends ArchiveOperation>(
  * undefined when it asks for none. Kingdom validates it under the grant's composed lens
  * (`validateNarrowing`): a field the lens hides there is refused.
  */
-export const archiveCallNarrowing = <O extends ArchiveOperation>(
+export const narrowToArchiveCallFields = <O extends ArchiveOperation>(
   operation: O,
   input: ArchiveInput<O>,
 ): LensBody | undefined =>
   'fields' in input && input.fields?.length
-    ? { root: narrowingAtOperation(operation, { picks: [...input.fields] }) }
+    ? { root: narrowOperationBranch(operation, { picks: [...input.fields] }) }
     : undefined;
 
-/** `archiveLensRefusal` over every operation a grant row reaches, `full` meaning all of them. */
-export const archiveGrantRefusal = (scope: OperationScope, lens: GrantLens) =>
+/** `refuseArchiveOperationLens` over every operation a grant row reaches, `full` meaning all of them. */
+export const refuseArchiveGrantLens = (scope: OperationScope, grant: GrantLens) =>
   scopeRefusal(scope, archiveOperationSchema.options, (operation) =>
-    archiveLensRefusal(operation, lens),
+    refuseArchiveOperationLens(operation, grant),
   );

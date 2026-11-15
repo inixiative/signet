@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { type GrantLens, projectionFilters } from './lens';
+import { type GrantLens, lensFiltersOperationRows } from './lens';
 import { type OperationScope, scopeRefusal } from './operations';
 
 /**
@@ -36,15 +36,15 @@ export const githubInputSchemas = {
 } as const satisfies Record<GithubOperation, z.ZodObject>;
 
 /** Why a grant of `operation` can't carry `lens`, or null when it can, read at its own branch. */
-export const repositoryLensRefusal = (operation: GithubOperation, lens: GrantLens) =>
-  operation !== 'commits.read' && projectionFilters(lens.projection, operation)
+export const refuseRepositoryOperationLens = (operation: GithubOperation, grant: GrantLens) =>
+  operation !== 'commits.read' && lensFiltersOperationRows(grant.lens, operation)
     ? 'A grant pinned to commits reads only those commits; trees and blobs need an unpinned grant'
     : null;
 
-/** `repositoryLensRefusal` over every operation a grant row reaches, `full` meaning all of them. */
-export const repositoryGrantRefusal = (scope: OperationScope, lens: GrantLens) =>
+/** `refuseRepositoryOperationLens` over every operation a grant row reaches, `full` meaning all of them. */
+export const refuseRepositoryGrantLens = (scope: OperationScope, grant: GrantLens) =>
   scopeRefusal(scope, githubOperationSchema.options, (operation) =>
-    repositoryLensRefusal(operation, lens),
+    refuseRepositoryOperationLens(operation, grant),
   );
 
 /** The row a repository call reads at its operation's branch of the lens: its object, as `sha`. */

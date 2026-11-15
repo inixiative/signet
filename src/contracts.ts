@@ -273,8 +273,9 @@ export const installationInquirySchema = z.object({
 /**
  * An Installation asks for more on a Signet it already holds (Aron, 2026-11-14: "grant me new
  * entitlement"): resources by id or by kind, as a registration asks, and projects by id. Kingdom
- * sends it to the person who issued the Signet; approval adds what they approve, never more than
- * asked, as a new revision of the same Signet.
+ * sends it to the person who issued the Signet; the approver submits a whole copy of the grant,
+ * narrower or wider than the request, each entitlement in it checked by the grant check on the
+ * approver, as a new revision of the same Signet.
  */
 export const signetEntitlementRequestSchema = z.strictObject({
   signetId: z.uuid(),

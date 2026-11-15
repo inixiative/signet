@@ -8,21 +8,21 @@ import {
 } from '@inixiative/json-rules';
 import {
   accessInputSchema,
-  archiveCallCondition,
-  archiveCallNarrowing,
   archiveFieldSchema,
   archiveInputSchemas,
   archiveOperationNames,
   archiveOperationSchema,
   archiveSourceOperations,
+  conditionOverArchiveCallFilters,
   declaredOperationSchema,
   githubOperationNames,
   githubOperationSchema,
-  narrowingAtOperation,
+  narrowOperationBranch,
+  narrowRowModelOnEveryBranch,
+  narrowToArchiveCallFields,
   operationInputFromAccess,
   operationInputKeys,
   operationInputSchemas,
-  rowModelNarrowing,
   threadOperationNames,
   threadOperationSchema,
 } from '../src';
@@ -141,7 +141,7 @@ describe('an Archive call, gated by json-rules against the grant lens at its ope
   });
   const narrowed = (narrowing: ModelNarrowing): LensNarrowing => ({
     parent: base,
-    ...rowModelNarrowing(operations, 'ArchiveDocument', narrowing),
+    ...narrowRowModelOnEveryBranch(operations, 'ArchiveDocument', narrowing),
   });
   const hidesProject = narrowed({ omits: ['projectId'] });
   const hidesTags = narrowed({ omits: ['tags'] });
@@ -149,7 +149,7 @@ describe('an Archive call, gated by json-rules against the grant lens at its ope
   const refused = (result: { ok: boolean; errors: { code: string }[] }) =>
     result.ok ? null : result.errors[0]!.code;
   const filters = (operation: 'documents.search', input: object, lens: Lens | LensNarrowing) => {
-    const condition = archiveCallCondition(operation, input);
+    const condition = conditionOverArchiveCallFilters(operation, input);
     return condition === undefined ? null : refused(validateRuleInLens(condition, lens));
   };
 
@@ -160,27 +160,32 @@ describe('an Archive call, gated by json-rules against the grant lens at its ope
     );
     expect(filters('documents.search', { tag: 'x' }, hidesProject)).toBeNull();
     expect(filters('documents.search', { projectId: 'x', tag: 'y' }, every)).toBeNull();
-    expect(archiveCallCondition('documents.search', { query: 'x' })).toBeUndefined();
+    expect(conditionOverArchiveCallFilters('documents.search', { query: 'x' })).toBeUndefined();
   });
 
   test('a call may not ask for a field the lens hides', () => {
-    const asked = archiveCallNarrowing('documents.read', { fields: ['title', 'tags'] })!;
+    const asked = narrowToArchiveCallFields('documents.read', { fields: ['title', 'tags'] })!;
     expect(refused(validateNarrowing({ parent: hidesTags, ...asked }))).toBe('not_visible');
-    const ok = archiveCallNarrowing('documents.read', { fields: ['title'] })!;
+    const ok = narrowToArchiveCallFields('documents.read', { fields: ['title'] })!;
     expect(validateNarrowing({ parent: hidesTags, ...ok }).ok).toBe(true);
-    expect(archiveCallNarrowing('documents.read', {})).toBeUndefined();
+    expect(narrowToArchiveCallFields('documents.read', {})).toBeUndefined();
   });
 
   test("a call's filter and fields sit at its own operation's branch", () => {
     const readOnly: LensNarrowing = {
       parent: base,
-      root: narrowingAtOperation('documents.read', { omits: ['tags'] }),
+      root: narrowOperationBranch('documents.read', { omits: ['tags'] }),
     };
     expect(filters('documents.search', { tag: 'x' }, readOnly)).toBe('not_in_lens');
     expect(
-      refused(validateRuleInLens(archiveCallCondition('documents.search', { tag: 'x' })!, every)),
+      refused(
+        validateRuleInLens(
+          conditionOverArchiveCallFilters('documents.search', { tag: 'x' })!,
+          every,
+        ),
+      ),
     ).toBeNull();
-    expect(archiveCallNarrowing('documents.search', { fields: ['title'] })).toEqual({
+    expect(narrowToArchiveCallFields('documents.search', { fields: ['title'] })).toEqual({
       root: { relations: { documents: { relations: { search: { picks: ['title'] } } } } },
     });
   });

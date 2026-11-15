@@ -1,5 +1,5 @@
 import type { FieldMapEntry, Lens } from '@inixiative/json-rules';
-import { operationsLens as generatedLens } from '../src';
+import { createOperationsLens } from '../src';
 
 /** An operations lens whose every operation reads `row` rows. */
 export const operationsLens = (
@@ -7,7 +7,7 @@ export const operationsLens = (
   row: string,
   rowFields: Record<string, FieldMapEntry>,
 ): Lens =>
-  generatedLens({
+  createOperationsLens({
     model: 'Operations',
     operations,
     rowModel: () => row,

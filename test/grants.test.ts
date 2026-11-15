@@ -1,49 +1,53 @@
 import { describe, expect, it, test } from 'bun:test';
-import { type Condition, type ModelNarrowing, projectLens } from '@inixiative/json-rules';
 import {
-  archiveGrantRefusal,
-  archiveLensRefusal,
+  type Condition,
+  lensVisit,
+  type ModelNarrowing,
+  projectLens,
+} from '@inixiative/json-rules';
+import {
   archiveOperationSchema,
-  composeGrantLens,
-  conditionAtOperation,
+  composeGrantLensChain,
+  conditionOverOperationRows,
   conversationActLevel,
   conversationPermissionSchema,
   conversationResourceKind,
+  createOperationsLens,
   type DroppedEntry,
   declaredOperationSchema,
-  everyBranch,
   GrantLensError,
-  operationsLens as generateOperationsLens,
   githubOperationSchema,
   grantLensChainLimit,
   grantResourceSchema,
   grantWhereLimit,
   grantWhereSchema,
   type LensBody,
+  lensFiltersOperationRows,
   lensNarrowingSchema,
-  narrowingAtOperation,
+  narrowOperationBranch,
+  narrowRowModelOnEveryBranch,
   narrowsOperations,
-  operationRecord,
-  operationRows,
+  nestRowsAtOperation,
   operationsMapName,
   ownerIdFields,
   parseInstallationSignets,
-  projectionFilters,
-  projectionVisit,
+  projectOperationRows,
+  readRowsAtOperation,
+  refuseArchiveGrantLens,
+  refuseArchiveOperationLens,
+  refuseRepositoryGrantLens,
+  refuseRepositoryOperationLens,
   registeredResourceSchema,
   repositoryCallRow,
-  repositoryGrantRefusal,
-  repositoryLensRefusal,
   requestedResourceSchema,
   resolveOperationPicks,
-  rowModelNarrowing,
-  rowsThroughLens,
   signetGrantSchema,
   signetOwnerModelSchema,
   signetProposalSchema,
   signetResourceSchema,
   threadOperationSchema,
   threadRow,
+  turnOnEveryOperationBranch,
 } from '../src';
 import { operationsLens } from './operationsLens';
 
@@ -383,41 +387,44 @@ const repositoryBase = operationsLens(githubOperations, 'RepositoryCall', {
 });
 
 describe("refusals that stay about operations, read at each operation's branch", () => {
-  const archive = (...chain: LensBody[]) => composeGrantLens(archiveBase, chain);
+  const archive = (...chain: LensBody[]) => composeGrantLensChain(archiveBase, chain);
   const documents = (narrowing: ModelNarrowing) =>
-    rowModelNarrowing(archiveOperations, 'ArchiveDocument', narrowing);
+    narrowRowModelOnEveryBranch(archiveOperations, 'ArchiveDocument', narrowing);
   const onlyChosen = documents({ where: { field: 'id', operator: 'in', value: ['x'] } });
 
   test('writing or deleting Archive sessions takes no lens', () => {
-    expect(archiveLensRefusal('sessions.write', archive())).toBeNull();
-    expect(archiveLensRefusal('sessions.write', archive(documents({ omits: ['title'] })))).toBe(
-      'Writing or deleting sessions takes no lens',
-    );
+    expect(refuseArchiveOperationLens('sessions.write', archive())).toBeNull();
+    expect(
+      refuseArchiveOperationLens('sessions.write', archive(documents({ omits: ['title'] }))),
+    ).toBe('Writing or deleting sessions takes no lens');
   });
 
   test('Archive search needs content over every document', () => {
-    expect(archiveLensRefusal('documents.search', archive())).toBeNull();
+    expect(refuseArchiveOperationLens('documents.search', archive())).toBeNull();
     expect(
-      archiveLensRefusal('documents.search', archive(documents({ picks: ['content', 'title'] }))),
+      refuseArchiveOperationLens(
+        'documents.search',
+        archive(documents({ picks: ['content', 'title'] })),
+      ),
     ).toBeNull();
-    expect(archiveLensRefusal('documents.search', archive(onlyChosen))).not.toBeNull();
+    expect(refuseArchiveOperationLens('documents.search', archive(onlyChosen))).not.toBeNull();
     expect(
-      archiveLensRefusal('documents.search', archive(documents({ picks: ['title'] }))),
+      refuseArchiveOperationLens('documents.search', archive(documents({ picks: ['title'] }))),
     ).not.toBeNull();
     expect(
-      archiveLensRefusal('documents.search', archive(documents({ omits: ['content'] }))),
+      refuseArchiveOperationLens('documents.search', archive(documents({ omits: ['content'] }))),
     ).not.toBeNull();
-    expect(archiveLensRefusal('documents.read', archive(onlyChosen))).toBeNull();
-    expect(projectionFilters(archive(onlyChosen).projection, 'documents.search')).toBe(true);
-    expect(projectionFilters(archive(documents({})).projection, 'documents.search')).toBe(false);
+    expect(refuseArchiveOperationLens('documents.read', archive(onlyChosen))).toBeNull();
+    expect(lensFiltersOperationRows(archive(onlyChosen).lens, 'documents.search')).toBe(true);
+    expect(lensFiltersOperationRows(archive(documents({})).lens, 'documents.search')).toBe(false);
   });
 
   test('a narrowing of one branch leaves the others as they are; a branch left off is held back', () => {
     const readChosen = {
       root: {
-        ...everyBranch(archiveOperations),
+        ...turnOnEveryOperationBranch(archiveOperations),
         relations: {
-          ...everyBranch(archiveOperations).relations,
+          ...turnOnEveryOperationBranch(archiveOperations).relations,
           documents: {
             relations: {
               read: { where: { field: 'id', operator: 'in', value: ['x'] } },
@@ -427,13 +434,11 @@ describe("refusals that stay about operations, read at each operation's branch",
         },
       },
     } as LensBody;
-    expect(archiveLensRefusal('documents.search', archive(readChosen))).toBeNull();
-    const readOnly = { root: narrowingAtOperation('documents.read', {}) } as LensBody;
-    expect(archiveLensRefusal('documents.search', archive(readOnly))).not.toBeNull();
-    expect(projectionVisit(archive(readOnly).projection, 'documents.search')).toBeNull();
-    expect(projectionVisit(archive(readOnly).projection, 'documents.read')?.model).toBe(
-      'ArchiveDocument',
-    );
+    expect(refuseArchiveOperationLens('documents.search', archive(readChosen))).toBeNull();
+    const readOnly = { root: narrowOperationBranch('documents.read', {}) } as LensBody;
+    expect(refuseArchiveOperationLens('documents.search', archive(readOnly))).not.toBeNull();
+    expect(lensVisit(archive(readOnly).lens, 'documents.search')).toBeNull();
+    expect(lensVisit(archive(readOnly).lens, 'documents.read')?.model).toBe('ArchiveDocument');
   });
 
   const projects = operationsLens(['documents.read', 'documents.search'], 'ArchiveDocument', {
@@ -446,43 +451,45 @@ describe("refusals that stay about operations, read at each operation's branch",
     { id: 'b', projectId: 'p2' },
   ];
   const read = (body: LensBody, operation: string) => {
-    return rowsThroughLens({ parent: projects, ...body }, operation, rows);
+    return projectOperationRows({ parent: projects, ...body }, operation, rows);
   };
 
   test("a where at an operation's own branch filters its rows and leaves other branches alone", () => {
     const atLeaf = {
-      root: everyBranch(['documents.read', 'documents.search'], (operation) =>
+      root: turnOnEveryOperationBranch(['documents.read', 'documents.search'], (operation) =>
         operation === 'documents.read' ? { where: inP1 } : {},
       ),
     } as LensBody;
     expect(read(atLeaf, 'documents.read')).toEqual([{ id: 'a', projectId: 'p1' }]);
     expect(read(atLeaf, 'documents.search')).toEqual(rows);
-    const lens = composeGrantLens(projects, [atLeaf]);
-    expect(archiveLensRefusal('documents.read', lens)).toBeNull();
+    const lens = composeGrantLensChain(projects, [atLeaf]);
+    expect(refuseArchiveOperationLens('documents.read', lens)).toBeNull();
   });
 
   test('a where above a branch would show every row once one matched, so it is refused', () => {
     const aboveBranch = {
       root: {
-        ...everyBranch(['documents.read', 'documents.search']),
-        where: conditionAtOperation('documents.read', inP1),
+        ...turnOnEveryOperationBranch(['documents.read', 'documents.search']),
+        where: conditionOverOperationRows('documents.read', inP1),
       },
     } as LensBody;
     // The leak the refusal is for: p2's document comes back beside p1's.
     expect(read(aboveBranch, 'documents.read')).toEqual(rows);
     const refusal = /never above it/;
-    expect(() => composeGrantLens(projects, [aboveBranch])).toThrow(GrantLensError);
-    expect(() => composeGrantLens(projects, [aboveBranch])).toThrow(refusal);
-    const atDocuments = everyBranch(['documents.read', 'documents.search']);
-    (atDocuments.relations?.documents as ModelNarrowing).where = conditionAtOperation(
+    expect(() => composeGrantLensChain(projects, [aboveBranch])).toThrow(GrantLensError);
+    expect(() => composeGrantLensChain(projects, [aboveBranch])).toThrow(refusal);
+    const atDocuments = turnOnEveryOperationBranch(['documents.read', 'documents.search']);
+    (atDocuments.relations?.documents as ModelNarrowing).where = conditionOverOperationRows(
       'search',
       inP1,
     );
-    expect(() => composeGrantLens(projects, [{ root: atDocuments } as LensBody])).toThrow(refusal);
+    expect(() => composeGrantLensChain(projects, [{ root: atDocuments } as LensBody])).toThrow(
+      refusal,
+    );
     const pinned = {
       root: {
-        ...everyBranch(githubOperations),
-        where: conditionAtOperation('commits.read', {
+        ...turnOnEveryOperationBranch(githubOperations),
+        where: conditionOverOperationRows('commits.read', {
           field: 'sha',
           operator: 'equals',
           value: 'a'.repeat(40),
@@ -493,44 +500,71 @@ describe("refusals that stay about operations, read at each operation's branch",
   });
 
   test('a chain composes each narrowing over the one above it; none reads every branch', () => {
-    const readOnly = { root: everyBranch(['documents.read']) };
+    const readOnly = { root: turnOnEveryOperationBranch(['documents.read']) };
     const search = (chain: unknown[]) =>
-      rowsThroughLens(composeGrantLens(projects, chain).lens, 'documents.search', rows);
-    expect(composeGrantLens(projects, [readOnly, readOnly]).lens).toHaveProperty('parent');
+      projectOperationRows(composeGrantLensChain(projects, chain).lens, 'documents.search', rows);
+    expect(composeGrantLensChain(projects, [readOnly, readOnly]).lens).toHaveProperty('parent');
     expect(search([])).toEqual(rows);
     expect(search([readOnly])).toEqual([]);
-    expect(composeGrantLens(projects).narrowed).toBe(false);
-    expect(composeGrantLens(projects, [readOnly]).narrowed).toBe(true);
+    expect(composeGrantLensChain(projects).narrowed).toBe(false);
+    expect(composeGrantLensChain(projects, [readOnly]).narrowed).toBe(true);
     for (const stored of [
       [{ ...readOnly, id: 'request' }],
       [{ layers: [readOnly] }],
       ['whole'],
       [{ root: { relations: { nowhere: {} } } }],
     ])
-      expect(() => composeGrantLens(projects, stored)).toThrow(GrantLensError);
+      expect(() => composeGrantLensChain(projects, stored)).toThrow(GrantLensError);
   });
 
-  test('an empty or absent narrowing adds nothing; every branch only when the whole chain is empty', () => {
-    const readOnly = { root: everyBranch(['documents.read']) };
-    const every = composeGrantLens(projects);
-    for (const chain of [[null], [undefined, {}], [{ root: {} }, { mapDefaults: {} }]])
-      expect(composeGrantLens(projects, chain)).toEqual(every);
-    const alone = composeGrantLens(projects, [readOnly]);
+  test('only an absent lens adds nothing; every lens that is present composes as json-rules composes it', () => {
+    const readOnly = { root: turnOnEveryOperationBranch(['documents.read']) };
+    const every = composeGrantLensChain(projects);
+    expect(every.narrowed).toBe(false);
+    for (const chain of [[null], [undefined, null], Array(grantLensChainLimit).fill(undefined)])
+      expect(composeGrantLensChain(projects, chain)).toEqual(every);
+    const alone = composeGrantLensChain(projects, [readOnly]);
     for (const chain of [
-      [{}, readOnly],
+      [undefined, readOnly],
       [readOnly, null],
-      [undefined, readOnly, {}],
+      [null, readOnly, undefined],
     ])
-      expect(composeGrantLens(projects, chain)).toEqual(alone);
+      expect(composeGrantLensChain(projects, chain)).toEqual(alone);
+    // `{}`, `{ root: {} }` and `{ root: { relations: {} } }` say the same thing: no branch is on.
+    for (const nothing of [{}, { root: {} }, { root: { relations: {} } }]) {
+      const shown = composeGrantLensChain(projects, [nothing]);
+      expect(shown.narrowed).toBe(true);
+      expect(lensVisit(shown.lens, 'documents.read')).toBeNull();
+      expect(projectOperationRows(shown.lens, 'documents.read', rows)).toEqual([]);
+    }
+    expect(() =>
+      composeGrantLensChain(projects, [
+        {},
+        { root: turnOnEveryOperationBranch(['documents.read', 'documents.search']) },
+      ]),
+    ).toThrow(GrantLensError);
+  });
+
+  test('a lens with every operation unticked shows nothing and refuses what it would read', () => {
+    const unticked = composeGrantLensChain(repositoryBase, [
+      { root: turnOnEveryOperationBranch([]) },
+    ]);
+    expect(unticked.narrowed).toBe(true);
+    for (const operation of githubOperations) {
+      expect(lensVisit(unticked.lens, operation)).toBeNull();
+      expect(lensFiltersOperationRows(unticked.lens, operation)).toBe(true);
+    }
+    expect(refuseRepositoryOperationLens('blobs.read', unticked)).not.toBeNull();
   });
 
   test('two narrowings compose as two stacked layers did on 0.18', () => {
-    const chained = composeGrantLens(repositoryBase, [pinned, trimmed]);
-    expect(chained.projection).toEqual(
+    const chained = composeGrantLensChain(repositoryBase, [pinned, trimmed]);
+    const projection = projectLens(chained.lens);
+    expect(projection).toEqual(
       projectLens({ parent: { parent: repositoryBase, ...pinned }, ...trimmed }),
     );
-    const read = projectionVisit(chained.projection, 'commits.read');
-    expect(Object.keys(chained.projection)).toEqual([
+    const read = lensVisit(chained.lens, 'commits.read');
+    expect(Object.keys(projection)).toEqual([
       'Operations',
       'Operations.commits',
       'Operations.commits.read',
@@ -540,32 +574,36 @@ describe("refusals that stay about operations, read at each operation's branch",
   });
 
   test("a later narrowing can't turn on a branch the one above it leaves off", () => {
-    const commitsOnly = { root: narrowingAtOperation('commits.read', {}) };
-    const trees = { root: narrowingAtOperation('trees.read', {}) };
-    expect(composeGrantLens(repositoryBase, [trees]).narrowed).toBe(true);
-    expect(() => composeGrantLens(repositoryBase, [commitsOnly, trees])).toThrow(GrantLensError);
+    const commitsOnly = { root: narrowOperationBranch('commits.read', {}) };
+    const trees = { root: narrowOperationBranch('trees.read', {}) };
+    expect(composeGrantLensChain(repositoryBase, [trees]).narrowed).toBe(true);
+    expect(() => composeGrantLensChain(repositoryBase, [commitsOnly, trees])).toThrow(
+      GrantLensError,
+    );
   });
 
   test(`a chain composes at most ${grantLensChainLimit} narrowings`, () => {
-    const readOnly = { root: everyBranch(['documents.read']) };
+    const readOnly = { root: turnOnEveryOperationBranch(['documents.read']) };
     const chain = (length: number) => Array.from({ length }, () => readOnly);
-    expect(composeGrantLens(projects, chain(grantLensChainLimit)).narrowed).toBe(true);
-    expect(() => composeGrantLens(projects, chain(grantLensChainLimit + 1))).toThrow(
+    expect(composeGrantLensChain(projects, chain(grantLensChainLimit)).narrowed).toBe(true);
+    expect(() => composeGrantLensChain(projects, chain(grantLensChainLimit + 1))).toThrow(
       GrantLensError,
     );
-    expect(() => composeGrantLens(projects, Array(grantLensChainLimit + 1).fill(null))).toThrow(
-      GrantLensError,
-    );
+    expect(() =>
+      composeGrantLensChain(projects, Array(grantLensChainLimit + 1).fill(null)),
+    ).toThrow(GrantLensError);
   });
 
   test('every branch is turned on once, each leaf with its own narrowing', () => {
-    expect(everyBranch(['documents.read', 'documents.search', 'sessions.write'])).toEqual({
+    expect(
+      turnOnEveryOperationBranch(['documents.read', 'documents.search', 'sessions.write']),
+    ).toEqual({
       relations: {
         documents: { relations: { read: {}, search: {} } },
         sessions: { relations: { write: {} } },
       },
     });
-    expect(everyBranch(['thread.read'], () => ({ picks: ['id'] }))).toEqual({
+    expect(turnOnEveryOperationBranch(['thread.read'], () => ({ picks: ['id'] }))).toEqual({
       relations: { thread: { relations: { read: { picks: ['id'] } } } },
     });
   });
@@ -574,7 +612,7 @@ describe("refusals that stay about operations, read at each operation's branch",
     const operations = ['documents.read', 'sessions.delete'];
     const rowModel = (operation: string) =>
       operation === 'documents.read' ? 'ArchiveDocument' : undefined;
-    const base = generateOperationsLens({
+    const base = createOperationsLens({
       model: 'ArchiveLibraryOperation',
       operations,
       rowModel,
@@ -597,7 +635,7 @@ describe("refusals that stay about operations, read at each operation's branch",
       ArchiveDocument: { fields: { id: document } },
     });
     const generate = (catalog: string[], row = 'ArchiveDocument') =>
-      generateOperationsLens({
+      createOperationsLens({
         model: 'Ops',
         operations: catalog,
         rowModel: () => row,
@@ -607,14 +645,18 @@ describe("refusals that stay about operations, read at each operation's branch",
     expect(() => generate(['x_y.read', 'x.y.write'])).toThrow();
     expect(() => generate(['documents', 'documents.read'])).toThrow();
     expect(() => generate(['documents.read'], 'Ops_documents')).toThrow();
-    const root = everyBranch(operations, (operation) => (rowModel(operation) ? {} : undefined));
+    const root = turnOnEveryOperationBranch(operations, (operation) =>
+      rowModel(operation) ? {} : undefined,
+    );
     expect(root).toEqual({ relations: { documents: { relations: { read: {} } }, sessions: {} } });
-    expect(rowsThroughLens({ parent: base, root }, 'documents.read', [{ id: 'a' }])).toEqual([
+    expect(projectOperationRows({ parent: base, root }, 'documents.read', [{ id: 'a' }])).toEqual([
       { id: 'a' },
     ]);
     // A row with no narrowing reads exactly that root: every branch the base has.
-    expect(composeGrantLens(base).lens).toEqual({ parent: base, root });
-    expect(rowModelNarrowing(['documents.read'], 'ArchiveDocument', { picks: ['id'] })).toEqual({
+    expect(composeGrantLensChain(base).lens).toEqual({ parent: base, root });
+    expect(
+      narrowRowModelOnEveryBranch(['documents.read'], 'ArchiveDocument', { picks: ['id'] }),
+    ).toEqual({
       root: { relations: { documents: { relations: { read: {} } } } },
       mapDefaults: { operations: { models: { ArchiveDocument: { picks: ['id'] } } } },
     });
@@ -622,48 +664,50 @@ describe("refusals that stay about operations, read at each operation's branch",
 
   test('a grant row is refused over every operation it reaches, full meaning all of them', () => {
     expect(
-      archiveGrantRefusal({ full: false, operations: ['documents.read'] }, archive(onlyChosen)),
+      refuseArchiveGrantLens({ full: false, operations: ['documents.read'] }, archive(onlyChosen)),
     ).toBeNull();
-    expect(archiveGrantRefusal({ full: true }, archive(onlyChosen))).toBe(
+    expect(refuseArchiveGrantLens({ full: true }, archive(onlyChosen))).toBe(
       'Search needs a lens that shows content and is not limited to chosen documents',
     );
-    expect(archiveGrantRefusal({ full: true }, archive())).toBeNull();
+    expect(refuseArchiveGrantLens({ full: true }, archive())).toBeNull();
   });
 
-  const repository = (...chain: LensBody[]) => composeGrantLens(repositoryBase, chain);
+  const repository = (...chain: LensBody[]) => composeGrantLensChain(repositoryBase, chain);
   const commits = (narrowing: ModelNarrowing) =>
-    rowModelNarrowing(githubOperations, 'RepositoryCall', narrowing);
+    narrowRowModelOnEveryBranch(githubOperations, 'RepositoryCall', narrowing);
   const pinnedCommit = commits({
     where: { field: 'sha', operator: 'equals', value: 'a'.repeat(40) },
   });
 
   test('a repository grant pinned to commits reads only commits', () => {
-    expect(repositoryLensRefusal('commits.read', repository(pinnedCommit))).toBeNull();
-    expect(repositoryLensRefusal('trees.read', repository())).toBeNull();
+    expect(refuseRepositoryOperationLens('commits.read', repository(pinnedCommit))).toBeNull();
+    expect(refuseRepositoryOperationLens('trees.read', repository())).toBeNull();
     expect(
-      repositoryLensRefusal('trees.read', repository(commits({ omits: ['message'] }))),
+      refuseRepositoryOperationLens('trees.read', repository(commits({ omits: ['message'] }))),
     ).toBeNull();
-    expect(repositoryLensRefusal('blobs.read', repository(pinnedCommit))).toBe(
+    expect(refuseRepositoryOperationLens('blobs.read', repository(pinnedCommit))).toBe(
       'A grant pinned to commits reads only those commits; trees and blobs need an unpinned grant',
     );
     expect(
-      repositoryGrantRefusal(
+      refuseRepositoryGrantLens(
         { full: false, operations: ['commits.read'] },
         repository(pinnedCommit),
       ),
     ).toBeNull();
-    expect(repositoryGrantRefusal({ full: true }, repository(pinnedCommit))).not.toBeNull();
+    expect(refuseRepositoryGrantLens({ full: true }, repository(pinnedCommit))).not.toBeNull();
     expect(repositoryCallRow({ objectId: 'a'.repeat(40) })).toEqual({ sha: 'a'.repeat(40) });
   });
 });
 
 test("rows sit at their operation's branch of the record a lens reads", () => {
   const rows = [threadRow('thread_1')];
-  expect(operationRecord('thread.read', rows)).toEqual({ thread: { read: rows } });
-  expect(operationRows(operationRecord('thread.read', rows), 'thread.read')).toEqual(rows);
-  expect(operationRows({ thread: {} }, 'thread.read')).toEqual([]);
+  expect(nestRowsAtOperation('thread.read', rows)).toEqual({ thread: { read: rows } });
+  expect(readRowsAtOperation(nestRowsAtOperation('thread.read', rows), 'thread.read')).toEqual(
+    rows,
+  );
+  expect(readRowsAtOperation({ thread: {} }, 'thread.read')).toEqual([]);
   expect(
-    conditionAtOperation('documents.read', { field: 'id', operator: 'equals', value: 'x' }),
+    conditionOverOperationRows('documents.read', { field: 'id', operator: 'equals', value: 'x' }),
   ).toEqual({
     field: 'documents.read',
     arrayOperator: 'any',
