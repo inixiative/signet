@@ -23,7 +23,12 @@ import type {
   RegistrationRequest,
 } from './contracts';
 import { readPrivateJson } from './files';
-import { installationDirectory, installationPaths, signetCredentialFile } from './installation';
+import {
+  heldSignetCredential,
+  installationDirectory,
+  installationPaths,
+  signetCredentialFile,
+} from './installation';
 import { InstallationSocket } from './installationSocket';
 
 export type HeldSignet = {
@@ -32,13 +37,8 @@ export type HeldSignet = {
   credentialFile: string;
 };
 
-const heldEnrollment = async (credentialFile: string) => {
-  if (!existsSync(credentialFile)) return null;
-  const parsed = signetCredentialSchema.safeParse(
-    await readPrivateJson(credentialFile).catch(() => null),
-  );
-  return parsed.success ? parsed.data.enrollmentId : null;
-};
+const heldEnrollment = async (credentialFile: string) =>
+  (await heldSignetCredential(credentialFile))?.enrollmentId ?? null;
 
 const lockStaleMs = 60_000;
 
@@ -177,17 +177,22 @@ export async function listedSignets(root: string, urls: readonly string[]) {
   return listed;
 }
 
-/** The local file of a Signet this installation holds, enrolling it now if Kingdom lists it but no file exists yet. */
+/**
+ * The local file of a Signet this installation holds. A missing file, or one this client cannot
+ * read (an older signet client wrote it), is enrolled again now if Kingdom still lists the Signet.
+ */
 export async function heldSignetFile(root: string, url: string, signetId: string) {
   const { keyFile, directory } = await installationDirectory(root, url);
   const file = signetCredentialFile(directory, signetId);
-  if (existsSync(file)) return file;
+  if (await heldSignetCredential(file)) return file;
   const listed = (await installationSignets(url, keyFile)).signets.filter(
     (signet) => signet.signetId === signetId,
   );
-  if (!listed.length) throw Error(`Kingdom does not list Signet ${signetId} for this installation`);
+  if (!listed.length)
+    throw Error(`${url} no longer lists Signet ${signetId} for this installation`);
   await holdInstallationSignets(url, keyFile, directory, listed);
-  if (!existsSync(file)) throw Error(`Signet ${signetId} could not be enrolled here`);
+  if (!(await heldSignetCredential(file)))
+    throw Error(`Signet ${signetId} could not be enrolled here`);
   return file;
 }
 

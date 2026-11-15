@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import {
   defaultInstallationName,
   heldCredentials,
+  heldSignetCredential,
   heldSignetFile,
   holdPersonSignets,
   installationDirectory,
@@ -211,7 +212,17 @@ describe('installation Signets', () => {
     expect(await readPrivateJson(file)).not.toHaveProperty('integrationId');
     expect(await heldSignetFile(root, url, listedId)).toBe(file);
     expect(count('enrollInstallationSignet')).toBe(1);
-    await expect(heldSignetFile(root, url, uuid())).rejects.toThrow(/does not list Signet/);
+    await expect(heldSignetFile(root, url, uuid())).rejects.toThrow(/no longer lists Signet/);
+  });
+
+  test('heldSignetFile enrolls again over a file this client cannot read (an older client wrote it)', async () => {
+    const root = await newRoot();
+    const file = await heldSignetFile(root, url, listedId);
+    await writePrivateJson(file, { signetId: listedId, integrationId: uuid() });
+    expect(await heldSignetCredential(file)).toBeNull();
+    expect(await heldSignetFile(root, url, listedId)).toBe(file);
+    expect(count('enrollInstallationSignet')).toBe(2);
+    expect(await heldSignetCredential(file)).toMatchObject({ signetId: listedId, owner });
   });
 
   test('withdrawRegistration cancels only open registrations and throws what Kingdom refuses', async () => {
