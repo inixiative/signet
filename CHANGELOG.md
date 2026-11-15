@@ -30,8 +30,9 @@ narrowing (`narrowsThreadsTerms`, Kingdom's `termsNarrow`).
   (`conversationOutboundSchema`), not on the grant.
 - **A join request by kind may carry `externalId`** (`requestedResourceKindSchema`); a `conversation`
   ask must, as a thread id.
-- **A holder reads each resource's `externalId`** on its grant rows (`signetGrantSchema`) and in
-  `describe` (`signetDescriptionResourceSchema`): a conversation's thread id.
+- **A holder reads a conversation's `externalId`** (its thread id) on its grant rows
+  (`signetGrantSchema`) and in `describe` (`signetDescriptionResourceSchema`). The field is optional:
+  Kingdom sends it only where the holder acts by it and keeps other provider ids to itself.
 - **A hosted Signet's `recipient` carries `audience`** (`inOrg` or `outside`).
 - **A grant row may name a scope** (`resourceModel: 'Integration'`: `integrationId`, `kind`, optional
   `projectId`, then `full` / `operations` / `lens` / `where` as on a resource row), asked for in

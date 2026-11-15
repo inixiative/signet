@@ -373,8 +373,8 @@ export const signetDescriptionResourceSchema = z.object({
   id: z.uuid(),
   name: z.string(),
   kind: z.string(),
-  /** The provider's own id for the resource: a conversation's thread id. */
-  externalId: z.string(),
+  /** The provider's own id, sent only where the holder acts by it: a conversation's thread id. */
+  externalId: z.string().optional(),
   integrationId: z.uuid(),
   /** The integration's provider family (`github`, `anthropic`…): the description has no host. */
   provider: z.string(),
