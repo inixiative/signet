@@ -15,14 +15,14 @@ import {
 const uuid = () => Bun.randomUUIDv7();
 const T1 = 'thread_0199f0aa-0000-7000-8000-000000000001';
 const owner = { ownerModel: 'User', userId: uuid(), organizationId: null, spaceId: null };
-const threadsGrant = (terms: Record<string, unknown>) => ({
+const conversationGrant = (extra: Record<string, unknown> = {}) => ({
   resourceModel: 'IntegrationResource',
   integrationResourceId: uuid(),
-  kind: 'threads',
+  kind: 'conversation',
   integrationId: uuid(),
   full: false,
-  operations: ['thread.read', 'thread.prompt'],
-  terms,
+  operations: ['thread.read', 'thread.prompt', 'thread.wake'],
+  ...extra,
 });
 const held = (resources: unknown[] = []) => ({
   signetId: uuid(),
@@ -45,11 +45,16 @@ const hosted = (resources: unknown[], baseLenses: Record<string, unknown> = {}) 
   lifecycle: 'ongoing',
   expiresAt: null,
   maxRequests: null,
-  recipient: { recipientModel: 'User', id: uuid(), displayName: 'JobCo agent' },
+  recipient: {
+    recipientModel: 'User',
+    id: uuid(),
+    displayName: 'JobCo agent',
+    audience: 'outside',
+  },
   baseLenses,
   resources,
 });
-const request = (terms: Record<string, unknown>) => ({
+const request = (extra: Record<string, unknown> = {}) => ({
   id: uuid(),
   status: 'sent',
   createdAt: new Date().toISOString(),
@@ -65,33 +70,30 @@ const request = (terms: Record<string, unknown>) => ({
         resourceModel: 'IntegrationResource',
         integrationResourceId: uuid(),
         operations: { picks: ['thread.prompt'] },
-        terms,
+        ...extra,
       },
     ],
   },
   reviewUrl: 'https://kingdom.example/dashboard?reviewSignet=ABC',
 });
 
-// A Kingdom ahead of this package: one hosted grant with a term it doesn't know yet.
+// A Kingdom ahead of this package: one hosted grant in a shape it doesn't know yet.
 const ownHeld = held();
-const member = hosted([threadsGrant({ threads: { delivery: 'turn' } })]);
-const standing = hosted([threadsGrant({ threads: { view: 'thread', speakAs: 'host' } })]);
-const misfit = held([{ ...threadsGrant({ threads: {} }), kind: 'archiveLibrary' }]);
+const member = hosted([conversationGrant()]);
+const standing = hosted([conversationGrant({ operations: 'everything' })]);
+const misfit = held([conversationGrant({ lens: 'whole' })]);
 const ahead = {
   type: 'installation.snapshot',
   pending: null,
   declinedAt: null,
   inquiries: [],
-  hostedSignetRequests: [
-    request({ threads: { delivery: 'turn' } }),
-    request({ threads: { delivery: 'stream' } }),
-  ],
+  hostedSignetRequests: [request(), request({ speakAs: 'host' })],
   signets: [ownHeld, misfit],
   hostedSignets: [member, standing],
 };
 
 describe('per-entry snapshot parsing (review U1)', () => {
-  test('one unknown term drops only its resource; every Signet is kept', () => {
+  test('one unreadable resource drops only itself; every Signet is kept', () => {
     const snapshot = parseInstallationSnapshot(ahead);
     const ids = (list: { signetId: string }[]) => list.map((signet) => signet.signetId);
     expect(ids(snapshot.signets)).toEqual([ownHeld.signetId, misfit.signetId]);
@@ -99,8 +101,10 @@ describe('per-entry snapshot parsing (review U1)', () => {
     // A member whose grant this package can't read is still a member: never mistaken for revoked.
     expect(ids(snapshot.hostedSignets)).toEqual([member.signetId, standing.signetId]);
     expect(snapshot.hostedSignets[0]?.resources[0]).toMatchObject({
-      terms: { threads: { view: 'own', delivery: 'turn', outbound: 'review' } },
+      kind: 'conversation',
+      operations: ['thread.read', 'thread.prompt', 'thread.wake'],
     });
+    expect(snapshot.hostedSignets[0]?.recipient.audience).toBe('outside');
     expect(snapshot.hostedSignets[1]?.resources).toEqual([]);
     expect(snapshot.hostedSignetRequests).toHaveLength(1);
     expect(snapshot.hostedSignetRequests[0]?.requester.audience).toBe('outside');
@@ -109,7 +113,6 @@ describe('per-entry snapshot parsing (review U1)', () => {
       { list: `signets.${misfit.signetId}.resources`, index: 0 },
       { list: `hostedSignets.${standing.signetId}.resources`, index: 0 },
     ]);
-    expect(snapshot.dropped[1]?.reason).toContain('terms of another kind');
   });
 
   test('a hosted Signet keeps its base lenses, keyed by baseLensId', () => {
@@ -146,10 +149,10 @@ describe('per-entry snapshot parsing (review U1)', () => {
     expect(snapshot.signets[0]?.resources).toEqual([]);
   });
 
-  test('describe drops a resource whose lens or terms it cannot read, and keeps the rest', () => {
-    const resource = (extra: Record<string, unknown>, kind = 'threads') => ({
+  test('describe drops a resource whose lens it cannot read, and keeps the rest', () => {
+    const resource = (extra: Record<string, unknown> = {}, kind = 'conversation') => ({
       id: uuid(),
-      name: 'Threads',
+      name: 'Design review',
       kind,
       integrationId: uuid(),
       provider: 'foundry',
@@ -169,9 +172,9 @@ describe('per-entry snapshot parsing (review U1)', () => {
           key: 'thread.prompt',
           name: 'Post',
           resources: [
-            resource({ terms: { threads: { delivery: 'turn' } } }),
+            resource(),
             resource({ lens: { threads: { form: 'ids', ids: [T1] } } }),
-            resource({ terms: { threads: {} } }, 'archiveLibrary'),
+            resource({ lens: 'whole' }, 'archiveLibrary'),
           ],
         },
       ],

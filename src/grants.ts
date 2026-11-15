@@ -2,39 +2,15 @@ import { validateRule } from '@inixiative/json-rules';
 import { z } from 'zod';
 import { lensLayerSchema, storedLensLayersSchema } from './lens';
 import { operationPickSchema, resolvedOperationsSchema } from './operations';
-import { threadsResourceKind, threadsTermsSchema } from './threads';
 
 /**
  * What a Signet revision grants, one row per resource (Aron, 2026-11-01). False polymorphism on
  * `resourceModel`: an `IntegrationResource` row carries its operations (`full`, or the leaves its
- * picks resolved to), its lens layers and its per-kind terms; a `Project` row names a Kingdom project
+ * picks resolved to) and its lens layers; a `Project` row names a Kingdom project
  * the Signet may be used in, and nothing else. Artifacts may join later.
  */
 export const grantResourceModelSchema = z.enum(['IntegrationResource', 'Project']);
 export type GrantResourceModel = z.infer<typeof grantResourceModelSchema>;
-
-/**
- * Per-kind terms that are neither operations nor lens: how a holder takes part. Strict per kind. A
- * request names its resource by id with no kind, so Kingdom checks `grantTermsFitKind` once it has
- * resolved the resource.
- */
-export const grantTermsSchema = z.strictObject({ threads: threadsTermsSchema.optional() });
-export type GrantTerms = z.infer<typeof grantTermsSchema>;
-
-/** The resource kind each terms key belongs to. */
-const termsKinds = { threads: threadsResourceKind } as const satisfies Record<
-  keyof GrantTerms,
-  string
->;
-/** Whether `terms` only carry keys that belong to a resource of `kind`. */
-export const grantTermsFitKind = (kind: string, terms: GrantTerms | undefined) =>
-  Object.entries(terms ?? {}).every(
-    ([key, value]) => value === undefined || termsKinds[key as keyof GrantTerms] === kind,
-  );
-
-/** A threads grant's terms, every one it leaves out at its narrowest. */
-export const threadsTerms = (terms: z.input<typeof grantTermsSchema> | undefined) =>
-  threadsTermsSchema.parse(terms?.threads ?? {});
 
 /** The most characters a `where` may take as JSON, the size of a thread's text. */
 export const grantWhereLimit = 16_000;
@@ -93,7 +69,6 @@ const integrationResourceShape = {
   operations: resolvedOperationsSchema.optional(),
   /** The layers under the kind's operations lens; absent reads every branch of it. */
   lens: storedLensLayersSchema.optional(),
-  terms: grantTermsSchema.optional(),
   /**
    * What may go in: the condition this row's calls must meet, whole. Kingdom checks it at
    * admission; a holder never gates on it. It names no other Signet and no path.
@@ -135,7 +110,7 @@ export type IntegrationResourceGrant = z.infer<typeof integrationResourceGrantSc
 export type ProjectGrant = z.infer<typeof projectGrantSchema>;
 
 /**
- * A grant as a holder reads it: the stored row, plus the resource's `kind` so its terms can be read
+ * A grant as a holder reads it: the stored row, plus the resource's `kind`
  * and the `integrationId` of the integration the resource is on. A Signet reaches resources on any
  * number of integrations, so each row names its own. Read paths stay loose (a field a newer Kingdom
  * adds is dropped, not fatal).
@@ -160,7 +135,6 @@ export type SignetGrant = z.infer<typeof signetGrantSchema>;
 const askedOperations = {
   operations: operationPickSchema,
   lens: lensLayerSchema.optional(),
-  terms: grantTermsSchema.optional(),
   where: grantWhereSchema.optional(),
 };
 /** A resource asked for by id. */
@@ -187,12 +161,15 @@ const askedByKind = {
 export const registeredResourceKindSchema = z.strictObject(askedByKind);
 /**
  * A resource asked for by kind on an existing integration, when the asker does not know its id: a
- * party asking to join a Foundry's `threads` (one per Foundry, so the kind and the Foundry's
- * `integrationId` name it). Kingdom resolves it to the resource's id before anyone reviews it.
+ * party asking to join one of a Foundry's conversations names the Foundry's `integrationId`, the
+ * `conversation` kind and the thread's id as `externalId`. Without `externalId` the kind alone names
+ * the resource (one per integration). Kingdom resolves it to the resource's id before anyone reviews
+ * it.
  */
 export const requestedResourceKindSchema = z.strictObject({
   ...askedByKind,
   integrationId: z.uuid(),
+  externalId: z.string().min(1).max(256).optional(),
 });
 /** What a registering Installation may ask for: resources by id or by kind. */
 export const registeredResourceSchema = z.union([

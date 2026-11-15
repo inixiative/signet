@@ -7,20 +7,21 @@ import {
   baseLensId,
   composeGrantLens,
   conditionAtOperation,
+  conversationActLevel,
+  conversationPermissionSchema,
+  conversationResourceKind,
   type DroppedEntry,
+  declaredOperationSchema,
   everyBranch,
   GrantLensError,
   operationsLens as generateOperationsLens,
   githubOperationSchema,
   grantResourceSchema,
-  grantTermsFitKind,
-  grantTermsSchema,
   grantWhereLimit,
   grantWhereSchema,
   type LensLayer,
-  meetThreadsTerms,
   narrowingAtOperation,
-  narrowsThreadsTerms,
+  narrowsOperations,
   operationRecord,
   operationRows,
   operationsMapName,
@@ -33,6 +34,7 @@ import {
   repositoryGrantRefusal,
   repositoryLensRefusal,
   requestedResourceSchema,
+  resolveOperationPicks,
   rowModelLayer,
   rowsThroughLens,
   type StoredLensLayer,
@@ -41,10 +43,8 @@ import {
   signetProposalSchema,
   signetResourceSchema,
   storedLensLayerSchema,
+  threadOperationSchema,
   threadRow,
-  threadsResourceKind,
-  threadsTerms,
-  threadsTermsSchema,
 } from '../src';
 import { grantLensOver, operationsLens } from './operationsLens';
 
@@ -100,7 +100,7 @@ describe('the grant resource contract', () => {
     );
   });
 
-  test('a Project row is the project alone: no full, operations, lens or terms', () => {
+  test('a Project row is the project alone: no full, operations or lens', () => {
     const project = { resourceModel: 'Project', projectId } as const;
     expect(grantResourceSchema.parse(project)).toEqual(project);
     for (const extra of [
@@ -108,7 +108,6 @@ describe('the grant resource contract', () => {
       { full: false },
       { operations: ['commits.read'] },
       { lens: [pinned] },
-      { terms: {} },
       { integrationResourceId },
     ])
       expect(grantResourceSchema.safeParse({ ...project, ...extra }).success).toBe(false);
@@ -158,18 +157,8 @@ describe('the grant resource contract', () => {
       full: false,
       operations: ['thread.read', 'thread.prompt'],
       lens: [pinned],
-      terms: { threads: { delivery: 'turn' } },
     });
     expect(grantResourceSchema.parse(JSON.parse(JSON.stringify(row)))).toEqual(row);
-    expect(row.resourceModel === 'IntegrationResource' && row.terms?.threads).toEqual({
-      view: 'own',
-      delivery: 'turn',
-      outbound: 'review',
-      floor: { mayTake: false },
-      posts: 'data',
-      act: 'ask',
-      agent: false,
-    });
   });
 });
 
@@ -235,16 +224,17 @@ describe('what a party asks for', () => {
 
   test('by kind on a named integration, when the asker does not know the id', () => {
     const byKind = {
-      resourceKind: threadsResourceKind,
-      operations: { picks: ['thread.read', 'thread.prompt'] },
-      terms: { threads: { delivery: 'turn' } },
+      resourceKind: conversationResourceKind,
+      externalId: 'thread_a',
+      operations: { picks: ['thread.read', 'thread.prompt', 'thread.wake'] },
     };
     const integrationId = Bun.randomUUIDv7();
     const asked = requestedResourceSchema.parse({ ...byKind, integrationId });
     expect(asked).toMatchObject({
-      resourceKind: 'threads',
+      resourceKind: 'conversation',
+      externalId: 'thread_a',
       integrationId,
-      operations: { picks: ['thread.read', 'thread.prompt'] },
+      operations: { picks: ['thread.read', 'thread.prompt', 'thread.wake'] },
     });
     expect(requestedResourceSchema.safeParse(byKind).success).toBe(false);
   });
@@ -290,86 +280,37 @@ describe('the grant as a holder reads it', () => {
   });
 });
 
-describe('threads terms', () => {
-  test('default to the narrowest value of every term', () => {
-    const narrowest = {
-      view: 'own',
-      delivery: 'note',
-      outbound: 'review',
-      floor: { mayTake: false },
-      posts: 'data',
-      act: 'ask',
-      agent: false,
-    };
-    expect(threadsTermsSchema.parse({})).toEqual(narrowest as never);
-    expect(threadsTerms(undefined)).toEqual(narrowest as never);
-    expect(threadsTerms({})).toEqual(narrowest as never);
-    expect(threadsTerms({ threads: { outbound: 'auto' } })).toEqual({
-      ...narrowest,
-      outbound: 'auto',
-    } as never);
+describe('conversation permissions', () => {
+  const held = (...permissions: string[]) =>
+    conversationPermissionSchema.array().parse(permissions);
+
+  test('are catalog entries nothing calls: none is a declared operation', () => {
+    for (const permission of conversationPermissionSchema.options)
+      expect(declaredOperationSchema.safeParse(permission).success).toBe(false);
+    expect(conversationPermissionSchema.safeParse('thread.read').success).toBe(false);
+    expect(conversationPermissionSchema.safeParse('agent.write').success).toBe(false);
   });
 
-  test('are strict: the thread selector is a lens filter now, not a term', () => {
-    expect(threadsTermsSchema.safeParse({ threads: { form: 'ids', ids: ['t'] } }).success).toBe(
-      false,
-    );
-    expect(grantTermsSchema.safeParse({ archive: {} }).success).toBe(false);
-  });
-
-  test('only a threads resource carries threads terms', () => {
-    expect(grantTermsFitKind(threadsResourceKind, { threads: threadsTermsSchema.parse({}) })).toBe(
-      true,
-    );
-    expect(grantTermsFitKind('repository', { threads: threadsTermsSchema.parse({}) })).toBe(false);
-    expect(grantTermsFitKind('repository', undefined)).toBe(true);
-    expect(grantTermsFitKind('repository', {})).toBe(true);
-  });
-
-  test('approving may only narrow each term', () => {
-    const terms = (value: object) => threadsTermsSchema.parse(value);
-    const asked = terms({ view: 'thread', delivery: 'turn' });
-    expect(narrowsThreadsTerms(terms({}), asked)).toBe(true);
-    expect(narrowsThreadsTerms(asked, asked)).toBe(true);
-    expect(narrowsThreadsTerms(terms({ outbound: 'auto' }), asked)).toBe(false);
-    expect(narrowsThreadsTerms(asked, terms({ view: 'thread' }))).toBe(false);
-    expect(narrowsThreadsTerms(terms({ floor: { mayTake: true } }), asked)).toBe(false);
-    const mayTake = terms({ floor: { mayTake: true } });
-    expect(narrowsThreadsTerms(terms({}), mayTake)).toBe(true);
-  });
-
-  test('posts, act and agent narrow too', () => {
-    const terms = (value: object) => threadsTermsSchema.parse(value);
-    const asked = terms({ posts: 'instructions', act: 'read', agent: true });
-    expect(narrowsThreadsTerms(terms({}), asked)).toBe(true);
-    expect(narrowsThreadsTerms(terms({ act: 'read' }), asked)).toBe(true);
-    expect(narrowsThreadsTerms(terms({ act: 'full' }), asked)).toBe(false);
-    expect(narrowsThreadsTerms(terms({ posts: 'instructions' }), terms({}))).toBe(false);
-    expect(narrowsThreadsTerms(terms({ agent: true }), terms({}))).toBe(false);
-    expect(threadsTermsSchema.safeParse({ act: 'write' }).success).toBe(false);
-  });
-
-  test('the meet of a default and a request is the narrowest of each term, inside both', () => {
-    const terms = (value: object) => threadsTermsSchema.parse(value);
-    const asked = terms({
-      view: 'thread',
-      delivery: 'turn',
-      posts: 'instructions',
-      act: 'full',
-      agent: true,
+  test('are picked and narrowed like any operation', () => {
+    const leaves = [...threadOperationSchema.options, ...conversationPermissionSchema.options];
+    const asked = resolveOperationPicks(leaves, { picks: ['thread.read', 'thread.prompt'] });
+    const wider = resolveOperationPicks(leaves, {
+      picks: ['thread.read', 'thread.prompt', 'thread.take'],
     });
-    const inOrg = terms({
-      view: 'thread',
-      outbound: 'auto',
-      posts: 'instructions',
-      act: 'read',
-      floor: { mayTake: true },
+    expect(narrowsOperations(asked, wider)).toBe(true);
+    expect(narrowsOperations(wider, asked)).toBe(false);
+    expect(resolveOperationPicks(leaves, { picks: ['agent.*'] })).toEqual({
+      full: false,
+      operations: ['agent.instruct', 'agent.read', 'agent.act'],
     });
-    const meet = meetThreadsTerms(inOrg, asked);
-    expect(meet).toEqual(terms({ view: 'thread', posts: 'instructions', act: 'read' }));
-    expect(narrowsThreadsTerms(meet, asked)).toBe(true);
-    expect(narrowsThreadsTerms(meet, inOrg)).toBe(true);
-    expect(meetThreadsTerms(asked, inOrg)).toEqual(meet);
+  });
+
+  test('the act level is the highest held: a permission implies no other', () => {
+    expect(conversationActLevel(held())).toBe('ask');
+    expect(conversationActLevel(held('agent.instruct', 'thread.wake'))).toBe('ask');
+    expect(conversationActLevel(held('agent.read'))).toBe('read');
+    expect(conversationActLevel(held('agent.act'))).toBe('full');
+    expect(conversationActLevel(held('agent.read', 'agent.act'))).toBe('full');
   });
 });
 
