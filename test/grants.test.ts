@@ -49,7 +49,7 @@ import {
   threadRow,
   turnOnEveryOperationBranch,
 } from '../src';
-import { operationsLens } from './operationsLens';
+import { createTestOperationsLens } from './createTestOperationsLens';
 
 const uuid = () => Bun.randomUUIDv7();
 const integrationResourceId = uuid();
@@ -374,14 +374,14 @@ describe('conversation permissions', () => {
 /** A real operations lens per kind, and a grant's `GrantLens` composed over it as Kingdom would. */
 const document = { kind: 'scalar', type: 'String' } as const;
 const archiveOperations = archiveOperationSchema.options;
-const archiveBase = operationsLens(archiveOperations, 'ArchiveDocument', {
+const archiveBase = createTestOperationsLens(archiveOperations, 'ArchiveDocument', {
   id: document,
   projectId: document,
   title: document,
   content: document,
 });
 const githubOperations = githubOperationSchema.options;
-const repositoryBase = operationsLens(githubOperations, 'RepositoryCall', {
+const repositoryBase = createTestOperationsLens(githubOperations, 'RepositoryCall', {
   sha: document,
   message: document,
 });
@@ -441,10 +441,14 @@ describe("refusals that stay about operations, read at each operation's branch",
     expect(lensVisit(archive(readOnly).lens, 'documents.read')?.model).toBe('ArchiveDocument');
   });
 
-  const projects = operationsLens(['documents.read', 'documents.search'], 'ArchiveDocument', {
-    id: document,
-    projectId: document,
-  });
+  const projects = createTestOperationsLens(
+    ['documents.read', 'documents.search'],
+    'ArchiveDocument',
+    {
+      id: document,
+      projectId: document,
+    },
+  );
   const inP1 = { field: 'projectId', operator: 'equals', value: 'p1' } as Condition;
   const rows = [
     { id: 'a', projectId: 'p1' },

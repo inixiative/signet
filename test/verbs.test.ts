@@ -26,7 +26,14 @@ const functionsOf = (module: object) =>
 // An exported function whose signature takes or returns a lens.
 const LENS_SIGNATURE = /\b(GrantLens|LensBody|LensNarrowing|ModelNarrowing|Lens)\b/;
 const lensSignatures = SOURCES.flatMap(({ code: source }) =>
-  [...source.matchAll(/export const (\w+) = (?:<[^=]*?>)?\(([\s\S]*?)\)(?::\s*([^=]+?))?\s*=>/g)]
+  [
+    ...source.matchAll(
+      /export const (\w+) = (?:async )?(?:<[^=]*?>)?\(([\s\S]*?)\)(?::\s*([^=]+?))?\s*=>/g,
+    ),
+    ...source.matchAll(
+      /export (?:async )?function (\w+)(?:<[^(]*?>)?\(([\s\S]*?)\)(?::\s*([^{]+?))?\s*\{/g,
+    ),
+  ]
     .filter(([, , params, returns]) => LENS_SIGNATURE.test(`${params} ${returns ?? ''}`))
     .map(([, name]) => name as string),
 );

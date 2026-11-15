@@ -26,7 +26,7 @@ import {
   threadOperationNames,
   threadOperationSchema,
 } from '../src';
-import { operationsLens } from './operationsLens';
+import { createTestOperationsLens } from './createTestOperationsLens';
 
 const a = 'a'.repeat(64);
 const resourceId = Bun.randomUUIDv7();
@@ -132,7 +132,7 @@ describe('the Archive operation contract', () => {
 describe('an Archive call, gated by json-rules against the grant lens at its operation', () => {
   const text = { kind: 'scalar', type: 'String' } as const;
   const operations = archiveOperationSchema.options;
-  const base = operationsLens(operations, 'ArchiveDocument', {
+  const base = createTestOperationsLens(operations, 'ArchiveDocument', {
     id: text,
     title: text,
     content: text,
