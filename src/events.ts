@@ -4,7 +4,7 @@ import { z } from 'zod';
  * Integration events (Kingdom `docs/INTEGRATION-EVENTS.md`, Aron 2026-11-01). An integration that
  * receives its provider's events (a webhook endpoint, or a poll where the provider has none) fans
  * each one out to the Signet grants that reach it: the event kinds are operation leaves under
- * `events.`, picked like any other, and the grant's lens layers filter and trim the event. Live
+ * `events.`, picked like any other, and the grant's lens filters and trims the event. Live
  * only: a channel nobody holds open drops the event.
  */
 
@@ -64,11 +64,11 @@ export const accountResourceKind = 'account';
 export const eventOperationKey = (type: IntegrationEvent['type']) => `events.${type}`;
 
 /**
- * The fields a lens layer can name on the `IntegrationEvent` rows at every `events.*` branch of an
+ * The fields a lens can name on the `IntegrationEvent` rows at every `events.*` branch of an
  * operations lens: the envelope without `eventId`, which stays in Kingdom, and `type`, which rides
- * outside the projected body (`accessEventsAppendSchema`), so a layer can neither trim them nor pick
- * or filter on them. `id` is the row's identifier: a layer can name it and can never drop it
- * (Kingdom refuses a lens that does). `payload` is one field: a layer keeps or drops it whole.
+ * outside the projected body (`accessEventsAppendSchema`), so a lens can neither trim them nor pick
+ * or filter on them. `id` is the row's identifier: a lens can name it and can never drop it
+ * (Kingdom refuses a lens that does). `payload` is one field: a lens keeps or drops it whole.
  */
 export const integrationEventFieldSchema = integrationEventSchema
   .keyof()
@@ -77,7 +77,7 @@ export type IntegrationEventField = z.infer<typeof integrationEventFieldSchema>;
 
 /**
  * One append on a channel's stream. `type` rides outside the projected body, so lens trimming can
- * never drop what a holder routes by; `event` is the envelope as the grant's lens layers project it
+ * never drop what a holder routes by; `event` is the envelope as the grant's lens projects it
  * (json-rules `projectRows`), and always carries `id`, which a holder dedupes on. Kingdom caps the
  * frame: when the projected event is over the cap it leaves `payload` out and sets `truncated`;
  * every other field arrives whole.

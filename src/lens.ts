@@ -1,6 +1,6 @@
 import {
+  assertValidNarrowing,
   type Condition,
-  composeLens,
   createLens,
   type FieldMapEntry,
   type Lens,
@@ -10,73 +10,46 @@ import {
   type ProjectedVisit,
   projectLens,
   projectRows,
-  type StoredLens,
 } from '@inixiative/json-rules';
 import { z } from 'zod';
 
 /**
- * A grant row's lens is its own json-rules layers over the resource kind's operations lens (Aron,
+ * A grant row's lens is one json-rules narrowing over the resource kind's operations lens (Aron,
  * 2026-11-13, R-SIG-18: "every top-level operate has a lens over its operations with every
  * sub-operation, generated from the operations catalog, the same shape as a Prisma map, nesting
- * included. Grant lenses narrow it."). Kingdom generates the base from its catalog under the id
- * `provider:kind`: its anchor is the kind's operations, each dotted segment of an operation a
+ * included. Grant lenses narrow it."; 2026-11-15: "It's just a lens."). Kingdom generates the base
+ * from its catalog: its anchor is the kind's operations, each dotted segment of an operation a
  * relation, and each operation a list of the rows it reads (an Archive document, a thread, a
- * repository call, an integration event). Relations are off until a layer turns them on, so a layer
- * turns on the branches it keeps and narrows the row shapes with `mapDefaults` (every branch of a
- * row model) or one branch through `root.relations`. A grant with no layers reads every branch. A
- * grant row stores only its layers, as json-rules `StoredLens` records, the request's first and an
- * approver's after it. Every layer ANDs with the ones before it, so an approver can only narrow. The
- * layers are this row's alone: what a holder reaches in the end is Kingdom's to work out and is not
- * readable from them. This package carries the layers and the shape of the tree, generates the base
- * (`operationsLens`), composes a row's layers over it (`composeGrantLens`) and reads rows through
- * the result (`rowsThroughLens`); Kingdom and a host both go through these.
+ * repository call, an integration event). Relations are off until a narrowing turns them on, so a
+ * narrowing turns on the branches it keeps and narrows the row shapes with `mapDefaults` (every
+ * branch of a row model) or one branch through `root.relations`. A row stores only its own
+ * narrowing; along a re-delegation chain the reader composes each row's narrowing over the one above
+ * it, the upstream first. A chain with no narrowing reads every branch. This package carries the
+ * narrowing and the shape of the tree, generates the base (`operationsLens`), composes a chain over
+ * it (`composeGrantLens`) and reads rows through the result (`rowsThroughLens`); Kingdom and a host
+ * both go through these.
  */
 
-/** One layer as a party writes it: a json-rules narrowing without its parent. */
-export type LensLayer = Omit<LensNarrowing, 'parent'>;
-/** One stored layer: its id and the ids it composes under, the base first. Never a base itself. */
-export type StoredLensLayer = Pick<StoredLens, 'id' | 'parents'> & LensLayer;
+/** A narrowing as a row stores it: json-rules' narrowing without its parent. */
+export type LensBody = Omit<LensNarrowing, 'parent'>;
 
-const narrowingPart = {
+/**
+ * A narrowing's envelope only: what is inside `root` and `mapDefaults` is json-rules', unchecked
+ * here. `composeGrantLens` validates it before it is read.
+ */
+export const lensNarrowingSchema = z.strictObject({
   root: z.record(z.string(), z.unknown()).optional(),
   mapDefaults: z.record(z.string(), z.unknown()).optional(),
-};
-const layerId = z.string().min(1).max(200);
-
-/**
- * A layer's envelope only: what is inside `root` and `mapDefaults` is json-rules', unchecked here.
- * `composeGrantLens` validates it (json-rules `composeLens`) before it is read as a `LensLayer`.
- */
-export const lensLayerSchema = z.strictObject(narrowingPart);
-export const storedLensLayerSchema = z.strictObject({
-  id: layerId,
-  parents: z.array(layerId).min(1).max(20),
-  ...narrowingPart,
-});
-export const storedLensLayersSchema = z.array(storedLensLayerSchema).max(20);
-
-/**
- * An operations lens as Kingdom generates it: the json-rules `Lens` itself (its field maps, map name
- * and model) with an `id` and no parents. Only the envelope is checked here; a holder composes it
- * under a grant row's layers with `composeGrantLens`, which validates what is inside.
- */
-export const storedBaseLensSchema = z.looseObject({
-  id: layerId,
-  parents: z.array(layerId).max(0),
-  mapName: z.string().min(1),
-  model: z.string().min(1),
-  maps: z.record(z.string(), z.unknown()),
 });
 
-/** The id of a resource kind's operations lens, generated from Kingdom's catalog. */
-export const baseLensId = (provider: string, kind: string) => `${provider}:${kind}`;
+/** The most narrowings a chain composes. */
+export const grantLensChainLimit = 20;
 
 /**
- * A grant row's lens as the refusals read it: its own layers (empty = every branch of the base) and
- * json-rules' `projectLens` of those layers composed over the base, which Kingdom computes after
- * validating them. It describes this row only, never everything its holder reaches.
+ * A grant row's lens as the refusals read it: json-rules' `projectLens` of its chain composed over
+ * the base, and whether any narrowing on the chain narrows at all (`false` reads every branch).
  */
-export type GrantLens = { layers: readonly LensLayer[]; projection: PathProjection };
+export type GrantLens = { projection: PathProjection; narrowed: boolean };
 
 const branchOf = (operation: string) => operation.split('.');
 
@@ -108,7 +81,7 @@ export const narrowingAtOperation = (
   );
 
 /**
- * Every operation's branch turned on, as a layer's `root`: each operation a leaf holding
+ * Every operation's branch turned on, as a narrowing's `root`: each operation a leaf holding
  * `leafNarrowing(operation)`, nothing narrowed by default. A row condition goes here, at the leaf.
  * An operation that reads no rows (`leafNarrowing` gives undefined) has no leaf to turn on; the
  * branches above it are kept.
@@ -204,15 +177,15 @@ export const operationsLens = ({
 };
 
 /**
- * A layer that narrows `row` wherever it is read and keeps every branch of `operations` on: the
- * shape of a grant pinned to chosen rows. `operations` are ones that read rows; an operation that
- * reads none has no branch to turn on.
+ * A narrowing of `row` wherever it is read that keeps every branch of `operations` on: the shape of
+ * a grant pinned to chosen rows. `operations` are ones that read rows; an operation that reads none
+ * has no branch to turn on.
  */
-export const rowModelLayer = (
+export const rowModelNarrowing = (
   operations: readonly string[],
   row: string,
   narrowing: ModelNarrowing,
-): LensLayer => ({
+): LensBody => ({
   root: everyBranch(operations),
   mapDefaults: { [operationsMapName]: { models: { [row]: narrowing } } },
 });
@@ -233,58 +206,65 @@ const baseOperations = (
 };
 
 /**
- * A grant row's stored layers don't parse, aren't one chain under the base, don't compose, or put a
- * `where` above an operation's branch.
+ * A grant row's lens chain doesn't parse, is longer than `grantLensChainLimit`, doesn't compose, or
+ * puts a `where` above an operation's branch.
  */
 export class GrantLensError extends Error {
-  readonly code = 'invalid_layers';
+  readonly code = 'invalid_lens';
   constructor(message: string) {
     super(message);
     this.name = 'GrantLensError';
   }
 }
 
+/** A chain composed over the base: the lens to read rows through, and the `GrantLens` of it. */
+export type ComposedGrantLens = GrantLens & { lens: Lens | LensNarrowing };
+
+const isEmptyBody = (body: LensBody) =>
+  Object.keys(body.root ?? {}).length === 0 && Object.keys(body.mapDefaults ?? {}).length === 0;
+
 /**
- * A grant row's stored layers composed over the kind's operations lens (`baseId` its id, `base` the
- * lens itself or its stored record): no layers reads every branch. json-rules `composeLens` checks
- * the chain's order and every layer against the ones before it. Two checks are added here, which
- * json-rules has no way to know: no stored layer sits outside the last one's chain, and no `where`
- * sits above an operation's branch. Such a `where` is over the whole list of rows, not each row, so
- * it would show every row once one matched; rows are filtered at the operation's own branch
- * (`narrowingAtOperation(operation, { where })`). Throws `GrantLensError`. The result describes this
- * row's own layers, for Kingdom to apply and for a host to show.
+ * A grant row's lens chain, the upstream row's narrowing first and this row's last, composed over
+ * the kind's operations lens. An empty or absent narrowing adds nothing; a chain with none reads
+ * every branch. json-rules validates each narrowing against the ones above it, so a later one can
+ * only narrow. One check is added here, which json-rules has no way to know: no `where` sits above
+ * an operation's branch. Such a `where` is over the whole list of rows, not each row, so it would
+ * show every row once one matched; rows are filtered at the operation's own branch
+ * (`narrowingAtOperation(operation, { where })`). Throws `GrantLensError`.
  */
-export const composeGrantLens = (
-  baseId: string,
-  base: Lens,
-  stored: unknown,
-): Lens | LensNarrowing => {
-  const parsed = storedLensLayersSchema.safeParse(stored ?? []);
-  if (!parsed.success) throw new GrantLensError('The lens layers do not parse');
-  const layers = parsed.data as StoredLens[];
-  const last = layers.at(-1);
+export const composeGrantLens = (base: Lens, chain: readonly unknown[] = []): ComposedGrantLens => {
+  if (chain.length > grantLensChainLimit)
+    throw new GrantLensError(`A lens chain composes at most ${grantLensChainLimit} narrowings`);
+  const bodies: LensBody[] = [];
+  for (const entry of chain) {
+    const parsed = lensNarrowingSchema.safeParse(entry ?? {});
+    if (!parsed.success) throw new GrantLensError('A lens narrowing does not parse');
+    const body = parsed.data as LensBody;
+    if (!isEmptyBody(body)) bodies.push(body);
+  }
   const operations = baseOperations(base);
   const reads = new Set(operations.filter(({ rows }) => rows).map(({ operation }) => operation));
-  if (!last) {
-    const every = operations.map(({ operation }) => operation);
-    return {
+  if (bodies.length === 0) {
+    const lens = {
       parent: base,
-      root: everyBranch(every, (operation) => (reads.has(operation) ? {} : undefined)),
+      root: everyBranch(
+        operations.map(({ operation }) => operation),
+        (operation) => (reads.has(operation) ? {} : undefined),
+      ),
     };
+    return { lens, projection: projectLens(lens), narrowed: false };
   }
-  if (last.parents.length !== layers.length)
-    throw new GrantLensError(`The lens layers are not one chain under ${baseId}`);
-  const records: Record<string, StoredLens> = { [baseId]: { ...base, id: baseId, parents: [] } };
-  for (const layer of layers) records[layer.id] = layer;
-  let composed: Lens | LensNarrowing;
+  let lens: Lens | LensNarrowing = base;
   try {
-    composed = composeLens(last.id, records);
+    for (const body of bodies) {
+      const narrowing: LensNarrowing = { parent: lens, ...body };
+      assertValidNarrowing(narrowing);
+      lens = narrowing;
+    }
   } catch (error) {
-    throw new GrantLensError(
-      error instanceof Error ? error.message : 'The lens layers do not compose',
-    );
+    throw new GrantLensError(error instanceof Error ? error.message : 'The lens does not compose');
   }
-  const projection = projectLens(composed);
+  const projection = projectLens(lens);
   const gated = [...reads].find((operation) =>
     visitsAbove(projection, operation).some((visit) => visit && visit.whereClauses.length > 0),
   );
@@ -292,7 +272,7 @@ export const composeGrantLens = (
     throw new GrantLensError(
       `A lens filters rows with a where at the operation's own branch, never above it (${gated})`,
     );
-  return composed;
+  return { lens, projection, narrowed: true };
 };
 
 /** One operation's rows as the lens shows them: those it filters out are gone, the rest trimmed. */

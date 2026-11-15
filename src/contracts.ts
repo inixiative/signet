@@ -14,7 +14,7 @@ import {
   signetGrantSchema,
   signetResourceSchema,
 } from './grants';
-import { storedBaseLensSchema, storedLensLayersSchema } from './lens';
+import { lensNarrowingSchema } from './lens';
 import {
   foundryIdSchema,
   threadFloorActionSchema,
@@ -390,12 +390,6 @@ export const hostedSignetSchema = z.object({
      */
     audience: recipientAudienceSchema,
   }),
-  /**
-   * Each operations lens the rows' `lens` layers compose under, keyed by `baseLensId(provider, kind)`.
-   * Composing them shows what these rows' own layers narrow, for display; it is not what the member
-   * reaches.
-   */
-  baseLenses: z.record(z.string(), storedBaseLensSchema),
   resources: grantsSchema,
 });
 export type InstallationSignet = z.infer<typeof installationSignetSchema>;
@@ -421,7 +415,7 @@ export const signetDescriptionResourceSchema = z.object({
   integrationId: z.uuid(),
   /** The integration's provider family (`github`, `anthropic`…): the description has no host. */
   provider: z.string(),
-  lens: storedLensLayersSchema.optional(),
+  lens: lensNarrowingSchema.optional(),
 });
 export const signetDescriptionSchema = z.object({
   signetId: z.uuid(),

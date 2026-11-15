@@ -22,7 +22,7 @@ import {
   operationInputFromAccess,
   operationInputKeys,
   operationInputSchemas,
-  rowModelLayer,
+  rowModelNarrowing,
   threadOperationNames,
   threadOperationSchema,
 } from '../src';
@@ -141,7 +141,7 @@ describe('an Archive call, gated by json-rules against the grant lens at its ope
   });
   const narrowed = (narrowing: ModelNarrowing): LensNarrowing => ({
     parent: base,
-    ...rowModelLayer(operations, 'ArchiveDocument', narrowing),
+    ...rowModelNarrowing(operations, 'ArchiveDocument', narrowing),
   });
   const hidesProject = narrowed({ omits: ['projectId'] });
   const hidesTags = narrowed({ omits: ['tags'] });

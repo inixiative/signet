@@ -3,7 +3,7 @@ import { z } from 'zod';
 import {
   conditionAtOperation,
   type GrantLens,
-  type LensLayer,
+  type LensBody,
   narrowingAtOperation,
   projectionFilters,
   projectionShows,
@@ -14,7 +14,7 @@ import { type OperationScope, scopeRefusal } from './operations';
  * Archive libraries (Kingdom `docs/kingdom.md`, Archive `docs/KINGDOM.md`). A hosted Archive is an
  * integration with one `archiveLibrary` resource. Kingdom admits each call through a Signet and runs
  * it against that Archive with the integration's credential. The Archive server never sees the lens
- * (json-rules layers over the library's operations lens, each operation a list of
+ * (a json-rules narrowing of the library's operations lens, each operation a list of
  * `ArchiveDocument` rows), so Kingdom applies it at the operation's branch.
  */
 export const archiveLibraryResourceKind = 'archiveLibrary';
@@ -95,11 +95,11 @@ export const archiveInputSchemas = {
 } as const satisfies Record<ArchiveOperation, z.ZodObject>;
 
 /**
- * Why a grant of `operation` can't carry `lens`, or null when it can. No layers reads every branch.
+ * Why a grant of `operation` can't carry `lens`, or null when it can. No narrowing reads every branch.
  * Each check reads the visit at the operation's own branch.
  */
 export const archiveLensRefusal = (operation: ArchiveOperation, lens: GrantLens) => {
-  if (lens.layers.length === 0) return null;
+  if (!lens.narrowed) return null;
   if (isArchiveSourceOperation(operation)) return 'Writing or deleting sessions takes no lens';
   if (
     operation === 'documents.search' &&
@@ -135,14 +135,14 @@ export const archiveCallCondition = <O extends ArchiveOperation>(
 };
 
 /**
- * The fields one call asks for, as a lens layer that picks them at the operation's branch, or
+ * The fields one call asks for, as a narrowing that picks them at the operation's branch, or
  * undefined when it asks for none. Kingdom validates it under the grant's composed lens
  * (`validateNarrowing`): a field the lens hides there is refused.
  */
 export const archiveCallNarrowing = <O extends ArchiveOperation>(
   operation: O,
   input: ArchiveInput<O>,
-): LensLayer | undefined =>
+): LensBody | undefined =>
   'fields' in input && input.fields?.length
     ? { root: narrowingAtOperation(operation, { picks: [...input.fields] }) }
     : undefined;
