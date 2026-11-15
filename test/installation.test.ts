@@ -284,6 +284,7 @@ describe('SignetHolders', () => {
     taskId: null,
     currentRevision: 1,
     remainingRequests: null,
+    projectIds: [],
     operations: [],
     holder: null,
   });
