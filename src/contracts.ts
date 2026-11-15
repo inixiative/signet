@@ -269,6 +269,14 @@ export const installationInquirySchema = z.object({
  */
 export const requestAudienceSchema = z.enum(['inOrg', 'outside']);
 export type RequestAudience = z.infer<typeof requestAudienceSchema>;
+/**
+ * Who a Signet's recipient is to the integration's owner. `owner`: the recipient IS the owner (the
+ * same user, or the same membership), so on a Foundry it is the owner's own client, not a member
+ * from outside. Kingdom decides it; holding `prompt.resolve` says nothing about who someone is,
+ * since recipients are never restricted.
+ */
+export const recipientAudienceSchema = z.enum(['owner', ...requestAudienceSchema.options]);
+export type RecipientAudience = z.infer<typeof recipientAudienceSchema>;
 
 /**
  * A pending `signetRequest` that asks for a resource on one of the Installation's integrations: a
@@ -286,6 +294,11 @@ export const hostedSignetRequestSchema = z.object({
     audience: requestAudienceSchema,
   }),
   terms: signetReviewProposalSchema,
+  /**
+   * For each resource the request names whose provider id the host acts by (a conversation: its
+   * thread id), that id by resource id, so the host can say which thread is being asked for.
+   */
+  resourceHandles: z.record(z.uuid(), z.string()),
   reviewUrl: kingdomLinkSchema,
 });
 export type HostedSignetRequest = z.infer<typeof hostedSignetRequestSchema>;
@@ -341,11 +354,11 @@ export const hostedSignetSchema = z.object({
     id: z.uuid(),
     displayName: z.string(),
     /**
-     * Who the recipient is to the integration's owner: the host's member settings start from it. A
-     * User by the organizations they share; an Integration as its owner; an Organization as itself;
-     * a Space or a member as its organization.
+     * Who the recipient is to the integration's owner: the host's member settings start from it, and
+     * `owner` is the owner's own client. A User by the organizations they share; an Integration as
+     * its owner; an Organization as itself; a Space or a member as its organization.
      */
-    audience: requestAudienceSchema,
+    audience: recipientAudienceSchema,
   }),
   /**
    * Each operations lens the rows' `lens` layers compose under, keyed by `baseLensId(provider, kind)`.

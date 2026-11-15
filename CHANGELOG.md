@@ -33,7 +33,10 @@ narrowing (`narrowsThreadsTerms`, Kingdom's `termsNarrow`).
 - **A holder reads a conversation's `externalId`** (its thread id) on its grant rows
   (`signetGrantSchema`) and in `describe` (`signetDescriptionResourceSchema`). The field is optional:
   Kingdom sends it only where the holder acts by it and keeps other provider ids to itself.
-- **A hosted Signet's `recipient` carries `audience`** (`inOrg` or `outside`).
+- **A hosted Signet's `recipient` carries `audience`** (`recipientAudienceSchema`: `owner`, `inOrg` or
+  `outside`). `owner` is how a host knows its owner's own client; holding `prompt.resolve` is not.
+- **A hosted request carries `resourceHandles`**: the thread id of each conversation it names, by
+  resource id.
 - **A grant row may name a scope** (`resourceModel: 'Integration'`: `integrationId`, `kind`, optional
   `projectId`, then `full` / `operations` / `lens` / `where` as on a resource row), asked for in
   `signetResourceSchema` with `resourceKind`. Every reader of grant rows now meets three arms: a

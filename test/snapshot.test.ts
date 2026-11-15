@@ -75,6 +75,7 @@ const request = (extra: Record<string, unknown> = {}) => ({
       },
     ],
   },
+  resourceHandles: {},
   reviewUrl: 'https://kingdom.example/dashboard?reviewSignet=ABC',
 });
 
