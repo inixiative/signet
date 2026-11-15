@@ -448,12 +448,17 @@ export const accessThreadSnapshotSchema = z.object({ data: threadViewResultSchem
 /** A `log` stream's one op: each append's payload is one `ThreadEntry`. */
 export const accessThreadAppendType = 'append';
 
-/** Why Kingdom closed a member's stream (sent on `closed` and `openRejected`). */
+/**
+ * Why Kingdom closed a holder's stream (sent on `closed` and `openRejected`). `revoked`, `revised`,
+ * `expired` and `enrollmentRevoked` are about the holder's own Signet and nothing else. Whatever
+ * changed elsewhere (a Signet it was issued from, a budget) closes as `unauthorized`, with no
+ * further reason, and only when nothing admits the stream any more.
+ */
 export const accessThreadCloseReasonSchema = z.enum([
-  /** The member closed it. */
+  /** The holder closed it. */
   'left',
   'revoked',
-  /** Any revision closes the stream; the member reopens under the new revision. */
+  /** Any revision of the holder's Signet closes the stream; the holder reopens under the new one. */
   'revised',
   'enrollmentRevoked',
   'expired',

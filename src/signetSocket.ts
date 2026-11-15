@@ -2,9 +2,9 @@ import { z } from 'zod';
 import type { SignetClient } from './client';
 import { kingdomUrl } from './client';
 import { signetPresentedFrameSchema } from './contracts';
-import type { DataStreamOptions } from './dataStreams';
-import { type EventStreamHandlers, EventStreams } from './eventStreams';
-import { type ThreadStreamHandlers, ThreadStreams } from './threadStreams';
+import type { EventStreamHandlers } from './eventStreams';
+import { HolderStreams } from './holderStreams';
+import type { ThreadStreamHandlers } from './threadStreams';
 
 export type SignetSocketOptions = Omit<ThreadStreamHandlers, 'onSnapshot' | 'onEntry'> &
   /** Thread views; a holder that only listens to event channels leaves them out. */
@@ -33,6 +33,14 @@ export type SignetSocketOptions = Omit<ThreadStreamHandlers, 'onSnapshot' | 'onE
     WebSocket?: typeof WebSocket;
   };
 
+/** Kingdom answered a presentation `signetRejected`: reported through `onError`, then retried. */
+export class SignetPresentationRefused extends Error {
+  constructor() {
+    super('Kingdom refused this Signet presentation');
+    this.name = 'SignetPresentationRefused';
+  }
+}
+
 const frameSchema = z.object({ type: z.string() }).loose();
 /** WebSocket.OPEN, read from the spec rather than whichever WebSocket class was passed. */
 const OPEN = 1;
@@ -56,35 +64,28 @@ export class SignetSocket {
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private authTimer: ReturnType<typeof setTimeout> | null = null;
   private renewTimer: ReturnType<typeof setTimeout> | null = null;
-  private readonly streams: ThreadStreams;
-  private readonly events: EventStreams | null;
+  private readonly streams: HolderStreams;
 
   constructor(private readonly options: SignetSocketOptions) {
-    const streamOptions: DataStreamOptions = {
-      retryBaseMs: options.retryBaseMs,
-      openBurst: options.openBurst,
-      openWindowMs: options.openWindowMs,
-      // Kingdom closed streams because the presentation lapsed: re-present on a new connection.
-      onPresentationExpired: () => this.socket?.close(),
-    };
-    const send = (frame: Record<string, unknown>) => this.send(frame);
-    this.streams = new ThreadStreams(
-      send,
+    this.streams = new HolderStreams(
+      (frame) => this.send(frame),
       {
-        ...options,
-        onSnapshot: (stream, view) => options.onSnapshot?.(stream, view),
-        onEntry: (stream, entry) => options.onEntry?.(stream, entry),
+        threadStreams: {
+          ...options,
+          onSnapshot: (stream, view) => options.onSnapshot?.(stream, view),
+          onEntry: (stream, entry) => options.onEntry?.(stream, entry),
+        },
+        eventStreams: options.eventStreams,
+        onError: options.onError,
       },
-      streamOptions,
+      {
+        retryBaseMs: options.retryBaseMs,
+        openBurst: options.openBurst,
+        openWindowMs: options.openWindowMs,
+        // Kingdom closed streams because the presentation lapsed: re-present on a new connection.
+        onPresentationExpired: () => this.socket?.close(),
+      },
     );
-    const events = options.eventStreams;
-    this.events = events
-      ? new EventStreams(
-          send,
-          { ...events, onError: (error) => (events.onError ?? options.onError)?.(error) },
-          streamOptions,
-        )
-      : null;
   }
 
   get connected() {
@@ -101,17 +102,17 @@ export class SignetSocket {
   open(threadId: string) {
     if (!this.options.onSnapshot || !this.options.onEntry)
       throw Error('Pass onSnapshot and onEntry to hold thread views');
-    this.streams.open({ signetId: this.options.client.signetId, threadId });
+    this.streams.openThread({ signetId: this.options.client.signetId, threadId });
   }
 
   /** Leave a thread: Kingdom closes the stream. */
   leave(threadId: string) {
-    this.streams.leave({ signetId: this.options.client.signetId, threadId });
+    this.streams.leaveThread({ signetId: this.options.client.signetId, threadId });
   }
 
   /** The threads this socket holds open, or is opening. */
   threads() {
-    return this.streams.held().map((stream) => stream.threadId);
+    return this.streams.heldThreads().map((stream) => stream.threadId);
   }
 
   /**
@@ -119,18 +120,17 @@ export class SignetSocket {
    * from the moment Kingdom opens it, none from before.
    */
   openEventChannel(resourceId: string) {
-    if (!this.events) throw Error('Pass eventStreams to hold event channels');
-    this.events.open({ signetId: this.options.client.signetId, resourceId });
+    this.streams.openEventChannel({ signetId: this.options.client.signetId, resourceId });
   }
 
   /** Stop listening on a channel: Kingdom closes the stream. */
   leaveEventChannel(resourceId: string) {
-    this.events?.leave({ signetId: this.options.client.signetId, resourceId });
+    this.streams.leaveEventChannel({ signetId: this.options.client.signetId, resourceId });
   }
 
   /** The resources whose event channels this socket holds open, or is opening. */
   heldEventChannels() {
-    return this.events?.held().map((channel) => channel.resourceId) ?? [];
+    return this.streams.heldEventChannels().map((channel) => channel.resourceId);
   }
 
   close() {
@@ -140,7 +140,6 @@ export class SignetSocket {
     this.socket = null;
     this.authenticated = false;
     this.streams.down();
-    this.events?.down();
   }
 
   private connect() {
@@ -163,7 +162,6 @@ export class SignetSocket {
     }
     if (socket !== this.socket || typeof json !== 'object' || json === null) return;
     if (this.streams.receive(json as Record<string, unknown>)) return;
-    if (this.events?.receive(json as Record<string, unknown>)) return;
     const parsed = frameSchema.safeParse(json);
     if (!parsed.success) return;
     const frame = parsed.data;
@@ -194,11 +192,10 @@ export class SignetSocket {
             this.options.pingMs ?? 20_000,
           );
           this.streams.up();
-          this.events?.up();
           return;
         }
         case 'signetRejected':
-          this.options.onError?.(Error('Kingdom refused this Signet presentation'));
+          this.options.onError?.(new SignetPresentationRefused());
           socket.close();
           return;
         case 'reconnect':
@@ -256,7 +253,6 @@ export class SignetSocket {
     this.authenticated = false;
     this.clearTimers();
     this.streams.down();
-    this.events?.down();
     if (this.stopped) return;
     this.options.onDisconnected?.();
     const base = this.options.retryBaseMs ?? 1_000;

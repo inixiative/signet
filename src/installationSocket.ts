@@ -5,8 +5,9 @@ import {
   installationSocketAction,
   parseInstallationSnapshot,
 } from './contracts';
-import { type EventStreamHandlers, type EventStreamKey, EventStreams } from './eventStreams';
-import { type ThreadStreamHandlers, type ThreadStreamKey, ThreadStreams } from './threadStreams';
+import type { EventStreamHandlers, EventStreamKey } from './eventStreams';
+import { HolderStreams } from './holderStreams';
+import type { ThreadStreamHandlers, ThreadStreamKey } from './threadStreams';
 import {
   type ThreadAppendFrame,
   type ThreadEntry,
@@ -135,28 +136,17 @@ export class InstallationSocket {
   private pollGeneration = 0;
   private viewerUrl: string | null;
   private readonly subscriptions = new Map<string, HeldSubscription>();
-  private readonly streams: ThreadStreams | null;
-  private readonly events: EventStreams | null;
+  private readonly streams: HolderStreams;
 
   constructor(private readonly options: InstallationSocketOptions) {
     this.viewerUrl = options.viewerUrl ?? null;
-    const send = (frame: Record<string, unknown>) => this.send(frame);
-    const streamOptions = {
+    this.streams = new HolderStreams((frame) => this.send(frame), options, {
       retryBaseMs: options.retryBaseMs,
       openBurst: options.openBurst,
       openWindowMs: options.openWindowMs,
-    };
-    this.streams = options.threadStreams
-      ? new ThreadStreams(send, options.threadStreams, streamOptions)
-      : null;
-    const events = options.eventStreams;
-    this.events = events
-      ? new EventStreams(
-          send,
-          { ...events, onError: (error) => (events.onError ?? options.onError)?.(error) },
-          streamOptions,
-        )
-      : null;
+      // Reconnecting authenticates afresh, and `up()` then reopens everything held.
+      onPresentationExpired: () => this.socket?.close(),
+    });
   }
 
   get connected() {
@@ -187,8 +177,7 @@ export class InstallationSocket {
     this.socket = null;
     this.authenticated = false;
     this.endSubscriptions('disconnected');
-    this.streams?.down();
-    this.events?.down();
+    this.streams.down();
   }
 
   /** The members' views this host is pushing now. */
@@ -238,12 +227,11 @@ export class InstallationSocket {
 
   /** Open a live view of a thread through a Signet this installation holds (needs `threadStreams`). */
   openThread(stream: ThreadStreamKey) {
-    if (!this.streams) throw Error('Pass threadStreams to hold thread views');
-    this.streams.open(stream);
+    this.streams.openThread(stream);
   }
 
   leaveThread(stream: ThreadStreamKey) {
-    this.streams?.leave(stream);
+    this.streams.leaveThread(stream);
   }
 
   /**
@@ -251,17 +239,16 @@ export class InstallationSocket {
    * from the moment Kingdom opens it, none from before.
    */
   openEventChannel(channel: EventStreamKey) {
-    if (!this.events) throw Error('Pass eventStreams to hold event channels');
-    this.events.open(channel);
+    this.streams.openEventChannel(channel);
   }
 
   leaveEventChannel(channel: EventStreamKey) {
-    this.events?.leave(channel);
+    this.streams.leaveEventChannel(channel);
   }
 
   /** The event channels this socket holds open, or is opening. */
   heldEventChannels(): EventStreamKey[] {
-    return this.events?.held() ?? [];
+    return this.streams.heldEventChannels();
   }
 
   private connect() {
@@ -283,8 +270,7 @@ export class InstallationSocket {
       return;
     }
     if (socket !== this.socket || typeof json !== 'object' || json === null) return;
-    if (this.streams?.receive(json as Record<string, unknown>)) return;
-    if (this.events?.receive(json as Record<string, unknown>)) return;
+    if (this.streams.receive(json as Record<string, unknown>)) return;
     const parsed = frameSchema.safeParse(json);
     if (!parsed.success) return;
     const frame = parsed.data;
@@ -316,8 +302,7 @@ export class InstallationSocket {
             Math.min(this.leaseMs() / 3, 5_000),
           );
           if (this.viewerUrl) this.send({ action: 'advertise', viewerUrl: this.viewerUrl });
-          this.streams?.up();
-          this.events?.up();
+          this.streams.up();
           return;
         case 'installation.snapshot':
           await this.options.onSnapshot(parseInstallationSnapshot(frame));
@@ -548,8 +533,7 @@ export class InstallationSocket {
     this.leaseTimer = null;
     // Kingdom re-subscribes members after a reconnect; nothing pushes into a dead line meanwhile.
     this.endSubscriptions('disconnected');
-    this.streams?.down();
-    this.events?.down();
+    this.streams.down();
     if (this.stopped) return;
     this.options.onDisconnected?.();
     if (!this.polling) void this.poll();

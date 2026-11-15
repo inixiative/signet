@@ -4,7 +4,21 @@ import { type AccessThreadCloseReason, accessThreadCloseReasonSchema } from './t
 /** Why a stream ended; `rejected` when Kingdom refused the open without a reason, null when it gave none. */
 export type DataStreamCloseReason = AccessThreadCloseReason | 'rejected' | null;
 
-/** A jump in a stream's `seq`: the last one seen, and the one that arrived after it. */
+/**
+ * The closes a stream is reopened after, so it has not ended: the holder's Signet was revised (it
+ * reopens under the new revision), the socket's presentation lapsed (it re-presents first), or the
+ * host is offline (it retries with backoff). Every other close ends the stream.
+ */
+export const reopenedCloseReasons = [
+  'revised',
+  'presentationExpired',
+  'hostOffline',
+] as const satisfies readonly AccessThreadCloseReason[];
+export type ReopenedCloseReason = (typeof reopenedCloseReasons)[number];
+export const closeIsReopened = (reason: DataStreamCloseReason): reason is ReopenedCloseReason =>
+  (reopenedCloseReasons as readonly unknown[]).includes(reason);
+
+/** A break in a stream's `seq`: the last one seen, and the one that arrived after it. */
 export type DataStreamGap = { after: number; seq: number };
 
 /**
@@ -28,8 +42,8 @@ export type DataStreamFamily<Key extends object, Snapshot, Append> = {
    *   already in it and is skipped, and a jump re-opens for a fresh snapshot, which holds whatever
    *   was missed.
    * - `deliver`: the snapshot holds nothing, so nothing is ever already in it and nothing can be
-   *   read again. Every append is delivered, and a jump is reported (`onGap`) beside the append
-   *   that showed it.
+   *   read again. Every append is delivered, and a `seq` that isn't the next one (a jump, or a
+   *   count that went back) is reported (`onGap`) beside the append that showed it.
    */
   gap: 'resync' | 'deliver';
 };
@@ -41,7 +55,7 @@ export type DataStreamHandlers<Key extends object, Snapshot, Append> = {
   onGap?: (key: Key, gap: DataStreamGap) => void;
   onClosed?: (key: Key, reason: DataStreamCloseReason) => void;
   /** Kingdom closed the stream for a reason it is reopened after; nothing is heard until it opens. */
-  onReopening?: (key: Key, reason: AccessThreadCloseReason) => void;
+  onReopening?: (key: Key, reason: ReopenedCloseReason) => void;
   onError?: (error: unknown) => void;
 };
 
@@ -58,6 +72,12 @@ export type DataStreamOptions = {
    */
   openBurst?: number;
   openWindowMs?: number;
+  /**
+   * The most frames that may wait on the handlers (1,000 unless set). Past it appends are dropped
+   * and reported (`onError`) until the handlers catch up: a `resync` stream then reopens for a
+   * fresh snapshot, a `deliver` stream reports the gap. Control frames and snapshots always wait.
+   */
+  maxQueuedFrames?: number;
 };
 
 const reasonSchema = accessThreadCloseReasonSchema.optional().catch(undefined);
@@ -101,11 +121,6 @@ type StreamState<Key> = {
   again: boolean;
 };
 
-/** Kingdom closed the stream, but the holder may come back: under a new lens, or once re-presented. */
-const reopenAfter = new Set<AccessThreadCloseReason>(['revised', 'presentationExpired']);
-/** Kingdom closed the stream until the host returns: reopen with backoff. */
-const retryAfter = new Set<AccessThreadCloseReason>(['hostOffline']);
-
 /**
  * One family of a holder's streams on one Kingdom socket, as Kingdom's data-stream primitive and
  * its web client run them (Kingdom `docs/claude/WEBSOCKETS.md`, `packages/ui/src/lib/ws/
@@ -120,6 +135,8 @@ export class DataStreams<Key extends object, Snapshot, Append> {
   private readonly leaving = new Map<string, number>();
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
   private queue: Promise<void> = Promise.resolve();
+  private queued = 0;
+  private overflowing = false;
   private ready = false;
   /** Streams whose open waits for the next window, in the order they asked. */
   private readonly waiting = new Set<string>();
@@ -188,8 +205,26 @@ export class DataStreams<Key extends object, Snapshot, Append> {
   /** Handle a frame if it belongs to a stream of this family; true when it did. */
   receive(frame: Record<string, unknown>): boolean {
     if (typeof frame.stream !== 'string' || !this.family.owns(frame.stream)) return false;
-    this.queue = this.queue.then(() => this.handle(frame)).catch((error) => this.report(error));
+    if (frame.category === 'data' && frame.action === 'append' && this.overflows(frame.stream))
+      return true;
+    this.queued++;
+    this.queue = this.queue
+      .then(() => this.handle(frame))
+      .catch((error) => this.report(error))
+      .finally(() => {
+        this.queued--;
+      });
     return true;
+  }
+
+  // A handler slower than Kingdom would grow the queue without end. The dropped append shows as a
+  // break in `seq` on the next one handled, so the family's own gap rule recovers it.
+  private overflows(stream: string) {
+    const full = this.queued >= atLeastOne(this.options.maxQueuedFrames, 1_000);
+    if (full && !this.overflowing)
+      this.report(Error(`${stream}: handlers are behind; appends are dropped until they catch up`));
+    this.overflowing = full;
+    return full;
   }
 
   // A handler declared to return nothing may still be async: a rejection is reported, not lost.
@@ -247,8 +282,7 @@ export class DataStreams<Key extends object, Snapshot, Append> {
   private closedBy(stream: string, reason: DataStreamCloseReason) {
     const state = this.streams.get(stream);
     if (!state) return;
-    if (reason === null || reason === 'rejected') return this.end(stream, reason);
-    if (!reopenAfter.has(reason) && !retryAfter.has(reason)) return this.end(stream, reason);
+    if (!closeIsReopened(reason)) return this.end(stream, reason);
     this.notify(() => this.handlers.onReopening?.(state.key, reason));
     if (reason === 'presentationExpired') {
       // The socket re-presents; `up()` then reopens everything held.
@@ -256,7 +290,9 @@ export class DataStreams<Key extends object, Snapshot, Append> {
       this.options.onPresentationExpired?.();
       return;
     }
-    if (retryAfter.has(reason)) return this.retry(stream, state);
+    // A revision is usually ready at once; a Kingdom that keeps answering `revised` is backed off.
+    if (reason === 'hostOffline' || state.attempts > 0) return this.retry(stream, state);
+    state.attempts++;
     this.reopen(stream);
   }
 
@@ -269,6 +305,7 @@ export class DataStreams<Key extends object, Snapshot, Append> {
       if (!read) return this.abandon(state, Error(`${frame.stream}: unreadable snapshot`));
       if (read.problem) this.report(Error(`${frame.stream}: ${read.problem}`));
       state.lastSeq = frame.seq;
+      state.attempts = 0;
       await this.handlers.onSnapshot(state.key, read.snapshot);
       if (state.again) {
         state.again = false;
@@ -280,8 +317,8 @@ export class DataStreams<Key extends object, Snapshot, Append> {
       if (state.lastSeq === null || frame.seq <= state.lastSeq) return;
       if (frame.seq > state.lastSeq + 1) return this.reopen(frame.stream);
       state.lastSeq = frame.seq;
-    } else if (state.lastSeq !== null && frame.seq > state.lastSeq) {
-      if (frame.seq > state.lastSeq + 1) {
+    } else if (state.lastSeq !== null) {
+      if (frame.seq !== state.lastSeq + 1 && frame.seq !== state.lastSeq) {
         const gap = { after: state.lastSeq, seq: frame.seq };
         this.notify(() => this.handlers.onGap?.(state.key, gap));
       }

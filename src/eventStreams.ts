@@ -1,10 +1,10 @@
-import type { AccessThreadCloseReason } from './contracts';
 import {
   type DataStreamCloseReason,
   type DataStreamFamily,
   type DataStreamGap,
   type DataStreamOptions,
   DataStreams,
+  type ReopenedCloseReason,
 } from './dataStreams';
 import {
   type AccessEventsAppend,
@@ -25,8 +25,9 @@ export type EventStreamGap = DataStreamGap;
 export type EventStreamHandlers = {
   /**
    * One event, as this channel's Signet projects it, with the stream's `seq`. Every readable append
-   * is delivered as it arrives, on each channel it arrives on: the same `eventId` may come more
-   * than once (two Signets on one resource, a provider's retry), so dedupe on it where that matters.
+   * is delivered as it arrives, on each channel it arrives on: the same event may come more than
+   * once (two Signets on one resource), always under the same `event.id`, so dedupe on it where
+   * that matters.
    */
   onEvent: (
     channel: EventStreamKey,
@@ -39,15 +40,15 @@ export type EventStreamHandlers = {
    */
   onOpened?: (channel: EventStreamKey) => void | Promise<void>;
   /**
-   * The channel's `seq` jumped, reported just before the event that showed it (which is delivered).
-   * Either Kingdom counted afresh after a quiet day and nothing was lost, or the appends in between
-   * never arrived; neither can be read again.
+   * The channel's `seq` broke its run (it jumped ahead, or went back), reported just before the
+   * event that showed it (which is delivered). Either Kingdom counted afresh and nothing was lost,
+   * or the appends in between never arrived; neither can be read again.
    */
   onGap?: (channel: EventStreamKey, gap: EventStreamGap) => void;
   /** Kingdom ended the channel for good, or refused to open it (`rejected`); it is not reopened. */
   onClosed?: (channel: EventStreamKey, reason: DataStreamCloseReason) => void;
   /** Kingdom closed the channel for a reason it is reopened after (a revision, an offline host). */
-  onReopening?: (channel: EventStreamKey, reason: AccessThreadCloseReason) => void;
+  onReopening?: (channel: EventStreamKey, reason: ReopenedCloseReason) => void;
   /** A frame or an append that didn't parse; the channel goes on. */
   onError?: (error: unknown) => void;
 };
