@@ -557,6 +557,17 @@ describe("refusals that stay about operations, read at each operation's branch",
       },
       ArchiveDocument: { fields: { id: document } },
     });
+    const generate = (catalog: string[], row = 'ArchiveDocument') =>
+      generateOperationsLens({
+        model: 'Ops',
+        operations: catalog,
+        rowModel: () => row,
+        rowModels: {},
+      });
+    // A catalog the tree can't hold apart is refused, never merged into operations nobody declared.
+    expect(() => generate(['x_y.read', 'x.y.write'])).toThrow();
+    expect(() => generate(['documents', 'documents.read'])).toThrow();
+    expect(() => generate(['documents.read'], 'Ops_documents')).toThrow();
     const root = everyBranch(operations, (operation) => (rowModel(operation) ? {} : undefined));
     expect(root).toEqual({ relations: { documents: { relations: { read: {} } }, sessions: {} } });
     expect(rowsThroughLens({ parent: base, root }, 'documents.read', [{ id: 'a' }])).toEqual([
@@ -698,6 +709,9 @@ describe('a where is a bounded, positive json-rules condition', () => {
     expect(asks({ any: [] })).toBe(false);
     expect(asks({ all: [rule, { any: [] }] })).toBe(false);
     expect(asks({ any: [{ all: [rule, { all: [] }] }] })).toBe(false);
+    expect(asks({ all: [true] })).toBe(false);
+    expect(asks({ any: [true, rule] })).toBe(false);
+    expect(asks({ all: [rule, { any: [false] }] })).toBe(false);
     expect(asks({ all: [rule, { any: [rule] }] })).toBe(true);
   });
 

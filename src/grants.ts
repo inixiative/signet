@@ -39,26 +39,31 @@ export const threadsTerms = (terms: z.input<typeof grantTermsSchema> | undefined
 /** The most characters a `where` may take as JSON, the size of a thread's text. */
 export const grantWhereLimit = 16_000;
 
-/** Whether a condition holds an `all` or `any` with nothing in it, at any depth. */
-const hasEmptyGroup = (condition: unknown): boolean => {
+/** Whether a condition holds, at any depth, an `all` or `any` that is empty or lists a bare `true` or `false`. */
+const hasVacuousGroup = (condition: unknown): boolean => {
+  if (typeof condition === 'boolean') return true;
   if (typeof condition !== 'object' || condition === null) return false;
   const { all, any } = condition as { all?: unknown; any?: unknown };
   return [all, any].some(
-    (group) => Array.isArray(group) && (group.length === 0 || group.some(hasEmptyGroup)),
+    (group) => Array.isArray(group) && (group.length === 0 || group.some(hasVacuousGroup)),
   );
 };
 
 /**
  * A where as a party asks for it: a positive json-rules condition over the incoming call (its input
  * fields), what may go in. It only narrows: json-rules `validateRule(where, { positive: true })`
- * refuses a malformed condition and one that could hold on a missing value, and an empty `all` (which
- * admits everything) or `any` (which admits nothing) is refused at any depth. Negated operators are
+ * refuses a malformed condition and one that could hold on a missing value, and an `all` or `any`
+ * that is empty or lists a bare `true` or `false` (it admits everything, or nothing) is refused at
+ * any depth. Negated operators are
  * refused here and allowed in a lens, which decides no permission. The size cap is an ask's only: a
  * stored where grows as it is passed on (`storedWhereSchema`). The lens says what comes out.
  */
 export const grantWhereSchema = z.record(z.string(), z.unknown()).superRefine((where, context) => {
-  if (hasEmptyGroup(where))
-    context.addIssue({ code: 'custom', message: 'A where has no empty all or any' });
+  if (hasVacuousGroup(where))
+    context.addIssue({
+      code: 'custom',
+      message: 'A where has no empty all or any, and no bare true or false',
+    });
   if (JSON.stringify(where).length > grantWhereLimit) {
     context.addIssue({
       code: 'custom',

@@ -150,7 +150,8 @@ const relationTo = (type: string, isList: boolean): FieldMapEntry => ({
  * segment of an operation a relation to a branch model (`model_segment_…`), and each operation a
  * list of the rows it reads (`rowModel(operation)`, its fields from `rowModels`). An operation that
  * reads no rows is a Boolean field. Kingdom generates the bases with this; a test or a host that
- * needs one builds it the same way.
+ * needs one builds it the same way. Throws on a catalog the tree can't hold apart: an operation
+ * that is also a prefix of another, or two branches or a row model sharing one model name.
  */
 export const operationsLens = ({
   model,
@@ -164,16 +165,24 @@ export const operationsLens = ({
   rowModels: Record<string, Record<string, FieldMapEntry>>;
 }): Lens => {
   const models: Record<string, { fields: Record<string, FieldMapEntry> }> = {};
+  const branches = new Map<string, string>();
   const modelAt = (path: readonly string[]) => [model, ...path].join('_');
   const fieldsAt = (path: readonly string[]) => {
-    models[modelAt(path)] ??= { fields: {} };
-    return (models[modelAt(path)] as { fields: Record<string, FieldMapEntry> }).fields;
+    const name = modelAt(path);
+    if ((branches.get(name) ?? path.join('.')) !== path.join('.'))
+      throw Error(`Operations under ${branches.get(name)} and ${path.join('.')} share ${name}`);
+    branches.set(name, path.join('.'));
+    models[name] ??= { fields: {} };
+    return (models[name] as { fields: Record<string, FieldMapEntry> }).fields;
   };
+  const leaves = new Set(operations);
   for (const operation of operations) {
     const segments = branchOf(operation);
     segments.forEach((segment, index) => {
       const fields = fieldsAt(segments.slice(0, index));
       if (index < segments.length - 1) {
+        if (leaves.has(segments.slice(0, index + 1).join('.')))
+          throw Error(`${operation} sits under another operation`);
         fields[segment] = relationTo(modelAt(segments.slice(0, index + 1)), false);
         return;
       }
@@ -181,8 +190,11 @@ export const operationsLens = ({
       fields[segment] = row
         ? relationTo(row, true)
         : { kind: 'scalar', type: 'Boolean', isRequired: false };
-      if (row) models[row] = { fields: rowModels[row] ?? {} };
     });
+  }
+  for (const row of new Set(operations.flatMap((operation) => rowModel(operation) ?? []))) {
+    if (branches.has(row)) throw Error(`The row model ${row} shares its name with a branch`);
+    models[row] = { fields: rowModels[row] ?? {} };
   }
   return createLens({
     maps: { [operationsMapName]: { models } },
@@ -193,7 +205,8 @@ export const operationsLens = ({
 
 /**
  * A layer that narrows `row` wherever it is read and keeps every branch of `operations` on: the
- * shape of a grant pinned to chosen rows.
+ * shape of a grant pinned to chosen rows. `operations` are ones that read rows; an operation that
+ * reads none has no branch to turn on.
  */
 export const rowModelLayer = (
   operations: readonly string[],
@@ -209,12 +222,15 @@ const baseOperations = (
   base: Lens,
   model = base.model,
   path: readonly string[] = [],
-): { operation: string; rows: boolean }[] =>
-  Object.entries(base.maps[base.mapName]?.models[model]?.fields ?? {}).flatMap(([name, field]) =>
-    field.kind === 'object' && !field.isList
-      ? baseOperations(base, field.type, [...path, name])
-      : [{ operation: [...path, name].join('.'), rows: field.kind === 'object' }],
+): { operation: string; rows: boolean }[] => {
+  if (path.length > 20) throw new GrantLensError('The base lens is not a tree of operations');
+  return Object.entries(base.maps[base.mapName]?.models[model]?.fields ?? {}).flatMap(
+    ([name, field]) =>
+      field.kind === 'object' && !field.isList
+        ? baseOperations(base, field.type, [...path, name])
+        : [{ operation: [...path, name].join('.'), rows: field.kind === 'object' }],
   );
+};
 
 /**
  * A grant row's stored layers don't parse, aren't one chain under the base, don't compose, or put a

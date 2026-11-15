@@ -75,7 +75,9 @@ export type DataStreamOptions = {
   /**
    * The most frames that may wait on the handlers (1,000 unless set). Past it appends are dropped
    * and reported (`onError`) until the handlers catch up: a `resync` stream then reopens for a
-   * fresh snapshot, a `deliver` stream reports the gap. Control frames and snapshots always wait.
+   * fresh snapshot, a `deliver` stream reports the gap, at the next append or once the handlers
+   * have caught up, whichever comes first. Kingdom's control frames and snapshots are few and
+   * always wait.
    */
   maxQueuedFrames?: number;
 };
@@ -115,6 +117,10 @@ type StreamState<Key> = {
   key: Key;
   lastSeq: number | null;
   attempts: number;
+  /** A `revised` close was already answered with an immediate reopen that hasn't opened yet. */
+  reopenedAtOnce: boolean;
+  /** The `seq` of the last append dropped because the handlers were behind, until it has shown. */
+  missed: number | null;
   /** An open is on the wire; a resync or retry meanwhile waits for its answer, not a second open. */
   pending: boolean;
   /** Something asked for a fresh snapshot while an open was pending: open again once it answers. */
@@ -163,6 +169,8 @@ export class DataStreams<Key extends object, Snapshot, Append> {
       key: { ...key },
       lastSeq: null,
       attempts: 0,
+      reopenedAtOnce: false,
+      missed: null,
       pending: false,
       again: false,
     });
@@ -197,6 +205,7 @@ export class DataStreams<Key extends object, Snapshot, Append> {
     for (const stream of [...this.timers.keys()]) this.clearTimer(stream);
     for (const state of this.streams.values()) {
       state.lastSeq = null;
+      state.missed = null;
       state.pending = false;
       state.again = false;
     }
@@ -205,26 +214,46 @@ export class DataStreams<Key extends object, Snapshot, Append> {
   /** Handle a frame if it belongs to a stream of this family; true when it did. */
   receive(frame: Record<string, unknown>): boolean {
     if (typeof frame.stream !== 'string' || !this.family.owns(frame.stream)) return false;
-    if (frame.category === 'data' && frame.action === 'append' && this.overflows(frame.stream))
+    if (frame.category === 'data' && frame.action === 'append' && this.overflows(frame))
       return true;
     this.queued++;
     this.queue = this.queue
       .then(() => this.handle(frame))
       .catch((error) => this.report(error))
       .finally(() => {
-        this.queued--;
+        if (--this.queued === 0) this.caughtUp();
       });
     return true;
   }
 
   // A handler slower than Kingdom would grow the queue without end. The dropped append shows as a
-  // break in `seq` on the next one handled, so the family's own gap rule recovers it.
-  private overflows(stream: string) {
+  // break in `seq` on the next one handled, or in `caughtUp` when none follows.
+  private overflows(frame: Record<string, unknown>) {
     const full = this.queued >= atLeastOne(this.options.maxQueuedFrames, 1_000);
     if (full && !this.overflowing)
-      this.report(Error(`${stream}: handlers are behind; appends are dropped until they catch up`));
+      this.report(
+        Error(`${frame.stream}: handlers are behind; appends are dropped until they catch up`),
+      );
     this.overflowing = full;
+    const state = full ? this.streams.get(String(frame.stream)) : undefined;
+    if (state && typeof frame.seq === 'number') state.missed = frame.seq;
     return full;
+  }
+
+  // Dropped appends that no later append showed: a `resync` stream reopens for a fresh snapshot,
+  // a `deliver` stream reports them as a gap.
+  private caughtUp() {
+    for (const [stream, state] of this.streams) {
+      const missed = state.missed;
+      if (missed === null) continue;
+      state.missed = null;
+      if (this.family.gap === 'resync') this.reopen(stream);
+      else if (state.lastSeq !== null) {
+        const gap = { after: state.lastSeq, seq: missed };
+        state.lastSeq = missed;
+        this.notify(() => this.handlers.onGap?.(state.key, gap));
+      }
+    }
   }
 
   // A handler declared to return nothing may still be async: a rejection is reported, not lost.
@@ -259,7 +288,7 @@ export class DataStreams<Key extends object, Snapshot, Append> {
     const state = this.streams.get(frame.stream);
     switch (frame.type) {
       case 'opened':
-        if (state) state.attempts = 0;
+        if (state) this.openedAgain(state);
         return;
       case 'resync':
         return this.reopen(frame.stream);
@@ -290,10 +319,15 @@ export class DataStreams<Key extends object, Snapshot, Append> {
       this.options.onPresentationExpired?.();
       return;
     }
-    // A revision is usually ready at once; a Kingdom that keeps answering `revised` is backed off.
-    if (reason === 'hostOffline' || state.attempts > 0) return this.retry(stream, state);
-    state.attempts++;
+    // A revision is usually ready at once; a Kingdom that refuses that reopen too is backed off.
+    if (reason === 'hostOffline' || state.reopenedAtOnce) return this.retry(stream, state);
+    state.reopenedAtOnce = true;
     this.reopen(stream);
+  }
+
+  private openedAgain(state: StreamState<Key>) {
+    state.attempts = 0;
+    state.reopenedAtOnce = false;
   }
 
   private async data(frame: z.infer<typeof dataFrameSchema>) {
@@ -305,7 +339,7 @@ export class DataStreams<Key extends object, Snapshot, Append> {
       if (!read) return this.abandon(state, Error(`${frame.stream}: unreadable snapshot`));
       if (read.problem) this.report(Error(`${frame.stream}: ${read.problem}`));
       state.lastSeq = frame.seq;
-      state.attempts = 0;
+      this.openedAgain(state);
       await this.handlers.onSnapshot(state.key, read.snapshot);
       if (state.again) {
         state.again = false;
@@ -313,6 +347,7 @@ export class DataStreams<Key extends object, Snapshot, Append> {
       }
       return;
     }
+    if (state.missed !== null && frame.seq > state.missed) state.missed = null;
     if (this.family.gap === 'resync') {
       if (state.lastSeq === null || frame.seq <= state.lastSeq) return;
       if (frame.seq > state.lastSeq + 1) return this.reopen(frame.stream);
@@ -344,6 +379,7 @@ export class DataStreams<Key extends object, Snapshot, Append> {
     this.waiting.delete(stream);
     state.pending = true;
     state.lastSeq = null;
+    state.missed = null;
     this.send({ action: 'open', stream });
     this.setTimer(stream, this.options.openTimeoutMs ?? 30_000, () => {
       state.pending = false;

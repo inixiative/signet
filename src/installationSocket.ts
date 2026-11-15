@@ -92,6 +92,8 @@ export type InstallationSocketOptions = {
   /** Stream opens sent per window, for each kind of stream (`DataStreamOptions`). */
   openBurst?: number;
   openWindowMs?: number;
+  /** The most frames that may wait on the handlers, for each kind of stream (`DataStreamOptions`). */
+  maxQueuedFrames?: number;
   retryMaxMs?: number;
   /** A Kingdom that never answers the proof (one without Installation sockets) is treated as down. */
   authTimeoutMs?: number;
@@ -144,6 +146,7 @@ export class InstallationSocket {
       retryBaseMs: options.retryBaseMs,
       openBurst: options.openBurst,
       openWindowMs: options.openWindowMs,
+      maxQueuedFrames: options.maxQueuedFrames,
       // Reconnecting authenticates afresh, and `up()` then reopens everything held.
       onPresentationExpired: () => this.socket?.close(),
     });

@@ -59,7 +59,7 @@ const opens = (sent: Record<string, unknown>[]) =>
   sent.filter((frame) => frame.action === 'open').length;
 
 test('a Kingdom that keeps answering revised is reopened once at once, then with backoff', async () => {
-  const { streams, sent, reopening } = hold('deliver', { retryBaseMs: 20 });
+  const { streams, sent, reopening } = hold('deliver', { retryBaseMs: 40 });
   const rejected = async () => {
     streams.receive({ type: 'openRejected', stream: 'x:1', reason: 'revised' });
     await Bun.sleep(5);
@@ -107,6 +107,18 @@ test('a deliver stream reports a seq that went back, and the jump after it', asy
   ]);
 });
 
+test('a revision Kingdom opens and then closes again is reopened at once each time', async () => {
+  const { streams, sent } = hold('deliver', { retryBaseMs: 10_000 });
+  for (let round = 0; round < 3; round++) {
+    streams.receive({ type: 'opened', stream: 'x:1' });
+    streams.receive(snapshot(round));
+    streams.receive({ type: 'closed', stream: 'x:1', reason: 'revised' });
+    await Bun.sleep(5);
+  }
+  expect(opens(sent)).toBe(4);
+  streams.down();
+});
+
 test('handlers that fall behind lose appends past the bound, once reported, and the gap shows', async () => {
   let release = () => {};
   const blocked = new Promise<void>((resolve) => {
@@ -127,8 +139,52 @@ test('handlers that fall behind lose appends past the bound, once reported, and 
   expect(errors.map(String)).toEqual([
     'Error: x:1: handlers are behind; appends are dropped until they catch up',
   ]);
+  expect(gaps).toEqual([{ after: 2, seq: 10 }]);
   streams.receive(append(11, 11));
   await Bun.sleep(5);
   expect(delivered).toEqual([1, 2, 11]);
-  expect(gaps).toEqual([{ after: 2, seq: 11 }]);
+  expect(gaps).toHaveLength(1);
+});
+
+const blockedHandler = () => {
+  let release = () => {};
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return { blocked, release: () => release() };
+};
+
+test('appends dropped at the end of a burst still show: a deliver stream reports the gap once caught up', async () => {
+  const { blocked, release } = blockedHandler();
+  const delivered: unknown[] = [];
+  const { streams, gaps } = hold('deliver', { maxQueuedFrames: 3 }, async (payload) => {
+    await blocked;
+    delivered.push(payload);
+  });
+  streams.receive(snapshot(0));
+  for (let seq = 1; seq <= 6; seq++) streams.receive(append(seq, seq));
+  release();
+  await Bun.sleep(5);
+  expect(delivered).toEqual([1, 2]);
+  expect(gaps).toEqual([{ after: 2, seq: 6 }]);
+  streams.receive(append(7, 7));
+  await Bun.sleep(5);
+  expect(delivered).toEqual([1, 2, 7]);
+  expect(gaps).toHaveLength(1);
+});
+
+test('appends dropped at the end of a burst still show: a resync stream reopens once caught up', async () => {
+  const { blocked, release } = blockedHandler();
+  const delivered: unknown[] = [];
+  const { streams, sent } = hold('resync', { maxQueuedFrames: 3 }, async (payload) => {
+    await blocked;
+    delivered.push(payload);
+  });
+  streams.receive(snapshot(0));
+  for (let seq = 1; seq <= 6; seq++) streams.receive(append(seq, seq));
+  release();
+  await Bun.sleep(5);
+  expect(delivered).toEqual([1, 2]);
+  expect(opens(sent)).toBe(2);
+  streams.down();
 });

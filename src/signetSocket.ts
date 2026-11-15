@@ -28,6 +28,8 @@ export type SignetSocketOptions = Omit<ThreadStreamHandlers, 'onSnapshot' | 'onE
     /** Stream opens sent per window, for each kind of stream (`DataStreamOptions`). */
     openBurst?: number;
     openWindowMs?: number;
+    /** The most frames that may wait on the handlers, for each kind of stream (`DataStreamOptions`). */
+    maxQueuedFrames?: number;
     /** Renew this long before the access token expires (it lives five minutes). */
     renewBeforeMs?: number;
     WebSocket?: typeof WebSocket;
@@ -82,6 +84,7 @@ export class SignetSocket {
         retryBaseMs: options.retryBaseMs,
         openBurst: options.openBurst,
         openWindowMs: options.openWindowMs,
+        maxQueuedFrames: options.maxQueuedFrames,
         // Kingdom closed streams because the presentation lapsed: re-present on a new connection.
         onPresentationExpired: () => this.socket?.close(),
       },
