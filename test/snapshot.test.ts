@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ServerWebSocket } from 'bun';
 import {
+  accessRequestSchema,
   generateSignetKey,
   type InstallationSnapshot,
   InstallationSocket,
@@ -163,6 +164,7 @@ describe('per-entry snapshot parsing (review U1)', () => {
       taskId: null,
       currentRevision: 1,
       remainingRequests: null,
+      projectIds: [],
       holder: null,
       operations: [
         {
@@ -191,6 +193,7 @@ describe('per-entry snapshot parsing (review U1)', () => {
       taskId: null,
       currentRevision: 1,
       remainingRequests: null,
+      projectIds: [],
       holder: null,
       operations: [
         {
@@ -231,6 +234,47 @@ describe('per-entry snapshot parsing (review U1)', () => {
       { integrationId: foundry, provider: 'foundry' },
       { integrationId: archive, provider: 'archive' },
     ]);
+  });
+});
+
+describe('the Kingdom Projects a Signet may be used in', () => {
+  const describedWith = (projectIds: unknown) => ({
+    signetId: uuid(),
+    name: 'Repo agent',
+    expiresAt: null,
+    lifecycle: 'ongoing',
+    taskId: null,
+    currentRevision: 1,
+    remainingRequests: null,
+    projectIds,
+    holder: null,
+    operations: [],
+  });
+
+  test('describe carries the Signet projectIds', () => {
+    const projectIds = [uuid(), uuid()];
+    expect(parseSignetDescription(describedWith(projectIds)).projectIds).toEqual(projectIds);
+    expect(parseSignetDescription(describedWith([])).projectIds).toEqual([]);
+  });
+
+  test('a description without projectIds, or with a non-uuid one, is refused', () => {
+    const { projectIds: _, ...missing } = describedWith([]);
+    expect(() => parseSignetDescription(missing)).toThrow();
+    expect(() => parseSignetDescription(describedWith(['kcp']))).toThrow();
+  });
+
+  test('an access request may name its Kingdom Project by uuid', () => {
+    const request = {
+      requestId: uuid(),
+      signetId: uuid(),
+      integrationId: uuid(),
+      operation: 'repository.read',
+      input: { resourceId: uuid() },
+    };
+    const projectId = uuid();
+    expect(accessRequestSchema.parse({ ...request, projectId }).projectId).toBe(projectId);
+    expect(accessRequestSchema.parse(request).projectId).toBeUndefined();
+    expect(accessRequestSchema.safeParse({ ...request, projectId: 'kcp' }).success).toBe(false);
   });
 });
 

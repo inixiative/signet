@@ -328,6 +328,11 @@ export const signetDescriptionSchema = z.object({
   taskId: z.uuid().nullable(),
   currentRevision: z.number().int(),
   remainingRequests: z.number().nullable(),
+  /**
+   * The Kingdom Projects this Signet may be used in (its Project grant rows). A call naming a
+   * project outside them is refused; with none, it is usable only with no project named.
+   */
+  projectIds: z.array(z.uuid()),
   operations: z.array(
     z.object({
       key: z.string(),
@@ -394,6 +399,8 @@ export const accessRequestSchema = z.strictObject({
   requestId: z.uuid(),
   taskId: z.uuid().optional(),
   runId: z.uuid().optional(),
+  /** The caller's Kingdom Project (KCP sends its repo's); it must be one of the Signet's `projectIds`. */
+  projectId: z.uuid().optional(),
   integrationId: z.uuid(),
   signetId: z.uuid(),
   operation: z.string().min(1).max(80),
