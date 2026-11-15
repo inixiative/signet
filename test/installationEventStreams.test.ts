@@ -14,6 +14,7 @@ import {
   type ThreadEntry,
   writePrivateJson,
 } from '../src';
+import { eventIdOf, eventNameOf } from './eventNames';
 
 const uuid = () => Bun.randomUUIDv7();
 const T1 = 'thread_0199f0aa-0000-7000-8000-000000000001';
@@ -33,8 +34,11 @@ const settle = () => Bun.sleep(40);
 const toHolder = (frame: Record<string, unknown>) => kingdom?.send(JSON.stringify(frame));
 const sent = (action: string, stream: string) =>
   received.filter((frame) => frame.action === action && frame.stream === stream).length;
-const append = (eventId: string, event: Record<string, unknown> = {}) =>
-  ({ eventId, type: 'pull_request.review_requested', event }) satisfies AccessEventsAppend;
+const append = (name: string, event: Record<string, unknown> = {}) =>
+  ({
+    type: 'pull_request.review_requested',
+    event: { id: eventIdOf(name), ...event },
+  }) satisfies AccessEventsAppend;
 const opened = (stream: string, seq: number) => {
   toHolder({ type: 'opened', stream });
   toHolder({
@@ -139,7 +143,7 @@ test('an Installation holds the channels of Signets it holds, keyed by Signet an
   expect(socket.heldEventChannels()).toEqual([first, second]);
 
   // Two Signets on one resource: Kingdom appends the event to both channels, each cut by its own
-  // Signet's lens. Both arrive; `eventId` is what a consumer dedupes on.
+  // Signet's lens. Both arrive; `event.id` is what a consumer dedupes on.
   opened(accessEventsStreamName(first), seeded);
   opened(accessEventsStreamName(second), seeded + 40);
   appended(accessEventsStreamName(first), seeded + 1, append('delivery-1', { mentions: ['aron'] }));
@@ -183,7 +187,7 @@ test('an Installation reopens its channels after its socket drops, beside its th
       onSnapshot: (_stream, view) => void views.push(view.journalSeq),
       onEntry: (_stream, received) => void entries.push(received.journalSeq),
     },
-    eventStreams: { onEvent: (_held, event) => void events.push(event.eventId) },
+    eventStreams: { onEvent: (_held, event) => void events.push(eventNameOf(event)) },
   });
   socket.openThread(member);
   socket.openEventChannel(held);
@@ -242,7 +246,7 @@ test('an Installation reports an unreadable event through its own onError when t
     retryBaseMs: 20,
     onSnapshot: () => {},
     onError: (error) => void errors.push(error),
-    eventStreams: { onEvent: (_held, event) => void events.push(event.eventId) },
+    eventStreams: { onEvent: (_held, event) => void events.push(eventNameOf(event)) },
   });
   socket.openEventChannel(held);
   socket.start();
@@ -253,4 +257,37 @@ test('an Installation reports an unreadable event through its own onError when t
   await waitFor(() => events.length === 1);
 
   expect(errors).toHaveLength(1);
+});
+
+test('a presentationExpired close reconnects the Installation socket, and the channel opens again', async () => {
+  const events: string[] = [];
+  const reopening: string[] = [];
+  const held = { signetId: uuid(), resourceId: uuid() };
+  socket = new InstallationSocket({
+    url,
+    keyFile,
+    retryBaseMs: 20,
+    pollMs: 60_000,
+    onSnapshot: () => {},
+    eventStreams: {
+      onEvent: (_held, event) => void events.push(eventNameOf(event)),
+      onReopening: (_held, reason) => void reopening.push(reason),
+    },
+  });
+  socket.openEventChannel(held);
+  socket.start();
+  const channel = accessEventsStreamName(held);
+  await waitFor(() => sent('open', channel) === 1);
+  opened(channel, seeded);
+  const first = kingdom;
+  toHolder({ type: 'closed', stream: channel, reason: 'presentationExpired' });
+  // It is still held, and not dead: the socket proves its key again and reopens it.
+  await waitFor(() => sent('open', channel) === 2, 5000);
+  expect(kingdom).not.toBe(first);
+  expect(reopening).toEqual(['presentationExpired']);
+  expect(socket.heldEventChannels()).toEqual([held]);
+  opened(channel, seeded + 5);
+  appended(channel, seeded + 6, append('after-re-proving'));
+  await waitFor(() => events.length === 1);
+  expect(events).toEqual(['after-re-proving']);
 });

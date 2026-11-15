@@ -16,12 +16,15 @@ export const eventPartySchema = z.strictObject({
 export type EventParty = z.infer<typeof eventPartySchema>;
 
 /**
- * One provider event, normalized. `eventId` is the provider's delivery id (or the notification id
- * for a poll), so a retried delivery is one event. `type` is `<provider event>.<action>`, e.g.
+ * One provider event, normalized. `id` is the event's identity: a UUID Kingdom mints once per
+ * event, after it has dropped a provider's retry, so it is the same on every channel the event
+ * reaches. `eventId` is the provider's delivery id (or the notification id for a poll), which
+ * Kingdom drops retries by and holders never see. `type` is `<provider event>.<action>`, e.g.
  * `issue_comment.created`. `payload` is the provider's whole event as it arrived (the webhook body,
  * or the notification for a poll); the other fields are Kingdom's normalized reading of it.
  */
 export const integrationEventSchema = z.strictObject({
+  id: z.uuid(),
   eventId: z.string().min(1).max(200),
   integrationId: z.uuid(),
   provider: z.string().min(1).max(80),
@@ -62,9 +65,10 @@ export const eventOperationKey = (type: IntegrationEvent['type']) => `events.${t
 
 /**
  * The fields a lens layer can name on the `IntegrationEvent` rows at every `events.*` branch of an
- * operations lens: the envelope without `eventId` and `type`, which ride outside the projected body
- * (`accessEventsAppendSchema`) on every append, so a layer can neither trim them nor pick or filter
- * on them. `payload` is one field: a layer keeps or drops it whole.
+ * operations lens: the envelope without `eventId`, which stays in Kingdom, and `type`, which rides
+ * outside the projected body (`accessEventsAppendSchema`), so a layer can neither trim them nor pick
+ * or filter on them. `id` is the row's identifier: a layer can name it and can never drop it
+ * (Kingdom refuses a lens that does). `payload` is one field: a layer keeps or drops it whole.
  */
 export const integrationEventFieldSchema = integrationEventSchema
   .keyof()
@@ -72,16 +76,15 @@ export const integrationEventFieldSchema = integrationEventSchema
 export type IntegrationEventField = z.infer<typeof integrationEventFieldSchema>;
 
 /**
- * One append on a channel's stream. `eventId` and `type` ride outside the projected body, so the
- * grant's lens trimming can never drop what a holder needs to dedupe and route; `event` is the
- * envelope as the grant's lens layers project it (json-rules `projectRows`). Kingdom caps the frame:
- * when the projected event is over the cap it leaves `payload` out and sets `truncated`; every other
- * field arrives whole.
+ * One append on a channel's stream. `type` rides outside the projected body, so lens trimming can
+ * never drop what a holder routes by; `event` is the envelope as the grant's lens layers project it
+ * (json-rules `projectRows`), and always carries `id`, which a holder dedupes on. Kingdom caps the
+ * frame: when the projected event is over the cap it leaves `payload` out and sets `truncated`;
+ * every other field arrives whole.
  */
 export const accessEventsAppendSchema = z.strictObject({
-  eventId: integrationEventSchema.shape.eventId,
   type: integrationEventSchema.shape.type,
-  event: z.record(z.string(), z.unknown()),
+  event: z.looseObject({ id: integrationEventSchema.shape.id }),
   truncated: z.literal(true).optional(),
 });
 export type AccessEventsAppend = z.infer<typeof accessEventsAppendSchema>;

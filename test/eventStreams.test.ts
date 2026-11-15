@@ -18,6 +18,7 @@ import {
   type ThreadViewResult,
   writePrivateJson,
 } from '../src';
+import { eventIdOf, eventNameOf } from './eventNames';
 
 const uuid = () => Bun.randomUUIDv7();
 const T1 = 'thread_0199f0aa-0000-7000-8000-000000000001';
@@ -47,10 +48,11 @@ const thread = (threadId: string) => accessThreadStreamName({ signetId, threadId
 const sent = (action: string, stream: string) =>
   frames.filter((frame) => frame.action === action && frame.stream === stream).length;
 const presentations = () => frames.filter((frame) => frame.action === 'authenticateSignet').length;
-const append = (
-  eventId: string,
-  event: Record<string, unknown> = { scope: 'inixiative/kingdom' },
-) => ({ eventId, type: 'issue_comment.created', event }) satisfies AccessEventsAppend;
+const append = (name: string, event: Record<string, unknown> = { scope: 'inixiative/kingdom' }) =>
+  ({
+    type: 'issue_comment.created',
+    event: { id: eventIdOf(name), ...event },
+  }) satisfies AccessEventsAppend;
 const opened = (stream: string, seq: number) => {
   toHolder({ type: 'opened', stream });
   toHolder({
@@ -214,7 +216,7 @@ test('an append after a seq jump is delivered and the gap reported, never reopen
   // A few appends that never arrived.
   appended(channel(R1), aDayLater + 5, append('after-a-loss'));
   await waitFor(() => seen.events.length === 4);
-  expect(seen.events.map(([, event, seq]) => [event.eventId, seq])).toEqual([
+  expect(seen.events.map(([, event, seq]) => [eventNameOf(event), seq])).toEqual([
     ['before-the-quiet-day', seeded + 1],
     ['after-the-quiet-day', aDayLater + 1],
     ['next', aDayLater + 2],
@@ -239,7 +241,7 @@ test('an append after a seq jump is delivered and the gap reported, never reopen
 test('the gap is reported before its event, and a holder with no onGap still gets the event', async () => {
   const order: string[] = [];
   const { socket } = await hold({
-    onEvent: (_held, event) => void order.push(event.eventId),
+    onEvent: (_held, event) => void order.push(eventNameOf(event)),
     onGap: (_held, gap) => void order.push(`gap after ${gap.after - seeded}`),
   });
   socket.openEventChannel(R1);
@@ -272,7 +274,7 @@ test("an append at or below the snapshot's seq is delivered: an empty snapshot h
   appended(channel(R1), seeded + 1, append('published-while-opening'));
   appended(channel(R1), seeded + 2, append('next'));
   await waitFor(() => seen.events.length === 2);
-  expect(seen.events.map(([, event]) => event.eventId)).toEqual([
+  expect(seen.events.map(([, event]) => eventNameOf(event))).toEqual([
     'published-while-opening',
     'next',
   ]);
@@ -304,8 +306,8 @@ test('a handler that throws is reported and the next event still arrives', async
   const delivered: string[] = [];
   const { socket, seen } = await hold({
     onEvent: (_held, event) => {
-      if (event.eventId === 'breaks') throw Error('consumer failed');
-      delivered.push(event.eventId);
+      if (eventNameOf(event) === 'breaks') throw Error('consumer failed');
+      delivered.push(eventNameOf(event));
     },
   });
   socket.openEventChannel(R1);
@@ -331,7 +333,7 @@ test('a snapshot that is not the empty one is reported and the channel still ope
   });
   appended(channel(R1), seeded + 1, append('live'));
   await waitFor(() => seen.events.length === 1);
-  expect(seen.events.map(([, event]) => event.eventId)).toEqual(['live']);
+  expect(seen.events.map(([, event]) => eventNameOf(event))).toEqual(['live']);
   expect(seen.opened).toHaveLength(1);
   expect(seen.errors).toHaveLength(1);
   expect(seen.closed).toEqual([]);
@@ -384,7 +386,7 @@ test('a revision reopens the channel, and a retryable refusal is retried', async
   opened(channel(R1), seeded + 4);
   appended(channel(R1), seeded + 5, append('under-the-new-revision'));
   await waitFor(() => seen.events.length === 2);
-  expect(seen.events.map(([, event]) => event.eventId)).toEqual([
+  expect(seen.events.map(([, event]) => eventNameOf(event))).toEqual([
     'before-the-new-snapshot',
     'under-the-new-revision',
   ]);
@@ -412,13 +414,13 @@ test('leaving closes the channel; the acknowledgement is not a close by Kingdom'
   appended(channel(R2), seeded + 1, append('still-held'));
   await waitFor(() => seen.events.length === 1);
   await settle();
-  expect(seen.events.map(([held, event]) => [held.resourceId, event.eventId])).toEqual([
+  expect(seen.events.map(([held, event]) => [held.resourceId, eventNameOf(event)])).toEqual([
     [R2, 'still-held'],
   ]);
   expect(seen.closed).toEqual([]);
 });
 
-test('the same eventId is delivered as often as it arrives: once per channel, and again on a repeat', async () => {
+test('the same event is delivered as often as it arrives: once per channel, and again on a repeat', async () => {
   const { socket, seen } = await hold();
   socket.openEventChannel(R1);
   socket.openEventChannel(R2);
@@ -458,7 +460,7 @@ test('a dropped connection re-presents and reopens the held channels', async () 
   opened(channel(R1), seeded + 4);
   appended(channel(R1), seeded + 5, append('after-the-drop'));
   await waitFor(() => seen.events.length === 2);
-  expect(seen.events.map(([, event, seq]) => [event.eventId, seq])).toEqual([
+  expect(seen.events.map(([, event, seq]) => [eventNameOf(event), seq])).toEqual([
     ['before-the-drop', seeded + 1],
     ['after-the-drop', seeded + 5],
   ]);
@@ -533,7 +535,7 @@ test('threads and events share one socket: a thread gap resyncs, an event gap de
   threadData('snapshot', 7, { data: view(14) });
   await waitFor(() => seen.snapshots.length === 2);
   expect(seen.entries).toEqual([[T1, 11]]);
-  expect(seen.events.map(([, event]) => event.eventId)).toEqual(['delivery-1', 'delivery-3']);
+  expect(seen.events.map(([, event]) => eventNameOf(event))).toEqual(['delivery-1', 'delivery-3']);
   expect(seen.gaps).toEqual([
     [
       { signetId, resourceId: R1 },
@@ -565,7 +567,7 @@ test('event errors with no handler of their own go to the socket onError', async
   socket = new SignetSocket({
     client,
     onError: (error) => void errors.push(error),
-    eventStreams: { onEvent: (_held, event) => void events.push(event.eventId) },
+    eventStreams: { onEvent: (_held, event) => void events.push(eventNameOf(event)) },
   });
   expect(() => socket?.open(T1)).toThrow('Pass onSnapshot and onEntry to hold thread views');
   socket.openEventChannel(R1);

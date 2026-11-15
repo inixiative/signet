@@ -5,19 +5,20 @@ import {
   type EventStreamKey,
   EventStreams,
 } from '../src';
+import { eventIdOf, eventNameOf } from './eventNames';
 
 const signetId = Bun.randomUUIDv7();
 const key = (): EventStreamKey => ({ signetId, resourceId: Bun.randomUUIDv7() });
 const settle = (ms = 30) => Bun.sleep(ms);
 const opensOf = (frames: Record<string, unknown>[]) =>
   frames.filter((frame) => frame.action === 'open').map((frame) => String(frame.stream));
-const append = (stream: string, seq: number, eventId: string) => ({
+const append = (stream: string, seq: number, name: string) => ({
   category: 'data',
   action: 'append',
   type: 'append',
   stream,
   seq,
-  payload: { eventId, type: 'issues.opened', event: {} } satisfies AccessEventsAppend,
+  payload: { type: 'issues.opened', event: { id: eventIdOf(name) } } satisfies AccessEventsAppend,
 });
 const snapshot = (stream: string, seq: number) => ({
   category: 'data',
@@ -103,8 +104,8 @@ test('an error handler that throws does not stop the events that follow', async 
   const delivered: string[] = [];
   const streams = new EventStreams(() => {}, {
     onEvent: (_channel, event) => {
-      if (event.eventId === 'first') throw Error('consumer failed');
-      delivered.push(event.eventId);
+      if (eventNameOf(event) === 'first') throw Error('consumer failed');
+      delivered.push(eventNameOf(event));
     },
     onError: () => {
       throw Error('reporter failed');
@@ -130,7 +131,7 @@ test('a throwing error handler does not stop a channel from opening or from repo
   const gaps: number[] = [];
   const streams = new EventStreams(() => {}, {
     onOpened: (channel) => void opened.push(channel.resourceId),
-    onEvent: (_channel, event) => void delivered.push(event.eventId),
+    onEvent: (_channel, event) => void delivered.push(eventNameOf(event)),
     onGap: (_channel, gap) => void gaps.push(gap.seq),
     onError: () => {
       throw Error('reporter failed');
@@ -158,7 +159,7 @@ test('a gap handler that rejects is reported and the event still arrives', async
   const errors: unknown[] = [];
   const delivered: string[] = [];
   const streams = new EventStreams(() => {}, {
-    onEvent: (_channel, event) => void delivered.push(event.eventId),
+    onEvent: (_channel, event) => void delivered.push(eventNameOf(event)),
     onGap: (async () => {
       throw Error('gap handler failed');
     }) as () => void,
@@ -209,8 +210,8 @@ test('an error handler that rejects, and a closed handler that rejects, stop not
   const reported: unknown[] = [];
   const streams = new EventStreams(() => {}, {
     onEvent: (_channel, event) => {
-      if (event.eventId === 'first') throw Error('consumer failed');
-      delivered.push(event.eventId);
+      if (eventNameOf(event) === 'first') throw Error('consumer failed');
+      delivered.push(eventNameOf(event));
     },
     onClosed: (async () => {
       throw Error('closed handler failed');
