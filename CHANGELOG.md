@@ -2,6 +2,66 @@ This file starts at 0.17.0. Earlier releases are described in their pull request
 terms `posts`, `act` and `agent`, #33) and 0.16.0 (a hosted request carries its requester's
 audience, #35).
 
+## 0.19.0 — a grant row's lens is one narrowing; no base lenses on the wire
+
+Aron, 2026-11-14 and 2026-11-15: the lens column is a narrowing, the same as template's; delegation
+never copies the lens; "Drop the base lenses. It's just a lens." Why: layer ids and parents only
+chained a request's layer under the base and an approver's under it. Since an approval is a whole
+copy and a Signet never holds what was asked, a row holds one narrowing, and a re-delegated row's
+lens is its own narrowing composed under the rows above it at read time.
+
+### Breaking
+
+- **A grant row's `lens` is one narrowing** (`lensNarrowingSchema`: `{ root?, mapDefaults? }`,
+  strict) on the stored row (`grantResourceSchema`), the holder's view (`signetGrantSchema`) and
+  `describe` (`signetDescriptionResourceSchema`), the same shape an ask already carried. A list of
+  layers, `id`, `parents` or any other key does not parse; a holder drops that resource and reports
+  it. `storedLensLayerSchema`, `storedLensLayersSchema`, `StoredLensLayer`, `ComposedGrantLens` and
+  `baseLensId` are gone.
+- **`hostedSignetSchema.baseLenses` and `storedBaseLensSchema` are gone.** A host that needs a
+  kind's base creates it with `createOperationsLens`. The hosted Signet schema strips unknown keys,
+  so a Kingdom that still sends `baseLenses` has it dropped; a 0.18 client drops every hosted Signet
+  without it.
+- **`composeGrantLensChain(base, chain)`** takes the kind's operations lens and a row's chain of
+  lenses, the upstream row's first, and returns a `GrantLens`. Only an absent lens (null or
+  undefined) adds nothing; every lens that is present composes exactly as json-rules composes it,
+  whatever it holds, so `{}`, `{ root: {} }` and `{ root: { relations: {} } }` all turn every branch
+  off, as on 0.18. A chain where every lens is absent reads every branch (`narrowed: false`). Each
+  lens is validated against the ones above it with json-rules `assertValidNarrowing`, the step
+  `composeLens` runs per layer. A chain over `grantLensChainLimit` (20) is refused.
+  `GrantLensError.code` is `invalid_lens`.
+- **`GrantLens` is `{ lens, narrowed }`**: the composed json-rules lens, and whether any lens on the
+  chain is present. It no longer carries a projection or layers; the refusals read `grant.lens`
+  through json-rules (`lensVisit`, `walkLensPath`).
+- **`projectionVisit` and `projectionShows` are gone**: they were json-rules `lensVisit(lens,
+  operation)` and `walkLensPath(lens, `${operation}.${field}`).outcome === 'resolved'`, read off a
+  projection by guessing the anchor. Call those on `grant.lens`.
+- **The lens surface is renamed so each name says its action** (`docs/VERBS.md`, enforced by
+  `test/verbs.test.ts`). No old name is kept:
+
+  | 0.18 | 0.19 |
+  | --- | --- |
+  | `operationsLens({ model, operations, rowModel, rowModels })` | `createOperationsLens(…)`, same arguments |
+  | `everyBranch(operations, leafNarrowing?)` | `turnOnEveryOperationBranch(operations, leafNarrowing?)` |
+  | `rowModelLayer(operations, row, narrowing)` | `narrowRowModelOnEveryBranch(operations, row, narrowing)` |
+  | `narrowingAtOperation(operation, narrowing)` | `narrowOperationBranch(operation, narrowing)` |
+  | `composeGrantLens(baseId, base, storedLayers)` | `composeGrantLensChain(base, chain): GrantLens` |
+  | `rowsThroughLens(lens, operation, rows)` | `projectOperationRows(lens, operation, rows)` |
+  | `operationRecord(operation, rows)` | `nestRowsAtOperation(operation, rows)` |
+  | `operationRows(record, operation)` | `readRowsAtOperation(record, operation)` (own properties only) |
+  | `conditionAtOperation(operation, condition)` | `conditionOverOperationRows(operation, condition)` |
+  | `projectionFilters(projection, operation)` | `lensFiltersOperationRows(lens, operation)` |
+  | `projectionVisit(projection, operation)` | json-rules `lensVisit(lens, operation)` |
+  | `projectionShows(projection, operation, field)` | json-rules `walkLensPath(lens, `${operation}.${field}`).outcome === 'resolved'` |
+  | `archiveLensRefusal(operation, lens)` | `refuseArchiveOperationLens(operation, grant)` |
+  | `archiveGrantRefusal(scope, lens)` | `refuseArchiveGrantLens(scope, grant)` |
+  | `repositoryLensRefusal(operation, lens)` | `refuseRepositoryOperationLens(operation, grant)` |
+  | `repositoryGrantRefusal(scope, lens)` | `refuseRepositoryGrantLens(scope, grant)` |
+  | `archiveCallCondition(operation, input)` | `conditionOverArchiveCallFilters(operation, input)` |
+  | `archiveCallNarrowing(operation, input)` | `narrowToArchiveCallFields(operation, input)` |
+  | `lensLayerSchema` | `lensNarrowingSchema` |
+  | `LensLayer` | `LensBody` |
+
 ## 0.18.0 — a conversation is an integration resource; grant terms are gone
 
 Aron, 2026-11-14: "they should be operations in a conversation… tread conversations as a integration

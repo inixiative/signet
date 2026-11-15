@@ -60,7 +60,7 @@ export type ConversationActLevel = ReturnType<typeof conversationActLevel>;
 
 /**
  * The row a thread call reads at its operation's branch of the lens: the thread, by `id`. A holder
- * reads it through a grant's lens with `operationRecord(operation, [threadRow(id)])`.
+ * reads it through a grant's lens with `nestRowsAtOperation(operation, [threadRow(id)])`.
  */
 export const threadRow = (threadId: string) => ({ id: threadIdSchema.parse(threadId) });
 

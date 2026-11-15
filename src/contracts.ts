@@ -14,7 +14,7 @@ import {
   signetGrantSchema,
   signetResourceSchema,
 } from './grants';
-import { storedBaseLensSchema, storedLensLayersSchema } from './lens';
+import { lensNarrowingSchema } from './lens';
 import {
   foundryIdSchema,
   threadFloorActionSchema,
@@ -273,8 +273,9 @@ export const installationInquirySchema = z.object({
 /**
  * An Installation asks for more on a Signet it already holds (Aron, 2026-11-14: "grant me new
  * entitlement"): resources by id or by kind, as a registration asks, and projects by id. Kingdom
- * sends it to the person who issued the Signet; approval adds what they approve, never more than
- * asked, as a new revision of the same Signet.
+ * sends it to the person who issued the Signet; the approver submits a whole copy of the grant,
+ * narrower or wider than the request, each entitlement in it checked by the grant check on the
+ * approver, as a new revision of the same Signet.
  */
 export const signetEntitlementRequestSchema = z.strictObject({
   signetId: z.uuid(),
@@ -390,12 +391,6 @@ export const hostedSignetSchema = z.object({
      */
     audience: recipientAudienceSchema,
   }),
-  /**
-   * Each operations lens the rows' `lens` layers compose under, keyed by `baseLensId(provider, kind)`.
-   * Composing them shows what these rows' own layers narrow, for display; it is not what the member
-   * reaches.
-   */
-  baseLenses: z.record(z.string(), storedBaseLensSchema),
   resources: grantsSchema,
 });
 export type InstallationSignet = z.infer<typeof installationSignetSchema>;
@@ -421,7 +416,7 @@ export const signetDescriptionResourceSchema = z.object({
   integrationId: z.uuid(),
   /** The integration's provider family (`github`, `anthropic`…): the description has no host. */
   provider: z.string(),
-  lens: storedLensLayersSchema.optional(),
+  lens: lensNarrowingSchema.optional(),
 });
 export const signetDescriptionSchema = z.object({
   signetId: z.uuid(),

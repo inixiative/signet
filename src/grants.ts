@@ -1,13 +1,13 @@
 import { validateRule } from '@inixiative/json-rules';
 import { z } from 'zod';
-import { lensLayerSchema, storedLensLayersSchema } from './lens';
+import { lensNarrowingSchema } from './lens';
 import { operationPickSchema, resolvedOperationsSchema } from './operations';
 import { conversationResourceKind, threadIdSchema } from './threads';
 
 /**
  * What a Signet revision grants, one row per resource (Aron, 2026-11-01). False polymorphism on
  * `resourceModel`: an `IntegrationResource` row carries its operations (`full`, or the leaves its
- * picks resolved to) and its lens layers; a `Project` row names a Kingdom project
+ * picks resolved to) and its lens; a `Project` row names a Kingdom project
  * the Signet may be used in, and nothing else. Artifacts may join later.
  */
 export const grantResourceModelSchema = z.enum(['IntegrationResource', 'Project']);
@@ -66,8 +66,8 @@ const grantedShape = {
   full: z.boolean(),
   /** The resolved leaves; absent when `full`. */
   operations: resolvedOperationsSchema.optional(),
-  /** The layers under the kind's operations lens; absent reads every branch of it. */
-  lens: storedLensLayersSchema.optional(),
+  /** This row's own narrowing of the kind's operations lens; absent reads every branch of it. */
+  lens: lensNarrowingSchema.optional(),
   /**
    * What may go in: the condition this row's calls must meet, whole. Kingdom checks it at
    * admission; a holder never gates on it. It names no other Signet and no path.
@@ -154,13 +154,10 @@ export const signetGrantSchema = z.discriminatedUnion('resourceModel', [
 ]);
 export type SignetGrant = z.infer<typeof signetGrantSchema>;
 
-/**
- * What a party asks for on one resource: `full` or picks, its own lens layer (Kingdom assigns the
- * layer its id and chains it under the base, or under the request when an approver writes it).
- */
+/** What a party asks for on one resource: `full` or picks, and a narrowing of the kind's lens. */
 const askedOperations = {
   operations: operationPickSchema,
-  lens: lensLayerSchema.optional(),
+  lens: lensNarrowingSchema.optional(),
   where: grantWhereSchema.optional(),
 };
 /** A resource asked for by id, or a scope: every resource of a kind on an integration. */

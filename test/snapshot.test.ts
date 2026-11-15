@@ -32,14 +32,7 @@ const held = (resources: unknown[] = []) => ({
   owner,
   resources,
 });
-const baseLens = {
-  id: 'foundry:threads',
-  parents: [],
-  mapName: 'foundry',
-  model: 'Thread',
-  maps: { foundry: { models: { Thread: { fields: {} } } } },
-};
-const hosted = (resources: unknown[], baseLenses: Record<string, unknown> = {}) => ({
+const hosted = (resources: unknown[], extra: Record<string, unknown> = {}) => ({
   signetId: uuid(),
   name: 'JobCo',
   revision: 2,
@@ -52,8 +45,8 @@ const hosted = (resources: unknown[], baseLenses: Record<string, unknown> = {}) 
     displayName: 'JobCo agent',
     audience: 'outside',
   },
-  baseLenses,
   resources,
+  ...extra,
 });
 const request = (extra: Record<string, unknown> = {}) => ({
   id: uuid(),
@@ -117,21 +110,25 @@ describe('per-entry snapshot parsing (review U1)', () => {
     ]);
   });
 
-  test('a hosted Signet keeps its base lenses, keyed by baseLensId', () => {
-    const withLens = hosted([], { 'foundry:threads': baseLens });
-    const snapshot = parseInstallationSnapshot({ ...ahead, hostedSignets: [withLens] });
-    expect(snapshot.hostedSignets).toHaveLength(1);
-    expect(snapshot.hostedSignets[0]?.baseLenses).toEqual({ 'foundry:threads': baseLens });
-    expect(snapshot.dropped.some((drop) => drop.list === 'hostedSignets')).toBe(false);
+  test("a grant row's lens is one narrowing; a list of layers drops only that resource", () => {
+    const lens = { root: { relations: { thread: { relations: { read: {} } } } } };
+    const layered = [{ id: 'request', parents: ['foundry:conversation'], ...lens }];
+    const signet = hosted([conversationGrant({ lens }), conversationGrant({ lens: layered })]);
+    const snapshot = parseInstallationSnapshot({ ...ahead, hostedSignets: [signet] });
+    expect(
+      snapshot.hostedSignets[0]?.resources.map((row) => ('lens' in row ? row.lens : null)),
+    ).toEqual([lens]);
+    expect(snapshot.dropped).toContainEqual(
+      expect.objectContaining({ list: `hostedSignets.${signet.signetId}.resources`, index: 1 }),
+    );
   });
 
-  test('a malformed base lens drops its Signet and is reported', () => {
-    const bad = hosted([], { 'foundry:threads': { ...baseLens, parents: ['x'] } });
-    const snapshot = parseInstallationSnapshot({ ...ahead, hostedSignets: [bad] });
-    expect(snapshot.hostedSignets).toEqual([]);
-    expect(snapshot.dropped.some((drop) => drop.list === 'hostedSignets' && drop.index === 0)).toBe(
-      true,
-    );
+  test('a hosted Signet carries no base lenses: a Kingdom that still sends them has the key dropped', () => {
+    const older = hosted([conversationGrant()], { baseLenses: { 'foundry:conversation': {} } });
+    const snapshot = parseInstallationSnapshot({ ...ahead, hostedSignets: [older] });
+    expect(snapshot.hostedSignets).toHaveLength(1);
+    expect(snapshot.hostedSignets[0]).not.toHaveProperty('baseLenses');
+    expect(snapshot.hostedSignets[0]?.resources).toHaveLength(1);
   });
 
   test('a missing list reads as empty and is reported, never failing the rest', () => {
@@ -176,14 +173,16 @@ describe('per-entry snapshot parsing (review U1)', () => {
           name: 'Post',
           resources: [
             resource(),
+            resource({ lens: { mapDefaults: {} } }),
             resource({ lens: { threads: { form: 'ids', ids: [T1] } } }),
             resource({ lens: 'whole' }, 'archiveLibrary'),
+            resource({ lens: [{ id: 'request', parents: ['foundry:conversation'] }] }),
           ],
         },
       ],
     });
-    expect(description.operations[0]?.resources).toHaveLength(1);
-    expect(description.dropped).toHaveLength(2);
+    expect(description.operations[0]?.resources).toHaveLength(2);
+    expect(description.dropped).toHaveLength(3);
   });
 
   test('describe reads a Signet whose resources sit on two integrations', () => {
