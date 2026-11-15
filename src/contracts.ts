@@ -270,10 +270,12 @@ export const installationInquirySchema = z.object({
 export const requestAudienceSchema = z.enum(['inOrg', 'outside']);
 export type RequestAudience = z.infer<typeof requestAudienceSchema>;
 /**
- * Who a Signet's recipient is to the integration's owner. `owner`: the recipient IS the owner (the
- * same user, or the same membership), so on a Foundry it is the owner's own client, not a member
- * from outside. Kingdom decides it; holding `prompt.resolve` says nothing about who someone is,
- * since recipients are never restricted.
+ * Who a Signet's recipient is to the integration's owner. `owner`: the recipient is the person who
+ * owns the integration (the same User, for an integration a user or a member owns), so on a Foundry
+ * it is the owner's own client, not a member from outside. Never an Integration recipient, and never
+ * anyone on an integration an organization or a space owns: those have no single person to be.
+ * Kingdom decides it; holding `prompt.resolve` says nothing about who someone is, since recipients
+ * are never restricted. A Signet hosted on integrations of several owners reads as the least of them.
  */
 export const recipientAudienceSchema = z.enum(['owner', ...requestAudienceSchema.options]);
 export type RecipientAudience = z.infer<typeof recipientAudienceSchema>;
@@ -355,8 +357,8 @@ export const hostedSignetSchema = z.object({
     displayName: z.string(),
     /**
      * Who the recipient is to the integration's owner: the host's member settings start from it, and
-     * `owner` is the owner's own client. A User by the organizations they share; an Integration as
-     * its owner; an Organization as itself; a Space or a member as its organization.
+     * `owner` is the owner's own client (`recipientAudienceSchema`). Otherwise `inOrg` when the
+     * recipient, or the owner of a recipient Integration, shares an organization with the owner.
      */
     audience: recipientAudienceSchema,
   }),
