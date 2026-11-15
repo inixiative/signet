@@ -1,0 +1,199 @@
+{
+  "version": 1,
+  "project": "signet",
+  "builtFrom": {
+    "docs": ["README.md"],
+    "excluded": [
+      {
+        "path": "test/**",
+        "kind": "excluded",
+        "reason": "Bun tests; outside the regions (codeScope is src/)."
+      },
+      {
+        "path": ".github/**",
+        "kind": "excluded",
+        "reason": "CI workflow only."
+      }
+    ],
+    "catalog": "code read through the repo's Atlas map when it has one, else the plan's code scope; described with Foundry's catalog describer prompts",
+    "atlas": ".atlas/concepts.ts",
+    "libraries": {},
+    "method": "three independent model proposals, item-level majority vote (2 of 3), seams to the size ceiling, per-region authoring"
+  },
+  "concepts": [
+    {
+      "tag": "grant-rows",
+      "atlas": "contract:grants",
+      "description": "Grant rows false-polymorphic on resourceModel (IntegrationResource with full/operations, lens, terms | Project), requested/registered/held resource shapes, per-kind terms (grantTermsSchema, grantTermsFitKind, threadsTerms)",
+      "region": "grants-and-operations"
+    },
+    {
+      "tag": "operation-picks",
+      "atlas": "contract:operation-picks",
+      "description": "Operation picks ({ full } | { picks } with .* prefixes): resolveOperationPicks/OperationPickError, operationTree, narrowsOperations, permitsOperation, scopeRefusal",
+      "region": "grants-and-operations"
+    },
+    {
+      "tag": "grant-lens",
+      "atlas": "contract:lens",
+      "description": "The grant lens as json-rules layers over baseLensId(provider, kind): lensLayerSchema, storedLensLayerSchema, GrantLens projectionFilters/projectionShows (envelope checks only; Kingdom composes)",
+      "region": "grants-and-operations"
+    },
+    {
+      "tag": "declared-operations",
+      "atlas": "contract:declared-operations",
+      "description": "The declared-operation join across resource kinds: declaredOperationSchema, operationInputSchemas, operationInputKeys, operationInputFromAccess; where a new operation is added first",
+      "region": "grants-and-operations"
+    },
+    {
+      "tag": "archive-operations",
+      "atlas": "operations:archive",
+      "description": "archiveLibrary operations (documents.read/search, sessions.write/delete), source operations, archiveLensRefusal/archiveGrantRefusal, archiveCallCondition/archiveCallNarrowing",
+      "region": "grants-and-operations"
+    },
+    {
+      "tag": "github-operations",
+      "atlas": "operations:github",
+      "description": "GitHub repository operations (commits/trees/blobs.read), pinned-commit repositoryLensRefusal/repositoryGrantRefusal, repositoryCallRow",
+      "region": "grants-and-operations"
+    },
+    {
+      "tag": "integration-events",
+      "atlas": "operations:integration-events",
+      "description": "Integration event envelope keyed by provider eventId, the account resource, eventOperationKey (events.<type>), accessEvents stream name/snapshot",
+      "region": "grants-and-operations"
+    },
+    {
+      "tag": "signet-envelope",
+      "atlas": "contract:wire",
+      "description": "What a Signet is apart from its rows: ownerRefSchema/ownerKey, recipient (User|Integration), lifecycles (request, task, ongoing), signetProposalSchema and review proposals",
+      "region": "presenting-signets"
+    },
+    {
+      "tag": "keys-and-proof",
+      "atlas": "primitive:proof",
+      "description": "EC P-256 device keys (generateSignetKey, signetPublicKey, publicClientKeySchema, signetKeySchema, nonce) and DPoP proofs: createSignetProof, verifySignetProof, digestCredential, proofTarget, keyThumbprint, signetProof",
+      "region": "presenting-signets"
+    },
+    {
+      "tag": "signet-client",
+      "atlas": "client:signet-client",
+      "description": "Presenting an enrolled Signet: SignetClient (fromFile, renew with shared per-file refresh, post over SignetAction, describe, execute, socketPresentation), signetPost, kingdomUrl, SignetHttpError, token patterns, credential/describe/execute/renew schemas",
+      "region": "presenting-signets"
+    },
+    {
+      "tag": "installation-calls",
+      "atlas": "client:installation-calls",
+      "description": "An Installation acting as itself by key: registerInstallation, requestRegistration, installationInquiries/cancel, installationSignets, enrollInstallationSignet, setInstallationCredential, rotateInstallationKey, saveCollectedSignet and their wire bodies",
+      "region": "obtaining-and-holding"
+    },
+    {
+      "tag": "person-calls",
+      "atlas": "client:person-calls",
+      "description": "A person or their agent with a Kingdom API token plus key proof: requestSignet, enrollSignet (expectedRevision), collectSignet, awaitSignet, signet request/enrollment/collected schemas",
+      "region": "obtaining-and-holding"
+    },
+    {
+      "tag": "installation-layout",
+      "atlas": "installation:layout",
+      "description": "One directory per Kingdom host under a product root with a key and one credential file per Signet: installationPaths, installationDirectory, signetCredentialFile, heldCredentials, privateDirectory, defaultInstallationName",
+      "region": "obtaining-and-holding"
+    },
+    {
+      "tag": "pairing-and-holding",
+      "atlas": "installation:pairing-and-holding",
+      "description": "pairInstallation end to end, holdInstallationSignets (re-enrolls, never deletes)/holdPersonSignets under withHoldLock, listedSignets, heldSignetFile, withdrawRegistration",
+      "region": "obtaining-and-holding"
+    },
+    {
+      "tag": "private-files",
+      "atlas": "primitive:private-files",
+      "description": "Owned 0600 JSON files in 0700 directories, written atomically: readPrivateJson, writePrivateJson",
+      "region": "obtaining-and-holding"
+    },
+    {
+      "tag": "installation-socket",
+      "atlas": "installation:socket",
+      "description": "InstallationSocket as Kingdom's live line to an Installation: key proof, inquiry/Signet snapshots (installationSnapshotSchema), polling while down, viewer URL",
+      "region": "obtaining-and-holding"
+    },
+    {
+      "tag": "per-entry-reads",
+      "atlas": "contract:per-entry-reads",
+      "description": "Tolerant per-entry readers that drop an unreadable entry into dropped: parseEntries, parseInstallationInquiries/Signets/Snapshot, parseSignetDescription",
+      "region": "obtaining-and-holding"
+    },
+    {
+      "tag": "holder-cache",
+      "atlas": "holders:describe-cache",
+      "description": "SignetHolders describe cache per held Signet (stale refresh) and parseHeldSignetDescription",
+      "region": "obtaining-and-holding"
+    },
+    {
+      "tag": "threads-terms",
+      "atlas": "threads:contract",
+      "description": "Conversation contract: threadsTermsSchema (view, delivery, outbound, floor, posts, act, agent) with narrowest defaults, narrowsThreadsTerms/meetThreadsTerms, threads operations, input/result/refusal schemas, threadRow",
+      "region": "agent-conversations"
+    },
+    {
+      "tag": "thread-host",
+      "atlas": "threads:host",
+      "description": "Host side over InstallationSocket: ThreadHost handlers, request/subscribe/lease/append frames with dense seq, threadResult/threadRefused, threadSubscriptionLeaseMs, hosted Signets and join requests (requestAudienceSchema inOrg|outside)",
+      "region": "agent-conversations"
+    },
+    {
+      "tag": "thread-member-streams",
+      "atlas": "threads:member-streams",
+      "description": "Member side: SignetSocket presentation (authenticate/renew presentation frames), ThreadStreams accessThread streams (snapshot, seq, resync, close reasons), openThread/leaveThread",
+      "region": "agent-conversations"
+    }
+  ],
+  "regions": [
+    {
+      "id": "grants-and-operations",
+      "tokens": 17171,
+      "recogniseTokens": 2701,
+      "concepts": [
+        "grant-rows",
+        "operation-picks",
+        "grant-lens",
+        "declared-operations",
+        "archive-operations",
+        "github-operations",
+        "integration-events"
+      ],
+      "runsAgreed": 2
+    },
+    {
+      "id": "presenting-signets",
+      "tokens": 10198,
+      "recogniseTokens": 1511,
+      "concepts": ["signet-envelope", "keys-and-proof", "signet-client"],
+      "runsAgreed": 2
+    },
+    {
+      "id": "obtaining-and-holding",
+      "tokens": 16918,
+      "recogniseTokens": 2129,
+      "concepts": [
+        "installation-calls",
+        "person-calls",
+        "installation-layout",
+        "pairing-and-holding",
+        "private-files",
+        "installation-socket",
+        "per-entry-reads",
+        "holder-cache"
+      ],
+      "runsAgreed": 3
+    },
+    {
+      "id": "agent-conversations",
+      "tokens": 13759,
+      "recogniseTokens": 2537,
+      "concepts": ["threads-terms", "thread-host", "thread-member-streams"],
+      "runsAgreed": 3
+    }
+  ],
+  "dropped": {}
+}
