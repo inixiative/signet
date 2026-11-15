@@ -61,9 +61,7 @@ export const grantWhereSchema = z.record(z.string(), z.unknown()).superRefine((w
  */
 export const storedWhereSchema = z.record(z.string(), z.unknown());
 
-const integrationResourceShape = {
-  resourceModel: z.literal('IntegrationResource'),
-  integrationResourceId: z.uuid(),
+const grantedShape = {
   /** Everything the resource offers, now and as its catalog grows. */
   full: z.boolean(),
   /** The resolved leaves; absent when `full`. */
@@ -75,6 +73,25 @@ const integrationResourceShape = {
    * admission; a holder never gates on it. It names no other Signet and no path.
    */
   where: storedWhereSchema.optional(),
+};
+const integrationResourceShape = {
+  resourceModel: z.literal('IntegrationResource'),
+  integrationResourceId: z.uuid(),
+  ...grantedShape,
+};
+/**
+ * A row over a scope, not one resource (Aron, 2026-11-14: "Most of this should just happen at the
+ * individual conversation level… but if you want to, you can do project-scoped, the whole Foundry,
+ * or the whole integration level"): every resource of `kind` on the integration, now and later, or
+ * with `projectId` only those in that Kingdom Project. Which scope a row names is what was granted,
+ * never something a reader may assume.
+ */
+const integrationScopeShape = {
+  resourceModel: z.literal('Integration'),
+  integrationId: z.uuid(),
+  kind: z.string().min(1).max(80),
+  projectId: z.uuid().optional(),
+  ...grantedShape,
 };
 const fullOrOperations = (
   row: { full: boolean; operations?: string[] },
@@ -97,6 +114,9 @@ const fullOrOperations = (
 export const integrationResourceGrantSchema = z
   .strictObject(integrationResourceShape)
   .superRefine(fullOrOperations);
+export const integrationScopeGrantSchema = z
+  .strictObject(integrationScopeShape)
+  .superRefine(fullOrOperations);
 export const projectGrantSchema = z.strictObject({
   resourceModel: z.literal('Project'),
   projectId: z.uuid(),
@@ -104,10 +124,12 @@ export const projectGrantSchema = z.strictObject({
 /** One stored grant row, as Kingdom writes it on a revision. */
 export const grantResourceSchema = z.discriminatedUnion('resourceModel', [
   integrationResourceGrantSchema,
+  integrationScopeGrantSchema,
   projectGrantSchema,
 ]);
 export type GrantResource = z.infer<typeof grantResourceSchema>;
 export type IntegrationResourceGrant = z.infer<typeof integrationResourceGrantSchema>;
+export type IntegrationScopeGrant = z.infer<typeof integrationScopeGrantSchema>;
 export type ProjectGrant = z.infer<typeof projectGrantSchema>;
 
 /**
@@ -126,6 +148,7 @@ export const signetGrantSchema = z.discriminatedUnion('resourceModel', [
       integrationId: z.uuid(),
     })
     .superRefine(fullOrOperations),
+  z.object(integrationScopeShape).superRefine(fullOrOperations),
   z.object(projectGrantSchema.shape),
 ]);
 export type SignetGrant = z.infer<typeof signetGrantSchema>;
@@ -139,11 +162,18 @@ const askedOperations = {
   lens: lensLayerSchema.optional(),
   where: grantWhereSchema.optional(),
 };
-/** A resource asked for by id. */
+/** A resource asked for by id, or a scope: every resource of a kind on an integration. */
 export const signetResourceSchema = z.discriminatedUnion('resourceModel', [
   z.strictObject({
     resourceModel: z.literal('IntegrationResource'),
     integrationResourceId: z.uuid(),
+    ...askedOperations,
+  }),
+  z.strictObject({
+    resourceModel: z.literal('Integration'),
+    integrationId: z.uuid(),
+    resourceKind: z.string().min(1).max(80),
+    projectId: z.uuid().optional(),
     ...askedOperations,
   }),
   projectGrantSchema,

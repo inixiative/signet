@@ -33,6 +33,10 @@ narrowing (`narrowsThreadsTerms`, Kingdom's `termsNarrow`).
 - **A holder reads each resource's `externalId`** on its grant rows (`signetGrantSchema`) and in
   `describe` (`signetDescriptionResourceSchema`): a conversation's thread id.
 - **A hosted Signet's `recipient` carries `audience`** (`inOrg` or `outside`).
+- **A grant row may name a scope** (`resourceModel: 'Integration'`: `integrationId`, `kind`, optional
+  `projectId`, then `full` / `operations` / `lens` / `where` as on a resource row), asked for in
+  `signetResourceSchema` with `resourceKind`. Every reader of grant rows now meets three arms: a
+  row is not always one resource.
 
 ## 0.17.0 — grant lenses narrow the operations lens; a where goes in, a lens comes out; events carry Kingdom's id
 

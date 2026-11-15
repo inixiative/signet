@@ -295,6 +295,40 @@ describe('the grant as a holder reads it', () => {
   });
 });
 
+describe('a row over a scope', () => {
+  const integrationId = Bun.randomUUIDv7();
+  const scope = {
+    resourceModel: 'Integration',
+    integrationId,
+    kind: 'conversation',
+    full: false,
+    operations: ['thread.read', 'prompt.resolve', 'member.log'],
+  } as const;
+
+  test('names every resource of a kind on an integration, or only a project of them', () => {
+    expect(grantResourceSchema.parse(scope)).toEqual(scope as never);
+    const inProject = { ...scope, projectId };
+    expect(grantResourceSchema.parse(inProject)).toEqual(inProject as never);
+    expect(signetGrantSchema.parse(inProject)).toMatchObject({ kind: 'conversation', projectId });
+    expect(grantResourceSchema.safeParse({ ...scope, kind: undefined }).success).toBe(false);
+    expect(grantResourceSchema.safeParse({ ...scope, integrationResourceId }).success).toBe(false);
+    expect(grantResourceSchema.safeParse({ ...scope, full: true }).success).toBe(false);
+  });
+
+  test('is asked for with picks, a lens layer and a where, like one resource', () => {
+    const ask = {
+      resourceModel: 'Integration',
+      integrationId,
+      resourceKind: 'conversation',
+      operations: { picks: ['thread.*', 'member.log'] },
+    };
+    expect(signetResourceSchema.parse(ask)).toEqual(ask as never);
+    expect(signetResourceSchema.parse({ ...ask, projectId })).toMatchObject({ projectId });
+    expect(signetResourceSchema.safeParse({ ...ask, resourceKind: undefined }).success).toBe(false);
+    expect(signetResourceSchema.safeParse({ ...ask, externalId: 'thread_a' }).success).toBe(false);
+  });
+});
+
 describe('conversation permissions', () => {
   const held = (...permissions: string[]) =>
     conversationPermissionSchema.array().parse(permissions);
