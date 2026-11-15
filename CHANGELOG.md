@@ -2,6 +2,46 @@ This file starts at 0.17.0. Earlier releases are described in their pull request
 terms `posts`, `act` and `agent`, #33) and 0.16.0 (a hosted request carries its requester's
 audience, #35).
 
+## 0.18.0 — a conversation is an integration resource; grant terms are gone
+
+Aron, 2026-11-14: "they should be operations in a conversation… tread conversations as a integration
+resource". Why: six of the seven `threads` terms gave a member more power over the host, so they were
+permissions kept outside the permission engine, and approving or passing one on needed a hand-written
+narrowing (`narrowsThreadsTerms`, Kingdom's `termsNarrow`).
+
+### Breaking
+
+- **One `conversation` resource per shared thread** (`conversationResourceKind`), its `externalId` the
+  thread's id. `threadsResourceKind` is gone. No call's input carries `threadId` (it left
+  `threadInputSchemas` and `accessInputSchema`): the call's resource is the conversation. Every
+  `thread.request` and `thread.subscribe` frame carries the `threadId` Kingdom read from the resource.
+- **Grant terms are gone**: `threadsTermsSchema`, `threadViewSchema`, `threadDeliverySchema`,
+  `threadOutboundSchema`, `threadFloorTermsSchema`, `threadPostsSchema`, `threadActSchema`,
+  `narrowsThreadsTerms`, `meetThreadsTerms`, `grantTermsSchema`, `grantTermsFitKind`, `threadsTerms`,
+  and `terms` on grant rows, asks, descriptions and frames.
+- **Conversation permissions** (`conversationPermissionSchema`, `conversationPermissionNames`):
+  `member.log`, `member.wake`, `member.take`, `member.agent`, `agent.instruct`, `agent.read`,
+  `agent.act`. Catalog entries a grant picks and nothing calls, on their own branches, so `thread.*`
+  picks the calls alone. Frames carry `permissions` where they carried `terms`.
+  `conversationActLevel` reads the act level from them. From the old terms: `view: thread` is
+  `member.log`, `delivery: turn` is `member.wake`, `floor.mayTake` is `member.take`,
+  `posts: instructions` is `agent.instruct`, `act: read` is `agent.read`, `act: full` is `agent.act`,
+  `agent: true` is `member.agent`. `outbound` is the host's own setting
+  (`conversationOutboundSchema`), not on the grant.
+- **A join request by kind may carry `externalId`** (`requestedResourceKindSchema`); a `conversation`
+  ask must, as a thread id.
+- **A holder reads a conversation's `externalId`** (its thread id) on its grant rows
+  (`signetGrantSchema`) and in `describe` (`signetDescriptionResourceSchema`). The field is optional:
+  Kingdom sends it only where the holder acts by it and keeps other provider ids to itself.
+- **A hosted Signet's `recipient` carries `audience`** (`recipientAudienceSchema`: `owner`, `inOrg` or
+  `outside`). `owner` is how a host knows its owner's own client; holding `prompt.resolve` is not.
+- **A hosted request carries `resourceHandles`**: the thread id of each conversation it names, by
+  resource id.
+- **A grant row may name a scope** (`resourceModel: 'Integration'`: `integrationId`, `kind`, optional
+  `projectId`, then `full` / `operations` / `lens` / `where` as on a resource row), asked for in
+  `signetResourceSchema` with `resourceKind`. Every reader of grant rows now meets three arms: a
+  row is not always one resource.
+
 ## 0.17.0 — grant lenses narrow the operations lens; a where goes in, a lens comes out; events carry Kingdom's id
 
 Consumers move to `^0.17.0`: none of this is in 0.15.0 or 0.16.0.

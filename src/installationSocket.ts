@@ -9,6 +9,7 @@ import type { EventStreamHandlers, EventStreamKey } from './eventStreams';
 import { HolderStreams } from './holderStreams';
 import type { ThreadStreamHandlers, ThreadStreamKey } from './threadStreams';
 import {
+  type ConversationPermission,
   type ThreadAppendFrame,
   type ThreadEntry,
   type ThreadOperation,
@@ -16,7 +17,6 @@ import {
   type ThreadRefusal,
   type ThreadRequestFrame,
   type ThreadSubscribeFrame,
-  type ThreadsTerms,
   threadAppendFrameSchema,
   threadLeaseFrameSchema,
   threadRefused,
@@ -39,7 +39,7 @@ export type ThreadSubscription = {
   threadId: string;
   acceptedRevision: number;
   member: ThreadSubscribeFrame['member'];
-  terms: ThreadsTerms;
+  permissions: ConversationPermission[];
 };
 /** `overflow`: too many entries arrived while the snapshot was taken; the subscribe is refused and retried. */
 export type ThreadSubscriptionEnd = 'unsubscribed' | 'lease' | 'disconnected' | 'overflow';
@@ -427,7 +427,7 @@ export class InstallationSocket {
       threadId: frame.threadId,
       acceptedRevision: frame.acceptedRevision,
       member: frame.member,
-      terms: frame.terms,
+      permissions: frame.permissions,
       leaseUntil: Date.now() + this.leaseMs(),
       sentSeq: null,
       seq: 0,

@@ -2,39 +2,16 @@ import { validateRule } from '@inixiative/json-rules';
 import { z } from 'zod';
 import { lensLayerSchema, storedLensLayersSchema } from './lens';
 import { operationPickSchema, resolvedOperationsSchema } from './operations';
-import { threadsResourceKind, threadsTermsSchema } from './threads';
+import { conversationResourceKind, threadIdSchema } from './threads';
 
 /**
  * What a Signet revision grants, one row per resource (Aron, 2026-11-01). False polymorphism on
  * `resourceModel`: an `IntegrationResource` row carries its operations (`full`, or the leaves its
- * picks resolved to), its lens layers and its per-kind terms; a `Project` row names a Kingdom project
+ * picks resolved to) and its lens layers; a `Project` row names a Kingdom project
  * the Signet may be used in, and nothing else. Artifacts may join later.
  */
 export const grantResourceModelSchema = z.enum(['IntegrationResource', 'Project']);
 export type GrantResourceModel = z.infer<typeof grantResourceModelSchema>;
-
-/**
- * Per-kind terms that are neither operations nor lens: how a holder takes part. Strict per kind. A
- * request names its resource by id with no kind, so Kingdom checks `grantTermsFitKind` once it has
- * resolved the resource.
- */
-export const grantTermsSchema = z.strictObject({ threads: threadsTermsSchema.optional() });
-export type GrantTerms = z.infer<typeof grantTermsSchema>;
-
-/** The resource kind each terms key belongs to. */
-const termsKinds = { threads: threadsResourceKind } as const satisfies Record<
-  keyof GrantTerms,
-  string
->;
-/** Whether `terms` only carry keys that belong to a resource of `kind`. */
-export const grantTermsFitKind = (kind: string, terms: GrantTerms | undefined) =>
-  Object.entries(terms ?? {}).every(
-    ([key, value]) => value === undefined || termsKinds[key as keyof GrantTerms] === kind,
-  );
-
-/** A threads grant's terms, every one it leaves out at its narrowest. */
-export const threadsTerms = (terms: z.input<typeof grantTermsSchema> | undefined) =>
-  threadsTermsSchema.parse(terms?.threads ?? {});
 
 /** The most characters a `where` may take as JSON, the size of a thread's text. */
 export const grantWhereLimit = 16_000;
@@ -84,21 +61,37 @@ export const grantWhereSchema = z.record(z.string(), z.unknown()).superRefine((w
  */
 export const storedWhereSchema = z.record(z.string(), z.unknown());
 
-const integrationResourceShape = {
-  resourceModel: z.literal('IntegrationResource'),
-  integrationResourceId: z.uuid(),
+const grantedShape = {
   /** Everything the resource offers, now and as its catalog grows. */
   full: z.boolean(),
   /** The resolved leaves; absent when `full`. */
   operations: resolvedOperationsSchema.optional(),
   /** The layers under the kind's operations lens; absent reads every branch of it. */
   lens: storedLensLayersSchema.optional(),
-  terms: grantTermsSchema.optional(),
   /**
    * What may go in: the condition this row's calls must meet, whole. Kingdom checks it at
    * admission; a holder never gates on it. It names no other Signet and no path.
    */
   where: storedWhereSchema.optional(),
+};
+const integrationResourceShape = {
+  resourceModel: z.literal('IntegrationResource'),
+  integrationResourceId: z.uuid(),
+  ...grantedShape,
+};
+/**
+ * A row over a scope, not one resource (Aron, 2026-11-14: "Most of this should just happen at the
+ * individual conversation level… but if you want to, you can do project-scoped, the whole Foundry,
+ * or the whole integration level"): every resource of `kind` on the integration, now and later, or
+ * with `projectId` only those in that Kingdom Project. Which scope a row names is what was granted,
+ * never something a reader may assume.
+ */
+const integrationScopeShape = {
+  resourceModel: z.literal('Integration'),
+  integrationId: z.uuid(),
+  kind: z.string().min(1).max(80),
+  projectId: z.uuid().optional(),
+  ...grantedShape,
 };
 const fullOrOperations = (
   row: { full: boolean; operations?: string[] },
@@ -121,6 +114,9 @@ const fullOrOperations = (
 export const integrationResourceGrantSchema = z
   .strictObject(integrationResourceShape)
   .superRefine(fullOrOperations);
+export const integrationScopeGrantSchema = z
+  .strictObject(integrationScopeShape)
+  .superRefine(fullOrOperations);
 export const projectGrantSchema = z.strictObject({
   resourceModel: z.literal('Project'),
   projectId: z.uuid(),
@@ -128,16 +124,20 @@ export const projectGrantSchema = z.strictObject({
 /** One stored grant row, as Kingdom writes it on a revision. */
 export const grantResourceSchema = z.discriminatedUnion('resourceModel', [
   integrationResourceGrantSchema,
+  integrationScopeGrantSchema,
   projectGrantSchema,
 ]);
 export type GrantResource = z.infer<typeof grantResourceSchema>;
 export type IntegrationResourceGrant = z.infer<typeof integrationResourceGrantSchema>;
+export type IntegrationScopeGrant = z.infer<typeof integrationScopeGrantSchema>;
 export type ProjectGrant = z.infer<typeof projectGrantSchema>;
 
 /**
- * A grant as a holder reads it: the stored row, plus the resource's `kind` so its terms can be read
- * and the `integrationId` of the integration the resource is on. A Signet reaches resources on any
- * number of integrations, so each row names its own. Read paths stay loose (a field a newer Kingdom
+ * A grant as a holder reads it: the stored row, plus the resource's `kind` and the `integrationId`
+ * of the integration the resource is on. `externalId`, the provider's own id for the resource, is
+ * sent only where the holder acts by it (a conversation's thread id, which its stream opens by);
+ * Kingdom keeps every other provider id to itself. A Signet reaches resources on any number of integrations, so each row names
+ * its own. Read paths stay loose (a field a newer Kingdom
  * adds is dropped, not fatal).
  */
 export const signetGrantSchema = z.discriminatedUnion('resourceModel', [
@@ -145,29 +145,36 @@ export const signetGrantSchema = z.discriminatedUnion('resourceModel', [
     .object({
       ...integrationResourceShape,
       kind: z.string().min(1).max(80),
+      externalId: z.string().min(1).max(256).optional(),
       integrationId: z.uuid(),
     })
     .superRefine(fullOrOperations),
+  z.object(integrationScopeShape).superRefine(fullOrOperations),
   z.object(projectGrantSchema.shape),
 ]);
 export type SignetGrant = z.infer<typeof signetGrantSchema>;
 
 /**
  * What a party asks for on one resource: `full` or picks, its own lens layer (Kingdom assigns the
- * layer its id and chains it under the base, or under the request when an approver writes it), and
- * terms.
+ * layer its id and chains it under the base, or under the request when an approver writes it).
  */
 const askedOperations = {
   operations: operationPickSchema,
   lens: lensLayerSchema.optional(),
-  terms: grantTermsSchema.optional(),
   where: grantWhereSchema.optional(),
 };
-/** A resource asked for by id. */
+/** A resource asked for by id, or a scope: every resource of a kind on an integration. */
 export const signetResourceSchema = z.discriminatedUnion('resourceModel', [
   z.strictObject({
     resourceModel: z.literal('IntegrationResource'),
     integrationResourceId: z.uuid(),
+    ...askedOperations,
+  }),
+  z.strictObject({
+    resourceModel: z.literal('Integration'),
+    integrationId: z.uuid(),
+    resourceKind: z.string().min(1).max(80),
+    projectId: z.uuid().optional(),
     ...askedOperations,
   }),
   projectGrantSchema,
@@ -186,14 +193,27 @@ const askedByKind = {
  */
 export const registeredResourceKindSchema = z.strictObject(askedByKind);
 /**
- * A resource asked for by kind on an existing integration, when the asker does not know its id: a
- * party asking to join a Foundry's `threads` (one per Foundry, so the kind and the Foundry's
- * `integrationId` name it). Kingdom resolves it to the resource's id before anyone reviews it.
+ * A resource asked for by kind on an existing integration, when the asker does not know its id.
+ * `externalId` names one resource of that kind; without it the ask reaches every resource of the
+ * kind on the integration. A conversation is always asked for one at a time: a party asking to join
+ * names the Foundry's `integrationId`, the `conversation` kind and the thread's id as `externalId`.
+ * Kingdom resolves the ask to resource ids before anyone reviews it.
  */
-export const requestedResourceKindSchema = z.strictObject({
-  ...askedByKind,
-  integrationId: z.uuid(),
-});
+export const requestedResourceKindSchema = z
+  .strictObject({
+    ...askedByKind,
+    integrationId: z.uuid(),
+    externalId: z.string().min(1).max(256).optional(),
+  })
+  .superRefine((ask, context) => {
+    if (ask.resourceKind !== conversationResourceKind) return;
+    if (!threadIdSchema.safeParse(ask.externalId).success)
+      context.addIssue({
+        code: 'custom',
+        path: ['externalId'],
+        message: 'A conversation is asked for by its thread id',
+      });
+  });
 /** What a registering Installation may ask for: resources by id or by kind. */
 export const registeredResourceSchema = z.union([
   signetResourceSchema,

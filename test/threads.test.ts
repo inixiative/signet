@@ -11,10 +11,11 @@ import {
   accessThreadSnapshotSchema,
   accessThreadStreamName,
   authenticateSignetFrameSchema,
+  conversationPermissionSchema,
+  conversationResourceKind,
   grantResourceSchema,
   installationInquiriesResponseSchema,
   installationSignetsResponseSchema,
-  narrowsThreadsTerms,
   operationInputFromAccess,
   operationInputKeys,
   operationPickSchema,
@@ -36,20 +37,14 @@ import {
   threadRequestFrameSchema,
   threadResponseEnvelopeSchema,
   threadResponseFrameSchema,
-  threadsResourceKind,
-  threadsTermsSchema,
 } from '../src';
 
 const T1 = 'thread_0199f0aa-0000-7000-8000-000000000001';
 const uuid = () => Bun.randomUUIDv7();
 
-describe('threads terms and entries', () => {
-  test('floor.mayTake narrows only where it was asked for, and take is a floor action', () => {
-    const asked = threadsTermsSchema.parse({ floor: { mayTake: true } });
-    const without = threadsTermsSchema.parse({});
-    expect(narrowsThreadsTerms(without, asked)).toBe(true);
-    expect(narrowsThreadsTerms(asked, asked)).toBe(true);
-    expect(narrowsThreadsTerms(asked, without)).toBe(false);
+describe('conversation permissions and entries', () => {
+  test('take is a floor action, and member.take is the permission a host admits it by', () => {
+    expect(conversationPermissionSchema.safeParse('member.take').success).toBe(true);
     expect(threadFloorActionSchema.safeParse({ action: 'take' }).success).toBe(true);
   });
 
@@ -103,20 +98,19 @@ describe('requests by resource kind', () => {
     maxRequests: null,
   };
   const join = {
-    resourceKind: threadsResourceKind,
+    resourceKind: conversationResourceKind,
     integrationId: uuid(),
-    operations: { picks: ['thread.read', 'thread.prompt'] },
-    lens: { root: { where: { field: 'id', operator: 'in', value: [T1] } } },
-    terms: { threads: { delivery: 'turn' } },
+    externalId: T1,
+    operations: { picks: ['thread.read', 'thread.prompt', 'member.wake'] },
   };
 
-  test('a join request may name the threads resource by kind', () => {
+  test('a join request names a conversation by kind and thread id', () => {
     const proposal = signetProposalSchema.parse({ ...terms, resources: [join] });
     expect(proposal.resources[0]).toMatchObject({
-      resourceKind: 'threads',
+      resourceKind: 'conversation',
       integrationId: join.integrationId,
-      lens: join.lens,
-      terms: { threads: { view: 'own', delivery: 'turn', outbound: 'review' } },
+      externalId: T1,
+      operations: join.operations,
     });
     const publicKey = {
       kty: 'EC' as const,
@@ -145,8 +139,6 @@ describe('requests by resource kind', () => {
             resourceModel: 'IntegrationResource',
             integrationResourceId: uuid(),
             operations: join.operations,
-            lens: join.lens,
-            terms: join.terms,
           },
         ],
       }).success,
@@ -161,40 +153,36 @@ describe('thread operations through access/execute', () => {
     const postId = uuid();
     const input = accessInputSchema.parse({
       resourceId,
-      threadId: T1,
       postId,
       text: 'Watching for X',
     });
     const host = operationInputFromAccess('thread.prompt', input);
-    expect(host.success && host.data).toEqual({ threadId: T1, postId, text: 'Watching for X' });
+    expect(host.success && host.data).toEqual({ postId, text: 'Watching for X' });
+    // No input names the thread: the call's resource is the conversation.
+    expect(accessInputSchema.safeParse({ resourceId, threadId: T1 }).success).toBe(false);
     expect(operationInputFromAccess('thread.read', input)).toMatchObject({
-      data: { threadId: T1 },
+      success: true,
+      data: {},
     });
     expect(
-      operationInputFromAccess('thread.read', accessInputSchema.parse({ resourceId })).success,
+      operationInputFromAccess('thread.prompt', accessInputSchema.parse({ resourceId })).success,
     ).toBe(false);
     // Only the operation's own keys cross; Kingdom refuses the rest earlier (requireOperationInput).
     expect(
       operationInputFromAccess('thread.floor', { ...input, floor: { action: 'request' } }),
-    ).toMatchObject({ success: true, data: { threadId: T1, floor: { action: 'request' } } });
+    ).toMatchObject({ success: true, data: { floor: { action: 'request' } } });
     expect(
       operationInputFromAccess(
         'thread.floor',
-        accessInputSchema.parse({ resourceId, threadId: T1, floor: { action: 'release' } }),
+        accessInputSchema.parse({ resourceId, floor: { action: 'release' } }),
       ),
-    ).toMatchObject({ success: true, data: { threadId: T1, floor: { action: 'release' } } });
+    ).toMatchObject({ success: true, data: { floor: { action: 'release' } } });
     expect(accessInputSchema.safeParse({ resourceId, text: 'x'.repeat(16_001) }).success).toBe(
       false,
     );
     // Kingdom's per-operation allow list derives from the same schemas.
-    expect(operationInputKeys('thread.prompt')).toEqual([
-      'threadId',
-      'postId',
-      'text',
-      'inReplyTo',
-      'aside',
-    ]);
-    expect(operationInputKeys('thread.read')).toEqual(['threadId', 'afterSeq']);
+    expect(operationInputKeys('thread.prompt')).toEqual(['postId', 'text', 'inReplyTo', 'aside']);
+    expect(operationInputKeys('thread.read')).toEqual(['afterSeq']);
     for (const operation of [
       'thread.read',
       'thread.prompt',
@@ -212,25 +200,29 @@ describe('thread operations through access/execute', () => {
       signetId: uuid(),
       acceptedRevision: 2,
       member: { signetId: uuid(), displayName: 'JobCo' },
-      terms: {},
+      threadId: T1,
+      permissions: ['member.wake'],
     };
     const prompt = threadRequestFrameSchema.parse({
       ...base,
       operation: 'thread.prompt',
-      input: { threadId: T1, postId: uuid(), text: 'hi' },
+      input: { postId: uuid(), text: 'hi' },
     });
     expect(prompt.operation === 'thread.prompt' && prompt.input.text).toBe('hi');
-    expect(prompt.terms.delivery).toBe('note');
+    expect(prompt.permissions).toEqual(['member.wake']);
+    expect(
+      threadRequestFrameSchema.safeParse({ ...prompt, permissions: ['thread.read'] }).success,
+    ).toBe(false);
     expect(
       threadRequestFrameSchema.safeParse({
         ...base,
         operation: 'thread.read',
-        input: { threadId: T1, postId: uuid(), text: 'hi' },
+        input: { postId: uuid(), text: 'hi' },
       }).success,
     ).toBe(false);
     for (const frame of [
       prompt,
-      { ...base, type: 'thread.subscribe', threadId: T1 },
+      { ...base, type: 'thread.subscribe' },
       { type: 'thread.unsubscribe', subscriptionId: uuid() },
       { type: 'thread.lease', subscriptionIds: [uuid()] },
     ])
@@ -297,7 +289,7 @@ describe('thread operations through access/execute', () => {
         installationInquiriesResponseSchema,
         installationSignetsResponseSchema,
         signetDescriptionSchema,
-        threadsTermsSchema,
+        conversationPermissionSchema,
         threadHostFrameSchema,
         threadAppendFrameSchema,
         threadResponseEnvelopeSchema,

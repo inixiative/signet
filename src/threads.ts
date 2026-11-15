@@ -2,11 +2,13 @@ import { z } from 'zod';
 
 /**
  * Agent conversations (Kingdom `docs/AGENT-CONVERSATIONS.md`, Foundry `docs/reference/CONVERSATIONS.md`).
- * A member reaches a host Foundry's main thread through a Signet on the Foundry's single `threads`
- * resource. Kingdom admits each call and relays it over the host's Installation socket; the host
- * answers. Nothing here is stored by Kingdom.
+ * A conversation is an integration resource of its host Foundry (Aron, 2026-11-14): one `conversation`
+ * resource per shared thread, its `externalId` the thread's id (which a holder reads on its grant
+ * row and uses to open the thread's stream). A member reaches it through a Signet
+ * entitlement on that resource. Kingdom admits each call and relays it over the host's Installation
+ * socket; the host answers. Kingdom stores no post.
  */
-export const threadsResourceKind = 'threads';
+export const conversationResourceKind = 'conversation';
 
 /**
  * A Foundry id (a thread, an invitation, a held prompt). Thread ids sit inside Kingdom stream names,
@@ -16,49 +18,45 @@ export const threadsResourceKind = 'threads';
 export const foundryIdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
 export const threadIdSchema = foundryIdSchema;
 
-/** `own`: the member's posts and the sends addressed to it. `thread`: the main thread's messages. */
-export const threadViewSchema = z.enum(['own', 'thread']);
-/** `note`: rides the owner's next turn. `turn`: queued as a turn of its own. */
-export const threadDeliverySchema = z.enum(['note', 'turn']);
 /** `review`: the host's sends to this member wait for the owner. `auto`: they leave at once. */
-export const threadOutboundSchema = z.enum(['review', 'auto']);
-/**
- * The member's own floor rights. `mayTake`: it may take the conch without being given it (a senior
- * pairing with a junior). A role changes by revising the Signet, never in a separate table (Aron,
- * 2026-11-01: "You join with a certain thing... and then you can have it changed or granted or
- * ungranted").
- */
-export const threadFloorTermsSchema = z.strictObject({ mayTake: z.boolean().default(false) });
-/**
- * How the host's agent reads this member's posts (Aron, 2026-11-14). `data`: words from an outside
- * party, never instructions. `instructions`: the member may direct the agent, within `act`.
- */
-export const threadPostsSchema = z.enum(['data', 'instructions']);
-/**
- * What the host's agent may do on a turn that took in this member's words (Aron, 2026-11-14: "Each
- * actor should have their own rules apply to them in a conversation"). The host's tool gate applies
- * the strictest of its own rules and every actor's on the turn. `ask`: every tool call asks the
- * host. `read`: reading files and data runs, anything else asks. `full`: the host's own rules.
- */
-export const threadActSchema = z.enum(['ask', 'read', 'full']);
+export const conversationOutboundSchema = z.enum(['review', 'auto']);
+export type ConversationOutbound = z.infer<typeof conversationOutboundSchema>;
 
 /**
- * A member's terms on a `threads` resource: how it takes part, not which threads it reaches (that
- * is the grant's `where` over the call's `threadId`, which Kingdom checks at admission, and its lens
- * over the `Thread` rows). Every term defaults to its
- * narrowest value, so terms that omit one can only be more careful.
+ * What a member holds on a conversation beyond the calls it may make (Aron, 2026-11-14: "they should
+ * be operations in a conversation"). Catalog entries a Signet picks like any operation and that
+ * nothing calls, as with the `events.*` leaves. They sit on their own branches (`member.`, `agent.`),
+ * so `thread.*` picks the calls and none of these. Kingdom sends the host the ones the Signet holds
+ * on the conversation, and the host reads them. Holding none is the narrowest member.
  */
-export const threadsTermsSchema = z.strictObject({
-  view: threadViewSchema.default('own'),
-  delivery: threadDeliverySchema.default('note'),
-  outbound: threadOutboundSchema.default('review'),
-  floor: threadFloorTermsSchema.default({ mayTake: false }),
-  posts: threadPostsSchema.default('data'),
-  act: threadActSchema.default('ask'),
-  /** The member brings its own agent into the conversation, not only itself as a person. */
-  agent: z.boolean().default(false),
-});
-export type ThreadsTerms = z.infer<typeof threadsTermsSchema>;
+export const conversationPermissionSchema = z.enum([
+  'member.log',
+  'member.wake',
+  'member.take',
+  'member.agent',
+  'agent.instruct',
+  'agent.read',
+  'agent.act',
+]);
+export type ConversationPermission = z.infer<typeof conversationPermissionSchema>;
+
+export const conversationPermissionNames: Record<ConversationPermission, string> = {
+  'member.log': 'Read the whole conversation, not only its own posts and the sends to it',
+  'member.wake': "Wake the host's agent with a post, which otherwise rides its next turn",
+  'member.take': "Take the conversation's floor without being given it",
+  'member.agent': 'Bring its own agent into the conversation, not only itself as a person',
+  'agent.instruct': "Direct the host's agent: its posts are instructions, not data",
+  'agent.read': "Have the host's agent read files and data on its word without asking the host",
+  'agent.act': "Have the host's agent act on its word under the host's own rules",
+};
+
+/**
+ * What the host's agent may do on a turn that took in a member's words: `full` with `agent.act`,
+ * `read` with `agent.read`, else `ask` (every call asks the host). The highest held wins.
+ */
+export const conversationActLevel = (permissions: readonly ConversationPermission[]) =>
+  permissions.includes('agent.act') ? 'full' : permissions.includes('agent.read') ? 'read' : 'ask';
+export type ConversationActLevel = ReturnType<typeof conversationActLevel>;
 
 /**
  * The row a thread call reads at its operation's branch of the lens: the thread, by `id`. A holder
@@ -66,51 +64,7 @@ export type ThreadsTerms = z.infer<typeof threadsTermsSchema>;
  */
 export const threadRow = (threadId: string) => ({ id: threadIdSchema.parse(threadId) });
 
-const order = <T extends string>(values: readonly T[]) => {
-  const rank = (value: T) => values.indexOf(value);
-  return (granted: T, requested: T) => rank(granted) <= rank(requested);
-};
-const narrowsView = order(threadViewSchema.options);
-const narrowsDelivery = order(threadDeliverySchema.options);
-const narrowsOutbound = order(threadOutboundSchema.options);
-const narrowsPosts = order(threadPostsSchema.options);
-const narrowsAct = order(threadActSchema.options);
-
-/**
- * Approving a request may only narrow (`own` < `thread`, `note` < `turn`, `review` < `auto`,
- * `data` < `instructions`, `ask` < `read` < `full`, and `floor.mayTake` and `agent` only where they
- * were asked for). Terms don't compose like lens layers, so approval
- * checks them here.
- */
-export const narrowsThreadsTerms = (granted: ThreadsTerms, requested: ThreadsTerms): boolean =>
-  narrowsView(granted.view, requested.view) &&
-  narrowsDelivery(granted.delivery, requested.delivery) &&
-  narrowsOutbound(granted.outbound, requested.outbound) &&
-  narrowsPosts(granted.posts, requested.posts) &&
-  narrowsAct(granted.act, requested.act) &&
-  (!granted.floor.mayTake || requested.floor.mayTake) &&
-  (!granted.agent || requested.agent);
-
-const narrower =
-  <T extends string>(values: readonly T[]) =>
-  (a: T, b: T): T =>
-    values.indexOf(a) <= values.indexOf(b) ? a : b;
-
-/**
- * The narrowest terms both allow, field by field: where a review starts when the host has a default
- * for the requester's audience (Aron, 2026-11-14). `narrowsThreadsTerms(meet, either)` always holds.
- */
-export const meetThreadsTerms = (a: ThreadsTerms, b: ThreadsTerms): ThreadsTerms => ({
-  view: narrower(threadViewSchema.options)(a.view, b.view),
-  delivery: narrower(threadDeliverySchema.options)(a.delivery, b.delivery),
-  outbound: narrower(threadOutboundSchema.options)(a.outbound, b.outbound),
-  floor: { mayTake: a.floor.mayTake && b.floor.mayTake },
-  posts: narrower(threadPostsSchema.options)(a.posts, b.posts),
-  act: narrower(threadActSchema.options)(a.act, b.act),
-  agent: a.agent && b.agent,
-});
-
-/** The operations a `threads` resource carries. `prompt.resolve` is for owner recipients only. */
+/** The calls a `conversation` resource takes. `prompt.resolve` is for owner recipients only. */
 export const threadOperationSchema = z.enum([
   'thread.read',
   'thread.prompt',
@@ -131,7 +85,7 @@ export const threadOperationNames: Record<ThreadOperation, string> = {
  * `local` is a member on the host's own machine (its own Codex, a local Herald), joined in-process
  * with no Signet; `signet` is one that reaches the host through Kingdom.
  * Read paths (entries, views) use plain objects, so a host that adds a field never costs an older
- * member its entries; terms and request frames stay strict.
+ * member its entries; request frames stay strict.
  */
 export const conversationMemberSchema = z.object({
   kind: z.enum(['owner', 'local', 'signet']),
@@ -144,7 +98,7 @@ export const threadTextLimit = 16_000;
 
 export const threadFloorActionSchema = z.discriminatedUnion('action', [
   z.strictObject({ action: z.literal('request') }),
-  /** Take the conch without being given it: only under `floor.mayTake`. */
+  /** Take the conch without being given it: only holding `member.take`. */
   z.strictObject({ action: z.literal('take') }),
   z.strictObject({ action: z.literal('release') }),
   z.strictObject({ action: z.literal('pass'), to: conversationMemberSchema }),
@@ -153,15 +107,14 @@ export const threadFloorActionSchema = z.discriminatedUnion('action', [
 /**
  * The input each thread operation takes, as the host receives it. `access/execute` carries the same
  * fields beside `resourceId` (`accessInputSchema`); Kingdom allows exactly these keys per operation.
+ * None names the thread: the call's resource is the conversation.
  */
 export const threadInputSchemas = {
   'thread.read': z.strictObject({
-    threadId: threadIdSchema,
     afterSeq: z.number().int().min(0).optional(),
   }),
   /** `postId` is the member's own id for the post: a retry with a new request id keeps it. */
   'thread.prompt': z.strictObject({
-    threadId: threadIdSchema,
     postId: z.uuid(),
     text: z.string().min(1).max(threadTextLimit),
     /** The invitation a `speak-when-spoken-to` reply answers. */
@@ -173,9 +126,8 @@ export const threadInputSchemas = {
      */
     aside: z.literal(true).optional(),
   }),
-  'thread.floor': z.strictObject({ threadId: threadIdSchema, floor: threadFloorActionSchema }),
+  'thread.floor': z.strictObject({ floor: threadFloorActionSchema }),
   'prompt.resolve': z.strictObject({
-    threadId: threadIdSchema,
     promptId: foundryIdSchema,
     /** `approved`, `rejected` or an option id, plus the edited text where the prompt takes input. */
     answer: z.strictObject({
@@ -297,11 +249,16 @@ const relayed = {
   /** The `AccessExecution` id: one per admitted call, and the id the answer carries back. */
   requestId: z.uuid(),
   signetId: z.uuid(),
-  /** The Signet revision Kingdom admitted the call under; the terms are that revision's. */
+  /** The Signet revision Kingdom admitted the call under. */
   acceptedRevision: z.number().int().min(1),
   member: threadMemberSchema,
-  /** The member's terms, as Kingdom admitted the call under them. */
-  terms: threadsTermsSchema,
+  /** The conversation's thread: its resource's `externalId`. */
+  threadId: threadIdSchema,
+  /**
+   * The permissions this Signet holds on the conversation now, each admitted on its own, as Kingdom
+   * admits each event leaf. A subscription's are read again on every lease sweep.
+   */
+  permissions: z.array(conversationPermissionSchema),
 };
 const requestFrame = <O extends ThreadOperation>(operation: O) =>
   z.strictObject({
@@ -331,7 +288,6 @@ export type ThreadRequestFrame = z.infer<typeof threadRequestFrameSchema>;
 export const threadSubscribeFrameSchema = z.strictObject({
   type: z.literal('thread.subscribe'),
   ...relayed,
-  threadId: threadIdSchema,
 });
 export type ThreadSubscribeFrame = z.infer<typeof threadSubscribeFrameSchema>;
 

@@ -8,8 +8,6 @@ import {
 import { type EventChannelMap, eventChannelMapSchema, eventChannelSchema } from './events';
 import { githubInputSchemas, githubOperationSchema, gitObjectIdSchema } from './github';
 import {
-  grantTermsFitKind,
-  grantTermsSchema,
   registeredResourceSchema,
   requestedResourceSchema,
   type SignetGrant,
@@ -20,7 +18,6 @@ import { storedBaseLensSchema, storedLensLayersSchema } from './lens';
 import {
   foundryIdSchema,
   threadFloorActionSchema,
-  threadIdSchema,
   threadInputSchemas,
   threadOperationSchema,
   threadTextLimit,
@@ -296,14 +293,24 @@ export type SignetEntitlementResponse = z.infer<typeof signetEntitlementResponse
 /**
  * Who a requester is to the integration's owner (Aron, 2026-11-14: "just in-org and outside-org,
  * but something naive"): `inOrg` when they share an organization with the owner, else `outside`.
- * Kingdom decides it, since only Kingdom knows memberships; a host picks its default terms by it.
+ * Kingdom decides it, since only Kingdom knows memberships; a host picks what a member starts with by it.
  */
 export const requestAudienceSchema = z.enum(['inOrg', 'outside']);
 export type RequestAudience = z.infer<typeof requestAudienceSchema>;
+/**
+ * Who a Signet's recipient is to the integration's owner. `owner`: the recipient is the person who
+ * owns the integration (the same User, for an integration a user or a member owns), so on a Foundry
+ * it is the owner's own client, not a member from outside. Never an Integration recipient, and never
+ * anyone on an integration an organization or a space owns: those have no single person to be.
+ * Kingdom decides it; holding `prompt.resolve` says nothing about who someone is, since recipients
+ * are never restricted. A Signet hosted on integrations of several owners reads as the least of them.
+ */
+export const recipientAudienceSchema = z.enum(['owner', ...requestAudienceSchema.options]);
+export type RecipientAudience = z.infer<typeof recipientAudienceSchema>;
 
 /**
  * A pending `signetRequest` that asks for a resource on one of the Installation's integrations: a
- * party asking to join a Foundry's threads. The owner reviews it in Kingdom at `reviewUrl`.
+ * party asking to join one of a Foundry's conversations. The owner reviews it in Kingdom at `reviewUrl`.
  */
 export const hostedSignetRequestSchema = z.object({
   id: z.uuid(),
@@ -317,6 +324,11 @@ export const hostedSignetRequestSchema = z.object({
     audience: requestAudienceSchema,
   }),
   terms: signetReviewProposalSchema,
+  /**
+   * For each resource the request names whose provider id the host acts by (a conversation: its
+   * thread id), that id by resource id, so the host can say which thread is being asked for.
+   */
+  resourceHandles: z.record(z.uuid(), z.string()),
   reviewUrl: kingdomLinkSchema,
 });
 export type HostedSignetRequest = z.infer<typeof hostedSignetRequestSchema>;
@@ -347,7 +359,7 @@ export const installationSignetSchema = z.object({
   owner: ownerRefSchema,
   /**
    * What the Signet reaches, each row on its own integration, so a holder knows, for example,
-   * which threads it may open.
+   * which conversations it may open.
    */
   resources: grantsSchema,
   /** The event channels it holds; absent from a Kingdom that predates integration events. */
@@ -371,6 +383,12 @@ export const hostedSignetSchema = z.object({
     recipientModel: signetRecipientModelSchema,
     id: z.uuid(),
     displayName: z.string(),
+    /**
+     * Who the recipient is to the integration's owner: the host's member settings start from it, and
+     * `owner` is the owner's own client (`recipientAudienceSchema`). Otherwise `inOrg` when the
+     * recipient, or the owner of a recipient Integration, shares an organization with the owner.
+     */
+    audience: recipientAudienceSchema,
   }),
   /**
    * Each operations lens the rows' `lens` layers compose under, keyed by `baseLensId(provider, kind)`.
@@ -398,11 +416,12 @@ export const signetDescriptionResourceSchema = z.object({
   id: z.uuid(),
   name: z.string(),
   kind: z.string(),
+  /** The provider's own id, sent only where the holder acts by it: a conversation's thread id. */
+  externalId: z.string().optional(),
   integrationId: z.uuid(),
   /** The integration's provider family (`github`, `anthropic`…): the description has no host. */
   provider: z.string(),
   lens: storedLensLayersSchema.optional(),
-  terms: grantTermsSchema.optional(),
 });
 export const signetDescriptionSchema = z.object({
   signetId: z.uuid(),
@@ -465,7 +484,6 @@ export const accessInputSchema = z.strictObject({
     .nullable()
     .optional(),
   restore: z.boolean().optional(),
-  threadId: threadIdSchema.optional(),
   postId: z.uuid().optional(),
   text: z.string().min(1).max(threadTextLimit).optional(),
   inReplyTo: foundryIdSchema.optional(),
@@ -574,14 +592,9 @@ export function parseEntries<T>(
   });
 }
 
-const termsFit = (grant: SignetGrant) =>
-  grant.resourceModel === 'Project' || grantTermsFitKind(grant.kind, grant.terms)
-    ? null
-    : `a ${grant.kind} resource carries terms of another kind`;
-
 /**
  * Signets read per entry, and their resources per entry inside them: a resource this package can't
- * read (a newer term, terms that don't fit its kind) is dropped and reported, and the Signet is
+ * read is dropped and reported, and the Signet is
  * kept, so the Installation never loses a held Signet (or mistakes a member for revoked) over one
  * resource.
  */
@@ -601,7 +614,6 @@ function parseSignetsWithGrants<S extends z.ZodObject<{ resources: typeof grants
           entry.resources,
           signetGrantSchema,
           dropped,
-          termsFit,
         ),
       }) as z.infer<S>,
   );
@@ -699,8 +711,7 @@ export function parseInstallationSnapshot(value: unknown): InstallationSnapshot 
 export type ParsedSignetDescription = SignetDescription & { dropped: DroppedEntry[] };
 
 /**
- * `access/describe`, per entry: a resource whose lens or terms don't parse, or don't fit its kind,
- * is dropped, and so is an event channel that doesn't parse.
+ * `access/describe`, per entry: a resource whose lens doesn't parse is dropped, and so is an event channel that doesn't parse.
  */
 export function parseSignetDescription(value: unknown): ParsedSignetDescription {
   const dropped: DroppedEntry[] = [];
@@ -715,10 +726,6 @@ export function parseSignetDescription(value: unknown): ParsedSignetDescription 
       operation.resources,
       signetDescriptionResourceSchema,
       dropped,
-      (resource) =>
-        grantTermsFitKind(resource.kind, resource.terms)
-          ? null
-          : 'terms do not fit the resource kind',
     ),
   }));
   const eventChannels =

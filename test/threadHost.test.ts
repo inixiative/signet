@@ -48,7 +48,8 @@ const relayed = (overrides: Record<string, unknown> = {}) => ({
   signetId: uuid(),
   acceptedRevision: 1,
   member: { signetId: uuid(), displayName: 'JobCo' },
-  terms: {},
+  threadId: T1,
+  permissions: [],
   ...overrides,
 });
 
@@ -111,7 +112,7 @@ test('thread.request round-trips, typed by its operation', async () => {
   await connect(
     host({
       'thread.prompt': (frame) => {
-        seen.push(frame.input.text, frame.terms.delivery);
+        seen.push(frame.input.text, frame.threadId, frame.permissions);
         return threadResult({ accepted: true, journalSeq: 7, duplicate: false });
       },
     }),
@@ -121,7 +122,7 @@ test('thread.request round-trips, typed by its operation', async () => {
     type: 'thread.request',
     ...frame,
     operation: 'thread.prompt',
-    input: { threadId: T1, postId: uuid(), text: 'Watching for X' },
+    input: { postId: uuid(), text: 'Watching for X' },
   });
   const response = threadResponseFrameSchema('thread.prompt').parse(
     await responseTo(frame.requestId),
@@ -130,7 +131,7 @@ test('thread.request round-trips, typed by its operation', async () => {
     ok: true,
     result: { accepted: true, journalSeq: 7, duplicate: false },
   });
-  expect(seen).toEqual(['Watching for X', 'note']);
+  expect(seen).toEqual(['Watching for X', T1, []]);
 });
 
 test('refusals: a host refusal, an unknown term, an unreadable frame, a broken handler', async () => {
@@ -154,7 +155,7 @@ test('refusals: a host refusal, an unknown term, an unreadable frame, a broken h
   };
   const prompt = {
     operation: 'thread.prompt',
-    input: { threadId: T1, postId: uuid(), text: 'hi' },
+    input: { postId: uuid(), text: 'hi' },
   };
   expect(await outcome({ type: 'thread.request', ...relayed(), ...prompt })).toEqual({
     ok: false,
@@ -164,7 +165,7 @@ test('refusals: a host refusal, an unknown term, an unreadable frame, a broken h
   expect(
     await outcome({
       type: 'thread.request',
-      ...relayed({ terms: { delivery: 'stream' } }),
+      ...relayed({ permissions: ['thread.stream'] }),
       ...prompt,
     }),
   ).toMatchObject({ ok: false, refusal: 'invalid_request' });
@@ -173,7 +174,7 @@ test('refusals: a host refusal, an unknown term, an unreadable frame, a broken h
       type: 'thread.request',
       ...relayed(),
       operation: 'thread.prompt',
-      input: { threadId: T1 },
+      input: {},
     }),
   ).toMatchObject({ ok: false, refusal: 'invalid_request' });
   expect(calls).toBe(1);
@@ -182,7 +183,7 @@ test('refusals: a host refusal, an unknown term, an unreadable frame, a broken h
       type: 'thread.request',
       ...relayed(),
       operation: 'thread.read',
-      input: { threadId: T1 },
+      input: {},
     }),
   ).toMatchObject({ ok: false, refusal: 'failed' });
   expect(
@@ -190,7 +191,7 @@ test('refusals: a host refusal, an unknown term, an unreadable frame, a broken h
       type: 'thread.request',
       ...relayed(),
       operation: 'thread.floor',
-      input: { threadId: T1, floor: { action: 'request' } },
+      input: { floor: { action: 'request' } },
     }),
   ).toMatchObject({ ok: false, refusal: 'failed' });
 });
@@ -198,7 +199,7 @@ test('refusals: a host refusal, an unknown term, an unreadable frame, a broken h
 test('a host that serves no threads answers failed at once', async () => {
   await connect();
   const frame = relayed();
-  sendHost({ type: 'thread.request', ...frame, operation: 'thread.read', input: { threadId: T1 } });
+  sendHost({ type: 'thread.request', ...frame, operation: 'thread.read', input: {} });
   expect((await responseTo(frame.requestId)).outcome).toMatchObject({
     ok: false,
     refusal: 'failed',
@@ -219,7 +220,7 @@ test('subscribe is atomic: entries written while the snapshot is taken follow it
     }),
   );
   const frame = relayed();
-  sendHost({ type: 'thread.subscribe', ...frame, threadId: T1 });
+  sendHost({ type: 'thread.subscribe', ...frame });
   await waitFor(() => live.threadSubscriptions().length === 1);
   // Written while the host takes the view: 5 is in the snapshot, 6 and 7 come after it.
   expect(live.appendThread(frame.requestId, entry(7))).toBe(true);
@@ -267,7 +268,7 @@ test('entries overflowing a slow subscribe end it, and the subscribe is refused,
     }),
   );
   const frame = relayed();
-  sendHost({ type: 'thread.subscribe', ...frame, threadId: T1 });
+  sendHost({ type: 'thread.subscribe', ...frame });
   await waitFor(() => live.threadSubscriptions().length === 1);
   for (let seq = 1; seq <= 1000; seq++) live.appendThread(frame.requestId, entry(seq));
   expect(live.appendThread(frame.requestId, entry(1001))).toBe(false);
@@ -284,7 +285,7 @@ test('entries overflowing a slow subscribe end it, and the subscribe is refused,
 test('a refused subscribe leaves no subscription', async () => {
   const live = await connect(host({ 'thread.subscribe': () => threadRefused('unknown_thread') }));
   const frame = relayed();
-  sendHost({ type: 'thread.subscribe', ...frame, threadId: T1 });
+  sendHost({ type: 'thread.subscribe', ...frame });
   expect((await responseTo(frame.requestId)).outcome).toEqual({
     ok: false,
     refusal: 'unknown_thread',
@@ -301,7 +302,7 @@ test('unsubscribe, the lease, and a dropped socket each end a subscription', asy
   );
   const subscribe = async () => {
     const frame = relayed();
-    sendHost({ type: 'thread.subscribe', ...frame, threadId: T1 });
+    sendHost({ type: 'thread.subscribe', ...frame });
     await responseTo(frame.requestId);
     return frame.requestId;
   };
@@ -359,7 +360,7 @@ test('an Installation recipient holds a thread view over its own socket, with no
 });
 
 test('thread.prompt carries an aside flag, and nothing else rides along', () => {
-  const input = { threadId: T1, postId: uuid(), text: 'between us people' };
+  const input = { postId: uuid(), text: 'between us people' };
   expect(threadInputSchemas['thread.prompt'].parse({ ...input, aside: true }).aside).toBe(true);
   expect(threadInputSchemas['thread.prompt'].parse(input).aside).toBeUndefined();
   expect(() => threadInputSchemas['thread.prompt'].parse({ ...input, aside: false })).toThrow();
