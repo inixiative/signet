@@ -122,7 +122,7 @@ beforeAll(() => {
           return ok(credentials(5));
         }
         if (action === 'execute') {
-          const accessToken = request.headers.get('authorization')!.slice(5);
+          const accessToken = request.headers.get('authorization')?.slice(5);
           await verify(request, action, accessToken);
           return ok({ executionId: uuid(), result: { echoed: body.operation } });
         }
@@ -200,7 +200,7 @@ describe('pairing and presentation', () => {
     });
     const asked = await requestSignetEntitlement(url, keyFile, {
       signetId,
-      resources: [{ resourceKind: 'subscription', operations: { picks: ['subscription.use'] } }],
+      add: [{ resourceKind: 'subscription', operations: { picks: ['subscription.use'] } }],
       reason: 'No capacity',
     });
     expect(asked).toMatchObject({ inquiryId, status: 'sent' });

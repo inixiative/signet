@@ -137,20 +137,22 @@ export type ProjectGrant = z.infer<typeof projectGrantSchema>;
  * of the integration the resource is on. `externalId`, the provider's own id for the resource, is
  * sent only where the holder acts by it (a conversation's thread id, which its stream opens by);
  * Kingdom keeps every other provider id to itself. A Signet reaches resources on any number of integrations, so each row names
- * its own. Read paths stay loose (a field a newer Kingdom
- * adds is dropped, not fatal).
+ * its own. `id` is the row's own id, which a request to remove it names. Read paths stay loose (a
+ * field a newer Kingdom adds is dropped, not fatal).
  */
+const heldRow = { id: z.uuid() };
 export const signetGrantSchema = z.discriminatedUnion('resourceModel', [
   z
     .object({
+      ...heldRow,
       ...integrationResourceShape,
       kind: z.string().min(1).max(80),
       externalId: z.string().min(1).max(256).optional(),
       integrationId: z.uuid(),
     })
     .superRefine(fullOrOperations),
-  z.object(integrationScopeShape).superRefine(fullOrOperations),
-  z.object(projectGrantSchema.shape),
+  z.object({ ...heldRow, ...integrationScopeShape }).superRefine(fullOrOperations),
+  z.object({ ...heldRow, ...projectGrantSchema.shape }),
 ]);
 export type SignetGrant = z.infer<typeof signetGrantSchema>;
 

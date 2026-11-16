@@ -1,13 +1,13 @@
-import { type Condition, walkLensPath } from '@inixiative/json-rules';
+import { type Condition, type ValidationResult, walkLensPath } from '@inixiative/json-rules';
 import { z } from 'zod';
 import {
   conditionOverOperationRows,
+  describeWhetherLensFiltersOperationRows,
   type GrantLens,
   type LensBody,
-  lensFiltersOperationRows,
   narrowOperationBranch,
 } from './lens';
-import { type OperationScope, scopeRefusal } from './operations';
+import { type OperationScope, validateOperationsInScope } from './operations';
 
 /**
  * Archive libraries (Kingdom `docs/kingdom.md`, Archive `docs/KINGDOM.md`). A hosted Archive is an
@@ -94,19 +94,24 @@ export const archiveInputSchemas = {
 } as const satisfies Record<ArchiveOperation, z.ZodObject>;
 
 /**
- * Why a grant of `operation` can't carry its lens, or null when it can. A chain with no lens reads every branch.
- * Each check reads the visit at the operation's own branch.
+ * Whether a grant of `operation` can carry its lens, as json-rules validators answer: `{ ok, errors }`.
+ * A chain with no lens reads every branch. Each check reads the visit at the operation's own branch.
  */
-export const refuseArchiveOperationLens = (operation: ArchiveOperation, grant: GrantLens) => {
-  if (!grant.narrowed) return null;
-  if (isArchiveSourceOperation(operation)) return 'Writing or deleting sessions takes no lens';
-  if (
-    operation === 'documents.search' &&
-    (lensFiltersOperationRows(grant.lens, operation) ||
-      walkLensPath(grant.lens, `${operation}.content`).outcome !== 'resolved')
-  )
-    return 'Search needs a lens that shows content and is not limited to chosen documents';
-  return null;
+export const validateArchiveOperationLens = (
+  operation: ArchiveOperation,
+  grant: GrantLens,
+): ValidationResult => {
+  const message = !grant.narrowed
+    ? null
+    : isArchiveSourceOperation(operation)
+      ? 'Writing or deleting sessions takes no lens'
+      : operation === 'documents.search' &&
+          (describeWhetherLensFiltersOperationRows(grant.lens, operation) ||
+            walkLensPath(grant.lens, `${operation}.content`).outcome !== 'resolved')
+        ? 'Search needs a lens that shows content and is not limited to chosen documents'
+        : null;
+  const errors = message ? [{ path: operation, message, code: 'invalid_lens' }] : [];
+  return { ok: errors.length === 0, errors };
 };
 
 type ArchiveInput<O extends ArchiveOperation> = z.infer<(typeof archiveInputSchemas)[O]>;
@@ -146,8 +151,8 @@ export const narrowToArchiveCallFields = <O extends ArchiveOperation>(
     ? { root: narrowOperationBranch(operation, { picks: [...input.fields] }) }
     : undefined;
 
-/** `refuseArchiveOperationLens` over every operation a grant row reaches, `full` meaning all of them. */
-export const refuseArchiveGrantLens = (scope: OperationScope, grant: GrantLens) =>
-  scopeRefusal(scope, archiveOperationSchema.options, (operation) =>
-    refuseArchiveOperationLens(operation, grant),
+/** `validateArchiveOperationLens` over every operation a grant row reaches, `full` meaning all of them. */
+export const validateArchiveGrantLens = (scope: OperationScope, grant: GrantLens) =>
+  validateOperationsInScope(scope, archiveOperationSchema.options, (operation) =>
+    validateArchiveOperationLens(operation, grant),
   );

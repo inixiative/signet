@@ -1,3 +1,4 @@
+import type { ValidationResult } from '@inixiative/json-rules';
 import { z } from 'zod';
 
 /**
@@ -130,18 +131,17 @@ export const permitsOperation = (scope: OperationScope, operation: string) =>
   scope.full || scope.operations.includes(operation);
 
 /**
- * The first refusal among the catalog operations `scope` reaches, or null. A full scope is checked
- * against the whole catalog, so run it again whenever the catalog grows.
+ * A per-operation validation run over every catalog operation `scope` reaches, its errors joined, as
+ * json-rules validators answer: `{ ok, errors }`. A full scope is checked against the whole catalog,
+ * so run it again whenever the catalog grows.
  */
-export const scopeRefusal = <O extends string>(
+export const validateOperationsInScope = <O extends string>(
   scope: OperationScope,
   catalog: readonly O[],
-  refusal: (operation: O) => string | null,
-) => {
-  for (const operation of catalog) {
-    if (!permitsOperation(scope, operation)) continue;
-    const reason = refusal(operation);
-    if (reason) return reason;
-  }
-  return null;
+  validateOperation: (operation: O) => ValidationResult,
+): ValidationResult => {
+  const errors = catalog
+    .filter((operation) => permitsOperation(scope, operation))
+    .flatMap((operation) => validateOperation(operation).errors);
+  return { ok: errors.length === 0, errors };
 };
