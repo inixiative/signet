@@ -1,6 +1,7 @@
+import type { ValidationResult } from '@inixiative/json-rules';
 import { z } from 'zod';
-import { type GrantLens, lensFiltersOperationRows } from './lens';
-import { type OperationScope, scopeRefusal } from './operations';
+import { describeWhetherLensFiltersOperationRows, type GrantLens } from './lens';
+import { type OperationScope, validateOperationsInScope } from './operations';
 
 /**
  * GitHub repositories (Kingdom `docs/OPERATOR-ACCESS.md` §9). A GitHub integration is one GitHub
@@ -35,16 +36,32 @@ export const githubInputSchemas = {
   'blobs.read': z.strictObject({ objectId: gitObjectIdSchema }),
 } as const satisfies Record<GithubOperation, z.ZodObject>;
 
-/** Why a grant of `operation` can't carry `lens`, or null when it can, read at its own branch. */
-export const refuseRepositoryOperationLens = (operation: GithubOperation, grant: GrantLens) =>
-  operation !== 'commits.read' && lensFiltersOperationRows(grant.lens, operation)
-    ? 'A grant pinned to commits reads only those commits; trees and blobs need an unpinned grant'
-    : null;
+/**
+ * Whether a grant of `operation` can carry its lens, read at its own branch, as json-rules
+ * validators answer: `{ ok, errors }`.
+ */
+export const validateRepositoryOperationLens = (
+  operation: GithubOperation,
+  grant: GrantLens,
+): ValidationResult => {
+  const errors =
+    operation !== 'commits.read' && describeWhetherLensFiltersOperationRows(grant.lens, operation)
+      ? [
+          {
+            path: operation,
+            message:
+              'A grant pinned to commits reads only those commits; trees and blobs need an unpinned grant',
+            code: 'invalid_lens',
+          },
+        ]
+      : [];
+  return { ok: errors.length === 0, errors };
+};
 
-/** `refuseRepositoryOperationLens` over every operation a grant row reaches, `full` meaning all of them. */
-export const refuseRepositoryGrantLens = (scope: OperationScope, grant: GrantLens) =>
-  scopeRefusal(scope, githubOperationSchema.options, (operation) =>
-    refuseRepositoryOperationLens(operation, grant),
+/** `validateRepositoryOperationLens` over every operation a grant row reaches, `full` meaning all of them. */
+export const validateRepositoryGrantLens = (scope: OperationScope, grant: GrantLens) =>
+  validateOperationsInScope(scope, githubOperationSchema.options, (operation) =>
+    validateRepositoryOperationLens(operation, grant),
   );
 
 /** The row a repository call reads at its operation's branch of the lens: its object, as `sha`. */

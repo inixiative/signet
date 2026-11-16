@@ -84,12 +84,14 @@ export const narrowOperationBranch = (
   );
 
 /**
- * Every operation's branch turned on, as a narrowing's `root`: each operation a leaf holding
- * `leafNarrowing(operation)`, nothing narrowed by default. A row condition goes here, at the leaf.
+ * A narrowing of every operation's branch, as a narrowing's `root`: each operation a leaf holding
+ * `leafNarrowing(operation)`, nothing narrowed by default. Narrowing a branch is what turns it on
+ * (json-rules: a relation is off until the first narrowing turns it on through the relation
+ * object), so every branch is on. A row condition goes here, at the leaf.
  * An operation that reads no rows (`leafNarrowing` gives undefined) has no leaf to turn on; the
  * branches above it are kept.
  */
-export const turnOnEveryOperationBranch = (
+export const narrowEveryOperationBranch = (
   operations: readonly string[],
   leafNarrowing: (operation: string) => ModelNarrowing | undefined = () => ({}),
 ): ModelNarrowing => {
@@ -189,7 +191,7 @@ export const narrowRowModelOnEveryBranch = (
   row: string,
   narrowing: ModelNarrowing,
 ): LensBody => ({
-  root: turnOnEveryOperationBranch(operations),
+  root: narrowEveryOperationBranch(operations),
   mapDefaults: { [operationsMapName]: { models: { [row]: narrowing } } },
 });
 
@@ -250,7 +252,7 @@ export const composeGrantLensChain = (base: Lens, chain: readonly unknown[] = []
   const operations = listBaseOperations(base);
   const reads = new Set(operations.filter(({ rows }) => rows).map(({ operation }) => operation));
   if (bodies.length === 0) {
-    const root = turnOnEveryOperationBranch(
+    const root = narrowEveryOperationBranch(
       operations.map(({ operation }) => operation),
       (operation) => (reads.has(operation) ? {} : undefined),
     );
@@ -299,10 +301,13 @@ export const conditionOverOperationRows = (operation: string, condition: Conditi
   ({ field: operation, arrayOperator: 'any', condition }) as Condition;
 
 /**
- * Whether the lens holds back any of an operation's rows: the branch off, or a `where` on any visit
- * (json-rules `lensVisit`) from the anchor down to the operation's branch.
+ * Describe whether the lens holds back any of an operation's rows: the branch off, or a `where` on
+ * any visit (json-rules `lensVisit`) from the anchor down to the operation's branch.
  */
-export const lensFiltersOperationRows = (lens: Lens | LensNarrowing, operation: string) =>
+export const describeWhetherLensFiltersOperationRows = (
+  lens: Lens | LensNarrowing,
+  operation: string,
+) =>
   [...pathsAboveOperation(operation), operation].some((path) => {
     const visit = lensVisit(lens, path);
     return !visit || visit.whereClauses.length > 0;

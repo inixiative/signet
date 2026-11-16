@@ -2,6 +2,31 @@ This file starts at 0.17.0. Earlier releases are described in their pull request
 terms `posts`, `act` and `agent`, #33) and 0.16.0 (a hosted request carries its requester's
 audience, #35).
 
+## Unreleased — the lens surface uses json-rules' verbs
+
+Aron, 2026-11-16, on a review of 0.19's four new verbs ("turn on", "nest", "test", "refuse"):
+"Okay, agreed. Change that." Why: the naming rule (`docs/rules/naming-and-vocabulary.md`) uses the
+library below's verb whenever the operation is that verb. Only "nest" is new; json-rules turns a
+relation on by narrowing it, a fact read off a lens is a description, and whether a grant can carry
+its lens is a validation. No old name is kept:
+
+| 0.19 | Unreleased | Verb |
+| --- | --- | --- |
+| `turnOnEveryOperationBranch(operations, leafNarrowing?)` | `narrowEveryOperationBranch(operations, leafNarrowing?)`, same result | narrow |
+| `lensFiltersOperationRows(lens, operation)` | `describeWhetherLensFiltersOperationRows(lens, operation)`, same boolean | describe |
+| `refuseArchiveOperationLens(operation, grant): string \| null` | `validateArchiveOperationLens(operation, grant): ValidationResult` | validate |
+| `refuseArchiveGrantLens(scope, grant): string \| null` | `validateArchiveGrantLens(scope, grant): ValidationResult` | validate |
+| `refuseRepositoryOperationLens(operation, grant): string \| null` | `validateRepositoryOperationLens(operation, grant): ValidationResult` | validate |
+| `refuseRepositoryGrantLens(scope, grant): string \| null` | `validateRepositoryGrantLens(scope, grant): ValidationResult` | validate |
+| `scopeRefusal(scope, catalog, refusal)` | `validateOperationsInScope(scope, catalog, validateOperation)` | validate |
+
+- **The validators return json-rules' `ValidationResult`**, `{ ok, errors: { path, message, code }[] }`,
+  not a reason or null: json-rules' validators all return that shape, so a `validate` name that
+  returned a string would mislead. Each error's `path` is the operation and its `code` is
+  `invalid_lens` (as `GrantLensError`). A grant row's validation now lists every operation it
+  fails, not only the first: `if (refusal)` becomes `if (!result.ok)`, and a message is
+  `result.errors[0].message` (or every one joined).
+
 ## 0.19.0 — a grant row's lens is one narrowing; no base lenses on the wire
 
 Aron, 2026-11-14 and 2026-11-15: the lens column is a narrowing, the same as template's; delegation
