@@ -28,8 +28,9 @@ first.
   the declared operations, so a new operation is added here first.
 - Grant rows: a row names one resource or a scope (a whole integration, or a project's resources of
   one kind), so a reader never assumes one resource per row. Operation picks are resolved once
-  (`resolveOperationPicks`), and json-rules lens layers narrow a base lens (`baseLensId`). Grants
-  carry no terms.
+  (`resolveOperationPicks`). A row's lens is one json-rules narrowing (`lensNarrowingSchema`); a
+  chain of rows composes over the kind's operations lens (`createOperationsLens`,
+  `composeGrantLensChain`). Grants carry no terms.
 - Conversations: one `conversation` resource per shared thread, its `externalId` the thread id.
   Its catalog holds the calls (`thread.*`, `prompt.resolve`) and seven permissions nothing calls
   (`member.*`, `agent.*`), picked like any other operation; `full` holds them all. Whether a
