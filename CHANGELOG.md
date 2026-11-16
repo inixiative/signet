@@ -2,7 +2,27 @@ This file starts at 0.17.0. Earlier releases are described in their pull request
 terms `posts`, `act` and `agent`, #33) and 0.16.0 (a hosted request carries its requester's
 audience, #35).
 
-## Unreleased — the lens surface uses json-rules' verbs
+## 0.20.0 — entitlement changes are add and remove; the lens surface uses json-rules' verbs
+
+### A change to a Signet's entitlements is `{ add, remove }`, asked and answered
+
+Aron, 2026-11-16: "The payload should just take the same shape, just add and remove. Both the
+request and the response." Breaking, no old shape kept:
+
+- **`signetEntitlementRequestSchema`** is `{ signetId, add, remove, reason? }`. `add` takes what
+  `resources` took (a resource by id, or by kind as a registration asks); `remove` names held rows
+  by their own id. At least one of the two is named. `resources` is gone:
+  `requestSignetEntitlement(url, keyFile, { signetId, resources })` becomes `{ signetId, add }`.
+- **`signetEntitlementChangesSchema`** (new) is the reviewer's copy and the record of what was
+  granted: `{ add, remove }`, with every added resource resolved to an id.
+- **A held grant row carries its own `id`** (`signetGrantSchema`, so every `resources` list on
+  `installationSignetSchema`, `hostedSignetSchema` and a description): the id a `remove` names. It
+  is required, so a 0.20 client reads only a Kingdom that sends it.
+- `recipientAudienceSchema`'s `owner` is whoever may manage the hosting integration, a person or an
+  integration (Aron, 2026-11-16: "the foundry is the owner, and then everything else is the owner
+  action there has"); the doc comment no longer says "never an Integration".
+
+### The lens surface uses json-rules' verbs
 
 Aron, 2026-11-16, on a review of 0.19's four new verbs ("turn on", "nest", "test", "refuse"):
 "Okay, agreed. Change that." Why: the naming rule (`docs/rules/naming-and-vocabulary.md`) uses the
@@ -10,7 +30,7 @@ library below's verb whenever the operation is that verb. Only "nest" is new; js
 relation on by narrowing it, a fact read off a lens is a description, and whether a grant can carry
 its lens is a validation. No old name is kept:
 
-| 0.19 | Unreleased | Verb |
+| 0.19 | 0.20 | Verb |
 | --- | --- | --- |
 | `turnOnEveryOperationBranch(operations, leafNarrowing?)` | `narrowEveryOperationBranch(operations, leafNarrowing?)`, same result | narrow |
 | `lensFiltersOperationRows(lens, operation)` | `describeWhetherLensFiltersOperationRows(lens, operation)`, same boolean | describe |

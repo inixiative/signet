@@ -10,7 +10,6 @@ import { githubInputSchemas, githubOperationSchema, gitObjectIdSchema } from './
 import {
   registeredResourceSchema,
   requestedResourceSchema,
-  type SignetGrant,
   signetGrantSchema,
   signetResourceSchema,
 } from './grants';
@@ -270,19 +269,38 @@ export const installationInquirySchema = z.object({
   /** Where a person reviews it in Kingdom's web app, while it awaits review. */
   reviewUrl: kingdomLinkSchema.nullable().optional(),
 });
+const namesAChange = (changes: { add: unknown[]; remove: unknown[] }, context: z.RefinementCtx) => {
+  if (!changes.add.length && !changes.remove.length)
+    context.addIssue({ code: 'custom', path: ['add'], message: 'Name a row to add or remove' });
+};
 /**
- * An Installation asks for more on a Signet it already holds (Aron, 2026-11-14: "grant me new
- * entitlement"): resources by id or by kind, as a registration asks, and projects by id. Kingdom
- * sends it to the person who issued the Signet; the approver submits a whole copy of the grant,
- * narrower or wider than the request, each entitlement in it checked by the grant check on the
- * approver, as a new revision of the same Signet.
+ * A change to what a Signet holds, as its reviewer writes it and as Kingdom records what was
+ * granted: resources to add, by id, and held rows to remove, by their own id (`signetGrantSchema`'s
+ * `id`). The request and the response have this one shape (Aron, 2026-11-16: "just add and remove.
+ * Both the request and the response").
  */
-export const signetEntitlementRequestSchema = z.strictObject({
-  signetId: z.uuid(),
-  resources: z.array(registeredResourceSchema).min(1).max(100),
-  /** Why it asks, shown to the reviewer: what stopped working, for example. */
-  reason: z.string().trim().min(1).max(500).optional(),
-});
+export const signetEntitlementChangesSchema = z
+  .strictObject({
+    add: z.array(signetResourceSchema).max(100).default([]),
+    remove: z.array(z.uuid()).max(100).default([]),
+  })
+  .superRefine(namesAChange);
+/**
+ * An Installation asks to change what a Signet it holds carries: resources to add, by id or by
+ * kind as a registration asks, and held rows to remove. Kingdom sends it to whoever can manage the
+ * Signet; the reviewer answers with a whole copy (`signetEntitlementChangesSchema`), narrower or
+ * wider than asked, each added entitlement checked by the grant check on the reviewer, as a new
+ * revision of the same Signet.
+ */
+export const signetEntitlementRequestSchema = z
+  .strictObject({
+    signetId: z.uuid(),
+    add: z.array(registeredResourceSchema).max(100).default([]),
+    remove: z.array(z.uuid()).max(100).default([]),
+    /** Why it asks, shown to the reviewer: what stopped working, for example. */
+    reason: z.string().trim().min(1).max(500).optional(),
+  })
+  .superRefine(namesAChange);
 export const signetEntitlementResponseSchema = z.object({
   inquiryId: z.uuid(),
   status: inquiryStatusSchema,
@@ -290,6 +308,7 @@ export const signetEntitlementResponseSchema = z.object({
   reviewUrl: kingdomLinkSchema,
 });
 export type SignetEntitlementRequest = z.input<typeof signetEntitlementRequestSchema>;
+export type SignetEntitlementChanges = z.infer<typeof signetEntitlementChangesSchema>;
 export type SignetEntitlementResponse = z.infer<typeof signetEntitlementResponseSchema>;
 /**
  * Who a requester is to the integration's owner (Aron, 2026-11-14: "just in-org and outside-org,
@@ -299,11 +318,9 @@ export type SignetEntitlementResponse = z.infer<typeof signetEntitlementResponse
 export const requestAudienceSchema = z.enum(['inOrg', 'outside']);
 export type RequestAudience = z.infer<typeof requestAudienceSchema>;
 /**
- * Who a Signet's recipient is to the integration's owner. `owner`: the recipient is the person who
- * owns the integration (the same User, for an integration a user or a member owns), so on a Foundry
- * it is the owner's own client, not a member from outside. Never an Integration recipient, and never
- * anyone on an integration an organization or a space owns: those have no single person to be.
- * Kingdom decides it; holding `prompt.resolve` says nothing about who someone is, since recipients
+ * Who a Signet's recipient is to the integration's owner. `owner`: the recipient, a person or an
+ * integration, may manage the hosting integration, so on a Foundry it is the owner's own client, not
+ * a member from outside. Kingdom decides it by its permission check; holding `prompt.resolve` says nothing about who someone is, since recipients
  * are never restricted. A Signet hosted on integrations of several owners reads as the least of them.
  */
 export const recipientAudienceSchema = z.enum(['owner', ...requestAudienceSchema.options]);

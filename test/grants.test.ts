@@ -38,6 +38,8 @@ import {
   repositoryCallRow,
   requestedResourceSchema,
   resolveOperationPicks,
+  signetEntitlementChangesSchema,
+  signetEntitlementRequestSchema,
   signetGrantSchema,
   signetOwnerModelSchema,
   signetProposalSchema,
@@ -273,15 +275,18 @@ describe('the grant as a holder reads it', () => {
       externalId: 'inixiative/signet',
       full: true,
     };
-    const grant = signetGrantSchema.parse({ ...row, integrationId });
+    const id = Bun.randomUUIDv7();
+    const grant = signetGrantSchema.parse({ ...row, id, integrationId });
     expect(grant).toMatchObject({
       kind: 'repository',
       externalId: 'inixiative/signet',
       integrationId,
       full: true,
     });
-    expect(signetGrantSchema.safeParse(row).success).toBe(false);
-    expect(signetGrantSchema.parse({ resourceModel: 'Project', projectId })).toEqual({
+    expect(signetGrantSchema.safeParse({ ...row, id }).success).toBe(false);
+    expect(signetGrantSchema.safeParse({ ...row, integrationId }).success).toBe(false);
+    expect(signetGrantSchema.parse({ id, resourceModel: 'Project', projectId })).toEqual({
+      id,
       resourceModel: 'Project',
       projectId,
     });
@@ -313,7 +318,10 @@ describe('a row over a scope', () => {
     expect(grantResourceSchema.parse(scope)).toEqual(scope as never);
     const inProject = { ...scope, projectId };
     expect(grantResourceSchema.parse(inProject)).toEqual(inProject as never);
-    expect(signetGrantSchema.parse(inProject)).toMatchObject({ kind: 'conversation', projectId });
+    expect(signetGrantSchema.parse({ ...inProject, id: Bun.randomUUIDv7() })).toMatchObject({
+      kind: 'conversation',
+      projectId,
+    });
     expect(grantResourceSchema.safeParse({ ...scope, kind: undefined }).success).toBe(false);
     expect(grantResourceSchema.safeParse({ ...scope, integrationResourceId }).success).toBe(false);
     expect(grantResourceSchema.safeParse({ ...scope, full: true }).success).toBe(false);
@@ -901,6 +909,7 @@ describe('a grant view shows its incoming where', () => {
   it('a holder reads the where its grant admits calls by', () => {
     const where = { field: 'threadId', operator: 'equals', value: 'thread_a' };
     const view = signetGrantSchema.parse({
+      id: Bun.randomUUIDv7(),
       resourceModel: 'IntegrationResource',
       integrationResourceId: Bun.randomUUIDv7(),
       integrationId: Bun.randomUUIDv7(),
@@ -923,6 +932,7 @@ describe('a grant view shows its incoming where', () => {
     expect(JSON.stringify(where).length).toBeGreaterThan(grantWhereLimit);
     expect(grantWhereSchema.safeParse(where).success).toBe(false);
     const row = {
+      id: Bun.randomUUIDv7(),
       resourceModel: 'IntegrationResource' as const,
       integrationResourceId: Bun.randomUUIDv7(),
       integrationId: Bun.randomUUIDv7(),
@@ -954,5 +964,49 @@ describe('a grant view shows its incoming where', () => {
     );
     expect(dropped).toEqual([]);
     expect(signets[0]?.resources).toEqual([row]);
+  });
+});
+
+describe("a change to a Signet's entitlements is add and remove, asked and answered", () => {
+  const signetId = Bun.randomUUIDv7();
+  const rowId = Bun.randomUUIDv7();
+  const byId = {
+    resourceModel: 'IntegrationResource' as const,
+    integrationResourceId: Bun.randomUUIDv7(),
+    operations: { picks: ['thread.read'] },
+  };
+  const byKind = { resourceKind: 'subscription', operations: { picks: ['subscription.use'] } };
+
+  it('a request adds resources by id or by kind, removes held rows by id, or both', () => {
+    expect(signetEntitlementRequestSchema.parse({ signetId, add: [byId, byKind] })).toEqual({
+      signetId,
+      add: [byId, byKind],
+      remove: [],
+    });
+    expect(signetEntitlementRequestSchema.parse({ signetId, remove: [rowId] })).toEqual({
+      signetId,
+      add: [],
+      remove: [rowId],
+    });
+    expect(
+      signetEntitlementRequestSchema.safeParse({ signetId, add: [byId], remove: [rowId] }).success,
+    ).toBe(true);
+  });
+
+  it('a request or an answer that names nothing to add or remove is refused', () => {
+    expect(signetEntitlementRequestSchema.safeParse({ signetId }).success).toBe(false);
+    expect(
+      signetEntitlementRequestSchema.safeParse({ signetId, add: [], remove: [] }).success,
+    ).toBe(false);
+    expect(signetEntitlementChangesSchema.safeParse({}).success).toBe(false);
+  });
+
+  it('the answer has the same shape, with every added resource resolved to an id', () => {
+    expect(signetEntitlementChangesSchema.parse({ add: [byId], remove: [rowId] })).toEqual({
+      add: [byId],
+      remove: [rowId],
+    });
+    expect(signetEntitlementChangesSchema.safeParse({ add: [byKind] }).success).toBe(false);
+    expect(signetEntitlementChangesSchema.safeParse({ remove: ['not-an-id'] }).success).toBe(false);
   });
 });
