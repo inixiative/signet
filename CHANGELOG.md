@@ -2,6 +2,20 @@ This file starts at 0.17.0. Earlier releases are described in their pull request
 terms `posts`, `act` and `agent`, #33) and 0.16.0 (a hosted request carries its requester's
 audience, #35).
 
+## 0.21.0 — a lens filters what an operation returns; it never turns an operation off
+
+Aron, 2026-11-17: "The lens is for outgoing stuff, right? For filtering data and truncating data
+that you're getting back. That's what the lens is for. Everything else is an operation or a
+where." Breaking for what a lens means:
+
+- `composeGrantLensChain` starts every chain from the every-branch narrowing, so a lens that names
+  only some operations' branches leaves the others on, unfiltered by it. `{}` now adds nothing (on
+  0.20 it turned every branch off).
+- A lens that would leave an operation's branch off (by omitting it) throws `GrantLensError`
+  ("A lens filters what an operation returns; it cannot leave an operation off").
+- Which operations a grant holds is its actions alone; a host that trimmed a row's actions to what
+  its lens left on should stop.
+
 ## 0.20.0 — entitlement changes are add and remove; the lens surface uses json-rules' verbs
 
 ### A change to a Signet's entitlements is `{ add, remove }`, asked and answered

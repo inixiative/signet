@@ -18,9 +18,10 @@ import { z } from 'zod';
  * included. Grant lenses narrow it."; 2026-11-15: "It's just a lens."). Kingdom generates the base
  * from its catalog: its anchor is the kind's operations, each dotted segment of an operation a
  * relation, and each operation a list of the rows it reads (an Archive document, a thread, a
- * repository call, an integration event). Relations are off until a narrowing turns them on, so a
- * narrowing turns on the branches it keeps and narrows the row shapes with `mapDefaults` (every
- * branch of a row model) or one branch through `root.relations`. A row stores only its own
+ * repository call, an integration event). Every operation's branch is on before the first lens; a
+ * lens filters and trims what an operation returns, narrowing the row shapes with `mapDefaults`
+ * (every branch of a row model) or one branch through `root.relations`, and never says which
+ * operations a grant holds (its actions do). A row stores only its own
  * narrowing; along a re-delegation chain the reader composes each row's narrowing over the one above
  * it, the upstream first. A chain with no narrowing reads every branch. This package carries the
  * narrowing and the shape of the tree, creates the base (`createOperationsLens`), composes a chain
@@ -231,13 +232,17 @@ const pathsAboveOperation = (operation: string) =>
 
 /**
  * A grant row's lens chain, the upstream row's lens first and this row's last, composed over the
- * kind's operations lens. An absent lens (null or undefined) adds nothing; a chain where every lens
- * is absent reads every branch. Every lens that is present composes as json-rules composes it,
- * whatever it holds (`{}` turns every branch off), and json-rules validates it against the ones
- * above it, so a later one can only narrow. One check is added here, which json-rules has no way to
- * know: no `where` sits above an operation's branch. Such a `where` is over the whole list of rows,
- * not each row, so it would show every row once one matched; rows are filtered at the operation's
- * own branch (`narrowOperationBranch(operation, { where })`). Throws `GrantLensError`.
+ * kind's operations lens. A lens filters and trims what an operation returns; it never says which
+ * operations a grant holds, which are its actions alone (Aron, 2026-11-17: "The lens is for outgoing
+ * stuff, right? For filtering data and truncating data that you're getting back. That's what the
+ * lens is for. Everything else is an operation or a where."). So every operation's branch is on
+ * before the first lens, each lens only narrows rows and fields within a branch (json-rules: a later
+ * narrowing never hides a relation it does not omit), and a lens that would leave an operation's
+ * branch off is refused. An absent lens (null or undefined) adds nothing. json-rules validates each
+ * lens against the ones above it, so a later one can only narrow. One more check is added here: no
+ * `where` sits above an operation's branch. Such a `where` is over the whole list of rows, not each
+ * row, so it would show every row once one matched; rows are filtered at the operation's own branch
+ * (`narrowOperationBranch(operation, { where })`). Throws `GrantLensError`.
  */
 export const composeGrantLensChain = (base: Lens, chain: readonly unknown[] = []): GrantLens => {
   if (chain.length > grantLensChainLimit)
@@ -251,14 +256,15 @@ export const composeGrantLensChain = (base: Lens, chain: readonly unknown[] = []
   }
   const operations = listBaseOperations(base);
   const reads = new Set(operations.filter(({ rows }) => rows).map(({ operation }) => operation));
-  if (bodies.length === 0) {
-    const root = narrowEveryOperationBranch(
+  const everyBranch: LensNarrowing = {
+    parent: base,
+    root: narrowEveryOperationBranch(
       operations.map(({ operation }) => operation),
       (operation) => (reads.has(operation) ? {} : undefined),
-    );
-    return { lens: { parent: base, root }, narrowed: false };
-  }
-  let lens: Lens | LensNarrowing = base;
+    ),
+  };
+  if (bodies.length === 0) return { lens: everyBranch, narrowed: false };
+  let lens: Lens | LensNarrowing = everyBranch;
   try {
     for (const body of bodies) {
       const narrowing: LensNarrowing = { parent: lens, ...body };
@@ -269,6 +275,11 @@ export const composeGrantLensChain = (base: Lens, chain: readonly unknown[] = []
     throw new GrantLensError(error instanceof Error ? error.message : 'The lens does not compose');
   }
   const composed = lens;
+  const leftOff = [...reads].find((operation) => !lensVisit(composed, operation));
+  if (leftOff)
+    throw new GrantLensError(
+      `A lens filters what an operation returns; it cannot leave an operation off (${leftOff})`,
+    );
   const gated = [...reads].find((operation) =>
     pathsAboveOperation(operation).some(
       (path) => (lensVisit(composed, path)?.whereClauses.length ?? 0) > 0,

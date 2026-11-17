@@ -435,7 +435,7 @@ describe("refusals that stay about operations, read at each operation's branch",
     ).toBe(false);
   });
 
-  test('a narrowing of one branch leaves the others as they are; a branch left off is held back', () => {
+  test('a narrowing of one branch leaves the others as they are; no lens leaves an operation off', () => {
     const readChosen = {
       root: {
         ...narrowEveryOperationBranch(archiveOperations),
@@ -452,9 +452,16 @@ describe("refusals that stay about operations, read at each operation's branch",
     } as LensBody;
     expect(validateArchiveOperationLens('documents.search', archive(readChosen)).ok).toBe(true);
     const readOnly = { root: narrowOperationBranch('documents.read', {}) } as LensBody;
-    expect(validateArchiveOperationLens('documents.search', archive(readOnly)).ok).toBe(false);
-    expect(lensVisit(archive(readOnly).lens, 'documents.search')).toBeNull();
+    expect(validateArchiveOperationLens('documents.search', archive(readOnly)).ok).toBe(true);
+    expect(lensVisit(archive(readOnly).lens, 'documents.search')?.model).toBe('ArchiveDocument');
     expect(lensVisit(archive(readOnly).lens, 'documents.read')?.model).toBe('ArchiveDocument');
+    for (const hides of [
+      { root: { relations: { documents: { omits: ['search'] } } } },
+      { root: { omits: ['documents'] } },
+    ])
+      expect(() => archive(hides as LensBody)).toThrow(
+        'A lens filters what an operation returns; it cannot leave an operation off',
+      );
   });
 
   const projects = createTestOperationsLens(
@@ -519,13 +526,13 @@ describe("refusals that stay about operations, read at each operation's branch",
     expect(() => repository(pinned)).toThrow(refusal);
   });
 
-  test('a chain composes each narrowing over the one above it; none reads every branch', () => {
+  test('a chain composes each narrowing over the one above it; none hides an operation', () => {
     const readOnly = { root: narrowEveryOperationBranch(['documents.read']) };
     const search = (chain: unknown[]) =>
       projectOperationRows(composeGrantLensChain(projects, chain).lens, 'documents.search', rows);
     expect(composeGrantLensChain(projects, [readOnly, readOnly]).lens).toHaveProperty('parent');
     expect(search([])).toEqual(rows);
-    expect(search([readOnly])).toEqual([]);
+    expect(search([readOnly])).toEqual(rows);
     expect(composeGrantLensChain(projects).narrowed).toBe(false);
     expect(composeGrantLensChain(projects, [readOnly]).narrowed).toBe(true);
     for (const stored of [
@@ -550,56 +557,53 @@ describe("refusals that stay about operations, read at each operation's branch",
       [null, readOnly, undefined],
     ])
       expect(composeGrantLensChain(projects, chain)).toEqual(alone);
-    // `{}`, `{ root: {} }` and `{ root: { relations: {} } }` say the same thing: no branch is on.
+    // `{}`, `{ root: {} }` and `{ root: { relations: {} } }` say the same thing: narrow nothing.
     for (const nothing of [{}, { root: {} }, { root: { relations: {} } }]) {
       const shown = composeGrantLensChain(projects, [nothing]);
       expect(shown.narrowed).toBe(true);
-      expect(lensVisit(shown.lens, 'documents.read')).toBeNull();
-      expect(projectOperationRows(shown.lens, 'documents.read', rows)).toEqual([]);
+      expect(projectOperationRows(shown.lens, 'documents.read', rows)).toEqual(rows);
     }
-    expect(() =>
+    expect(
       composeGrantLensChain(projects, [
         {},
         { root: narrowEveryOperationBranch(['documents.read', 'documents.search']) },
-      ]),
-    ).toThrow(GrantLensError);
+      ]).narrowed,
+    ).toBe(true);
   });
 
-  test('a lens with every operation unticked shows nothing and refuses what it would read', () => {
+  test('a lens that names no operation leaves every operation as it is', () => {
     const unticked = composeGrantLensChain(repositoryBase, [
       { root: narrowEveryOperationBranch([]) },
     ]);
     expect(unticked.narrowed).toBe(true);
     for (const operation of githubOperations) {
-      expect(lensVisit(unticked.lens, operation)).toBeNull();
-      expect(describeWhetherLensFiltersOperationRows(unticked.lens, operation)).toBe(true);
+      expect(lensVisit(unticked.lens, operation)).not.toBeNull();
+      expect(describeWhetherLensFiltersOperationRows(unticked.lens, operation)).toBe(false);
     }
-    expect(validateRepositoryOperationLens('blobs.read', unticked).ok).toBe(false);
+    expect(validateRepositoryOperationLens('blobs.read', unticked).ok).toBe(true);
   });
 
   test('two narrowings compose as two stacked layers did on 0.18', () => {
     const chained = composeGrantLensChain(repositoryBase, [pinned, trimmed]);
     const projection = projectLens(chained.lens);
     expect(projection).toEqual(
-      projectLens({ parent: { parent: repositoryBase, ...pinned }, ...trimmed }),
+      projectLens({
+        parent: { parent: composeGrantLensChain(repositoryBase).lens, ...pinned },
+        ...trimmed,
+      }),
     );
     const read = lensVisit(chained.lens, 'commits.read');
-    expect(Object.keys(projection)).toEqual([
-      'Operations',
-      'Operations.commits',
-      'Operations.commits.read',
-    ]);
     expect(Object.keys(read?.fields ?? {})).toEqual(['sha']);
     expect(read?.whereClauses).toEqual([commitPin.where]);
   });
 
-  test("a later narrowing can't turn on a branch the one above it leaves off", () => {
+  test('a lens naming one operation leaves every other on, so a later lens may narrow another', () => {
     const commitsOnly = { root: narrowOperationBranch('commits.read', {}) };
     const trees = { root: narrowOperationBranch('trees.read', {}) };
     expect(composeGrantLensChain(repositoryBase, [trees]).narrowed).toBe(true);
-    expect(() => composeGrantLensChain(repositoryBase, [commitsOnly, trees])).toThrow(
-      GrantLensError,
-    );
+    expect(
+      lensVisit(composeGrantLensChain(repositoryBase, [commitsOnly, trees]).lens, 'trees.read'),
+    ).not.toBeNull();
   });
 
   test(`a chain composes at most ${grantLensChainLimit} narrowings`, () => {
