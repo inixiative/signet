@@ -1,11 +1,12 @@
-import type { FieldMapEntry, Lens } from '@inixiative/json-rules';
+import type { ModelEntry } from '@inixiative/field-map';
+import type { Lens } from '@inixiative/json-rules';
 import { createOperationsLens } from '../src';
 
 /** An operations lens whose every operation reads `row` rows. */
 export const createTestOperationsLens = (
   operations: readonly string[],
   row: string,
-  rowFields: Record<string, FieldMapEntry>,
+  rowFields: ModelEntry['fields'],
 ): Lens =>
   createOperationsLens({
     model: 'Operations',

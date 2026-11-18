@@ -2,6 +2,21 @@ This file starts at 0.17.0. Earlier releases are described in their pull request
 terms `posts`, `act` and `agent`, #33) and 0.16.0 (a hosted request carries its requester's
 audience, #35).
 
+## 0.22.0 — json-rules 4.2; the row models are field-map's
+
+- **Requires `@inixiative/json-rules@^4.2.0`** (peer) and depends on `@inixiative/field-map@^0.1.0`.
+  Why: json-rules 4.2 takes its schema map from field-map, and the building blocks share one map
+  type instead of each declaring the field shape.
+- **Breaking: `createOperationsLens`'s `rowModels` is `Record<string, ModelEntry['fields']>`**,
+  field-map's fields (`ScalarField`, `EnumField`, `RelationField`, a scalar's `type` one of
+  `SCALAR_TYPES`), not json-rules' lens-read `FieldMapEntry`. A row model is a schema model; a
+  bridge or a projection's options never belong in one. The operations map is built with
+  field-map's own-property readers (`own`, `ownEntry`, `modelOf`), and signet's copy of `ownEntry`
+  is gone.
+- json-rules 4.0's lens gate (a rule path may not continue past a to-many relation) changes
+  nothing here: every lens and filter in the suite already crosses an operation's rows under an
+  array rule.
+
 ## 0.21.0 — a lens filters what an operation returns; it never turns an operation off
 
 Aron, 2026-11-17: "The lens is for outgoing stuff, right? For filtering data and truncating data
