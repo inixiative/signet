@@ -1,8 +1,15 @@
 import {
+  type FieldEntry,
+  type ModelEntry,
+  modelOf,
+  own,
+  ownEntry,
+  type RelationField,
+} from '@inixiative/field-map';
+import {
   assertValidNarrowing,
   type Condition,
   createLens,
-  type FieldMapEntry,
   type Lens,
   type LensNarrowing,
   lensVisit,
@@ -114,7 +121,7 @@ export const narrowEveryOperationBranch = (
 /** The field map every operations lens is created under. */
 export const operationsMapName = 'operations';
 
-const relationTo = (type: string, isList: boolean): FieldMapEntry => ({
+const relationTo = (type: string, isList: boolean): RelationField => ({
   kind: 'object',
   type,
   isList,
@@ -123,6 +130,9 @@ const relationTo = (type: string, isList: boolean): FieldMapEntry => ({
   fromFields: [],
   toFields: [],
 });
+
+/** A model of the operations map while it is built; a `ModelEntry` once built. */
+type BuiltModel = { fields: Record<string, FieldEntry> };
 
 /**
  * A resource kind's operations lens, created from its catalog: `model` is the anchor, each dotted
@@ -141,9 +151,9 @@ export const createOperationsLens = ({
   model: string;
   operations: readonly string[];
   rowModel: (operation: string) => string | undefined;
-  rowModels: Record<string, Record<string, FieldMapEntry>>;
+  rowModels: Readonly<Record<string, ModelEntry['fields']>>;
 }): Lens => {
-  const models: Record<string, { fields: Record<string, FieldMapEntry> }> = {};
+  const models: Record<string, BuiltModel> = {};
   const branches = new Map<string, string>();
   const modelAt = (path: readonly string[]) => [model, ...path].join('_');
   const fieldsAt = (path: readonly string[]) => {
@@ -151,8 +161,7 @@ export const createOperationsLens = ({
     if ((branches.get(name) ?? path.join('.')) !== path.join('.'))
       throw Error(`Operations under ${branches.get(name)} and ${path.join('.')} share ${name}`);
     branches.set(name, path.join('.'));
-    models[name] ??= { fields: {} };
-    return (models[name] as { fields: Record<string, FieldMapEntry> }).fields;
+    return ownEntry<BuiltModel>(models, name, () => ({ fields: {} })).fields;
   };
   const leaves = new Set(operations);
   for (const operation of operations) {
@@ -173,7 +182,7 @@ export const createOperationsLens = ({
   }
   for (const row of new Set(operations.flatMap((operation) => rowModel(operation) ?? []))) {
     if (branches.has(row)) throw Error(`The row model ${row} shares its name with a branch`);
-    models[row] = { fields: Object.hasOwn(rowModels, row) ? (rowModels[row] ?? {}) : {} };
+    models[row] = { fields: { ...own(rowModels, row) } };
   }
   return createLens({
     maps: { [operationsMapName]: { models } },
@@ -196,9 +205,6 @@ export const narrowRowModelOnEveryBranch = (
   mapDefaults: { [operationsMapName]: { models: { [row]: narrowing } } },
 });
 
-const ownEntry = <T>(record: Record<string, T> | undefined, key: string): T | undefined =>
-  record && Object.hasOwn(record, key) ? record[key] : undefined;
-
 /** A base's operations, read back from its map: each path from the anchor, and whether it reads rows. */
 const listBaseOperations = (
   base: Lens,
@@ -206,7 +212,7 @@ const listBaseOperations = (
   path: readonly string[] = [],
 ): { operation: string; rows: boolean }[] => {
   if (path.length > 20) throw new GrantLensError('The base lens is not a tree of operations');
-  const fields = ownEntry(ownEntry(base.maps, base.mapName)?.models, model)?.fields ?? {};
+  const fields = modelOf(own(base.maps, base.mapName), model)?.fields ?? {};
   return Object.entries(fields).flatMap(([name, field]) =>
     field.kind === 'object' && !field.isList
       ? listBaseOperations(base, field.type, [...path, name])
