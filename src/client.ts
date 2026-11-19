@@ -514,7 +514,7 @@ export type SignetAction =
   | 'execute'
   | 'closeTask'
   | 'verifyAuthority'
-  | 'settleTask'
+  | 'completeTask'
   | 'resolveRun'
   | 'delegateRun'
   | 'renewRun'
@@ -527,7 +527,7 @@ const signetActions: SignetAction[] = [
   'execute',
   'closeTask',
   'verifyAuthority',
-  'settleTask',
+  'completeTask',
   'resolveRun',
   'delegateRun',
   'renewRun',
@@ -563,7 +563,7 @@ export class SignetClient {
       throw Error('Signet enrollment idle timeout; enroll this device again');
     if (!allowRenewal) {
       if (Date.parse(credential.expiresAt) <= Date.now())
-        throw Error('Task settlement requires an unexpired existing access token');
+        throw Error('Task completion requires an unexpired existing access token');
       return credential;
     }
     if (!force && Date.parse(credential.expiresAt) > Date.now() + 30000) return credential;
@@ -616,7 +616,7 @@ export class SignetClient {
     if (!signetActions.includes(action)) throw Error('Unsupported Signet action');
     const signal = requestSignal(options);
     signal.throwIfAborted();
-    const credential = await this.credentials(false, signal, action !== 'settleTask');
+    const credential = await this.credentials(false, signal, action !== 'completeTask');
     signal.throwIfAborted();
     const proof = await signetProof(this.url, action, credential.keyFile, credential.accessToken, {
       signal,

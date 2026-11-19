@@ -248,7 +248,7 @@ test('a rejected subscription login is reported with the access token and its ow
 });
 
 for (const seconds of [300, 15]) {
-  test(`settlement uses existing token with ${seconds}s remaining without renewal and uses fresh proofs on explicit replay`, async () => {
+  test(`completion uses existing token with ${seconds}s remaining without renewal and uses fresh proofs on explicit replay`, async () => {
     const f = await fixture();
     f.credential.expiresAt = new Date(Date.now() + seconds * 1000).toISOString();
     await writePrivateJson(f.credentialFile, f.credential);
@@ -259,41 +259,43 @@ for (const seconds of [300, 15]) {
     };
     const spy = transport((target, init) => {
       if (target.endsWith('/nonce')) return nonce();
-      expect(target).toBe(url + '/api/v1/access/settleTask');
+      expect(target).toBe(url + '/api/v1/access/completeTask');
       const headers = init.headers as Record<string, string>;
       expect(headers.authorization).toBe('DPoP ' + f.credential.accessToken);
       proofs.push(headers.DPoP!);
       const proof = JSON.parse(Buffer.from(headers.DPoP!.split('.')[1]!, 'base64url').toString());
       expect(proof.htu).toBe(target);
       expect(JSON.parse(init.body as string)).toEqual(body);
-      return data({ settlementId: 'same', dataAccess: false });
+      return data({ completionId: 'same', dataAccess: false });
     });
-    const first = await f.client.post('settleTask', body);
-    expect(await f.client.post('settleTask', body)).toEqual(first);
+    const first = await f.client.post('completeTask', body);
+    expect(await f.client.post('completeTask', body)).toEqual(first);
     expect(proofs[0]).not.toBe(proofs[1]);
     expect(spy).toHaveBeenCalledTimes(4);
   });
 }
 
-test('expired settlement token refuses before network and never renews', async () => {
+test('expired completion token refuses before network and never renews', async () => {
   const f = await fixture(true);
   const spy = transport(() => {
     throw Error('unexpected network');
   });
-  await expect(f.client.post('settleTask', {})).rejects.toThrow('unexpired existing access token');
+  await expect(f.client.post('completeTask', {})).rejects.toThrow(
+    'unexpired existing access token',
+  );
   expect(spy).not.toHaveBeenCalled();
 });
 
-test('uncertain settlement is not retried or renewed automatically', async () => {
+test('uncertain completion is not retried or renewed automatically', async () => {
   const f = await fixture();
   const spy = transport((target) =>
     target.endsWith('/nonce') ? nonce() : new Response(null, { status: 503 }),
   );
-  await expect(f.client.post('settleTask', {})).rejects.toThrow('503');
+  await expect(f.client.post('completeTask', {})).rejects.toThrow('503');
   expect(spy).toHaveBeenCalledTimes(2);
 });
 
-test('settlement cancellation at dispatch guard prevents business request', async () => {
+test('completion cancellation at dispatch guard prevents business request', async () => {
   const f = await fixture(),
     controller = new AbortController();
   const spy = transport((target) => {
@@ -301,7 +303,7 @@ test('settlement cancellation at dispatch guard prevents business request', asyn
     return nonce();
   });
   await expect(
-    f.client.post('settleTask', {}, () => controller.abort(new Error('local consent revoked')), {
+    f.client.post('completeTask', {}, () => controller.abort(new Error('local consent revoked')), {
       signal: controller.signal,
     }),
   ).rejects.toThrow('local consent revoked');
