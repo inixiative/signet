@@ -2,6 +2,25 @@ This file starts at 0.17.0. Earlier releases are described in their pull request
 terms `posts`, `act` and `agent`, #33) and 0.16.0 (a hosted request carries its requester's
 audience, #35).
 
+## 0.24.0 — an ask to change a Signet's entitlements is Kingdom's one `changeEntitlements` inquiry
+
+Aron, 2026-11-18: "we only want one change entitlements system… if you're asking, it should just
+be one change entitlements, which is more generic. I think sign entitlement can probably go away."
+Breaking, no old name kept (Kingdom drops its `signetEntitlement` inquiry and
+`/access/requestSignetEntitlement` in the same change):
+
+- **`requestSignetEntitlement` is `requestEntitlementChange`**, posting to Kingdom's
+  `/api/v1/access/requestEntitlementChange`. Kingdom resolves the asked resources to entitlements
+  and opens a `changeEntitlements` Inquiry addressed to the Signet; whoever can manage the Signet
+  answers (no longer the issuer-or-owner guess).
+- **`signetEntitlementRequestSchema` is `entitlementChangeRequestSchema`**: `{ signetId, add,
+  remove }`. `reason` is gone; the generic inquiry carries only the change.
+- **`signetEntitlementResponseSchema` is `entitlementChangeResponseSchema`** (same fields).
+- **`signetEntitlementChangesSchema` is gone.** The approver's copy is Kingdom's own entitlement
+  inputs, the body of `POST /signet/:id/entitlements`, not a signet contract.
+- One ask is open per Signet: a second is refused (409), where 0.23 replaced the open one. Cancel it
+  with `cancelInstallationInquiry`, which now cancels without hiding the inquiry, then ask again.
+
 ## 0.23.0 — task settlement is task completion
 
 - **Breaking: the `SignetClient` action `settleTask` is `completeTask`**, posting to Kingdom's

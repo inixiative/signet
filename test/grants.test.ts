@@ -16,6 +16,7 @@ import {
   type DroppedEntry,
   declaredOperationSchema,
   describeWhetherLensFiltersOperationRows,
+  entitlementChangeRequestSchema,
   GrantLensError,
   githubOperationSchema,
   grantLensChainLimit,
@@ -38,8 +39,6 @@ import {
   repositoryCallRow,
   requestedResourceSchema,
   resolveOperationPicks,
-  signetEntitlementChangesSchema,
-  signetEntitlementRequestSchema,
   signetGrantSchema,
   signetOwnerModelSchema,
   signetProposalSchema,
@@ -971,7 +970,7 @@ describe('a grant view shows its incoming where', () => {
   });
 });
 
-describe("a change to a Signet's entitlements is add and remove, asked and answered", () => {
+describe("an Installation asks to change a Signet's entitlements with add and remove", () => {
   const signetId = Bun.randomUUIDv7();
   const rowId = Bun.randomUUIDv7();
   const byId = {
@@ -982,35 +981,25 @@ describe("a change to a Signet's entitlements is add and remove, asked and answe
   const byKind = { resourceKind: 'subscription', operations: { picks: ['subscription.use'] } };
 
   it('a request adds resources by id or by kind, removes held rows by id, or both', () => {
-    expect(signetEntitlementRequestSchema.parse({ signetId, add: [byId, byKind] })).toEqual({
+    expect(entitlementChangeRequestSchema.parse({ signetId, add: [byId, byKind] })).toEqual({
       signetId,
       add: [byId, byKind],
       remove: [],
     });
-    expect(signetEntitlementRequestSchema.parse({ signetId, remove: [rowId] })).toEqual({
+    expect(entitlementChangeRequestSchema.parse({ signetId, remove: [rowId] })).toEqual({
       signetId,
       add: [],
       remove: [rowId],
     });
     expect(
-      signetEntitlementRequestSchema.safeParse({ signetId, add: [byId], remove: [rowId] }).success,
+      entitlementChangeRequestSchema.safeParse({ signetId, add: [byId], remove: [rowId] }).success,
     ).toBe(true);
   });
 
-  it('a request or an answer that names nothing to add or remove is refused', () => {
-    expect(signetEntitlementRequestSchema.safeParse({ signetId }).success).toBe(false);
+  it('a request that names nothing to add or remove is refused', () => {
+    expect(entitlementChangeRequestSchema.safeParse({ signetId }).success).toBe(false);
     expect(
-      signetEntitlementRequestSchema.safeParse({ signetId, add: [], remove: [] }).success,
+      entitlementChangeRequestSchema.safeParse({ signetId, add: [], remove: [] }).success,
     ).toBe(false);
-    expect(signetEntitlementChangesSchema.safeParse({}).success).toBe(false);
-  });
-
-  it('the answer has the same shape, with every added resource resolved to an id', () => {
-    expect(signetEntitlementChangesSchema.parse({ add: [byId], remove: [rowId] })).toEqual({
-      add: [byId],
-      remove: [rowId],
-    });
-    expect(signetEntitlementChangesSchema.safeParse({ add: [byKind] }).success).toBe(false);
-    expect(signetEntitlementChangesSchema.safeParse({ remove: ['not-an-id'] }).success).toBe(false);
   });
 });

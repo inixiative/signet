@@ -6,6 +6,8 @@ import {
   accessResultSchema,
   accessTokenPattern,
   collectedSignetSchema,
+  type EntitlementChangeRequest,
+  entitlementChangeResponseSchema,
   type InstallationKind,
   nonceSchema,
   ownerRefSchema,
@@ -17,11 +19,9 @@ import {
   registerInstallationResponseSchema,
   renewalCredentialPattern,
   requestRegistrationResponseSchema,
-  type SignetEntitlementRequest,
   type SignetRequestResponse,
   setInstallationCredentialResponseSchema,
   signetCredentialsSchema,
-  signetEntitlementResponseSchema,
   signetKeySchema,
   signetLifecycleSchema,
   signetProposalSchema,
@@ -294,21 +294,21 @@ export const installationInquiries = (
   );
 
 /**
- * Ask the person who issued one of this installation's Signets to grant it more. One open request
- * per Signet: asking again while one awaits review returns that one.
+ * Ask whoever can manage one of this installation's Signets to change what it carries. One open ask
+ * per Signet: a second while one awaits review is refused (409); cancel the open one to ask again.
  */
-export const requestSignetEntitlement = (
+export const requestEntitlementChange = (
   url: string,
   keyFile: string,
-  request: SignetEntitlementRequest,
+  request: EntitlementChangeRequest,
   options: SignetRequestOptions = {},
 ) =>
   keyPost(
     url,
     keyFile,
-    'requestSignetEntitlement',
+    'requestEntitlementChange',
     request,
-    signetEntitlementResponseSchema,
+    entitlementChangeResponseSchema,
     options,
   );
 

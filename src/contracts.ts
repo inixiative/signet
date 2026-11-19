@@ -263,53 +263,38 @@ export const installationInquirySchema = z.object({
   owner: ownerRefSchema.nullable(),
   ownerName: z.string().nullable(),
   integrationId: z.uuid().nullable(),
-  /** The Signet the inquiry minted, or for a `signetEntitlement` the Signet it asks to widen. */
+  /** The Signet the inquiry minted, or for a `changeEntitlements` ask the Signet it changes. */
   signetId: z.uuid().nullable(),
   deliverBefore: z.iso.datetime().nullable(),
   /** Where a person reviews it in Kingdom's web app, while it awaits review. */
   reviewUrl: kingdomLinkSchema.nullable().optional(),
 });
-const namesAChange = (changes: { add: unknown[]; remove: unknown[] }, context: z.RefinementCtx) => {
-  if (!changes.add.length && !changes.remove.length)
-    context.addIssue({ code: 'custom', path: ['add'], message: 'Name a row to add or remove' });
-};
 /**
- * A change to what a Signet holds, as its reviewer writes it and as Kingdom records what was
- * granted: resources to add, by id, and held rows to remove, by their own id (`signetGrantSchema`'s
- * `id`). The request and the response have this one shape (Aron, 2026-11-16: "just add and remove.
- * Both the request and the response").
+ * An Installation asks to change what a Signet it holds carries, as Kingdom's one
+ * `changeEntitlements` inquiry addressed to that Signet: resources to add, by id or by kind as a
+ * registration asks (Kingdom resolves them to entitlements before it stores the ask), and held rows
+ * to remove by their own id (`signetGrantSchema`'s `id`). Whoever can manage the Signet answers with
+ * a whole copy, narrower or wider than asked, applied as a new revision of the same Signet. One ask
+ * is open per Signet: to ask for something else, cancel the open one (`cancelInstallationInquiry`).
  */
-export const signetEntitlementChangesSchema = z
-  .strictObject({
-    add: z.array(signetResourceSchema).max(100).default([]),
-    remove: z.array(z.uuid()).max(100).default([]),
-  })
-  .superRefine(namesAChange);
-/**
- * An Installation asks to change what a Signet it holds carries: resources to add, by id or by
- * kind as a registration asks, and held rows to remove. Kingdom sends it to whoever can manage the
- * Signet; the reviewer answers with a whole copy (`signetEntitlementChangesSchema`), narrower or
- * wider than asked, each added entitlement checked by the grant check on the reviewer, as a new
- * revision of the same Signet.
- */
-export const signetEntitlementRequestSchema = z
+export const entitlementChangeRequestSchema = z
   .strictObject({
     signetId: z.uuid(),
     add: z.array(registeredResourceSchema).max(100).default([]),
     remove: z.array(z.uuid()).max(100).default([]),
-    /** Why it asks, shown to the reviewer: what stopped working, for example. */
-    reason: z.string().trim().min(1).max(500).optional(),
   })
-  .superRefine(namesAChange);
-export const signetEntitlementResponseSchema = z.object({
+  .superRefine((changes, context) => {
+    if (!changes.add.length && !changes.remove.length)
+      context.addIssue({ code: 'custom', path: ['add'], message: 'Name a row to add or remove' });
+  });
+export const entitlementChangeResponseSchema = z.object({
   inquiryId: z.uuid(),
   status: inquiryStatusSchema,
   expiresAt: z.iso.datetime().nullable(),
   reviewUrl: kingdomLinkSchema,
 });
-export type SignetEntitlementRequest = z.input<typeof signetEntitlementRequestSchema>;
-export type SignetEntitlementChanges = z.infer<typeof signetEntitlementChangesSchema>;
-export type SignetEntitlementResponse = z.infer<typeof signetEntitlementResponseSchema>;
+export type EntitlementChangeRequest = z.input<typeof entitlementChangeRequestSchema>;
+export type EntitlementChangeResponse = z.infer<typeof entitlementChangeResponseSchema>;
 /**
  * Who a requester is to the integration's owner (Aron, 2026-11-14: "just in-org and outside-org,
  * but something naive"): `inOrg` when they share an organization with the owner, else `outside`.
