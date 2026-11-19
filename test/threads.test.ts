@@ -13,15 +13,29 @@ import {
   authenticateSignetFrameSchema,
   conversationPermissionSchema,
   conversationResourceKind,
+  declaredOperationSchema,
   grantResourceSchema,
   installationInquiriesResponseSchema,
   installationSignetsResponseSchema,
   operationInputFromAccess,
   operationInputKeys,
+  operationInputSchemas,
   operationPickSchema,
+  operationRequestFrameSchema,
+  operationResponseEnvelopeSchema,
+  operationResponseFrameSchema,
   parseAccessThreadStreamName,
   registrationRequestSchema,
   registrationTermsSchema,
+  relayedOperationCommonRefusals,
+  relayedOperationContextSchemas,
+  relayedOperationDeniedRefusals,
+  relayedOperationInputSchemas,
+  relayedOperationRefusal,
+  relayedOperationRefusals,
+  relayedOperationResultSchemas,
+  relayedOperationSchema,
+  relayedOperationTimeoutMs,
   requestedResourceSchema,
   signetDescriptionSchema,
   signetGrantSchema,
@@ -34,9 +48,6 @@ import {
   threadFloorActionSchema,
   threadHostFrameSchema,
   threadIdSchema,
-  threadRequestFrameSchema,
-  threadResponseEnvelopeSchema,
-  threadResponseFrameSchema,
 } from '../src';
 
 const T1 = 'thread_0199f0aa-0000-7000-8000-000000000001';
@@ -193,9 +204,9 @@ describe('thread operations through access/execute', () => {
         expect(Object.keys(accessInputSchema.shape)).toContain(key);
   });
 
-  test('a request frame is typed by its operation', () => {
+  test('a request frame is typed by its operation, flat, with its context fields', () => {
     const base = {
-      type: 'thread.request',
+      type: 'operation.request',
       requestId: uuid(),
       signetId: uuid(),
       acceptedRevision: 2,
@@ -203,26 +214,44 @@ describe('thread operations through access/execute', () => {
       threadId: T1,
       permissions: ['member.wake'],
     };
-    const prompt = threadRequestFrameSchema.parse({
+    const prompt = operationRequestFrameSchema('thread.prompt').parse({
       ...base,
       operation: 'thread.prompt',
       input: { postId: uuid(), text: 'hi' },
     });
-    expect(prompt.operation === 'thread.prompt' && prompt.input.text).toBe('hi');
+    expect(prompt.input.text).toBe('hi');
     expect(prompt.permissions).toEqual(['member.wake']);
     expect(
-      threadRequestFrameSchema.safeParse({ ...prompt, permissions: ['thread.read'] }).success,
+      operationRequestFrameSchema('thread.prompt').safeParse({
+        ...prompt,
+        permissions: ['thread.read'],
+      }).success,
     ).toBe(false);
     expect(
-      threadRequestFrameSchema.safeParse({
+      operationRequestFrameSchema('thread.read').safeParse({
         ...base,
         operation: 'thread.read',
         input: { postId: uuid(), text: 'hi' },
       }).success,
     ).toBe(false);
+    // No provider and no deadline: neither is part of the frame.
+    expect(
+      operationRequestFrameSchema('thread.read').safeParse({
+        ...base,
+        operation: 'thread.read',
+        input: {},
+        provider: 'foundry',
+      }).success,
+    ).toBe(false);
+    // `thread.subscribe` is a relayed request on the same frame, with no input of its own.
+    expect(
+      operationRequestFrameSchema('thread.subscribe').safeParse({
+        ...base,
+        operation: 'thread.subscribe',
+        input: {},
+      }).success,
+    ).toBe(true);
     for (const frame of [
-      prompt,
-      { ...base, type: 'thread.subscribe' },
       { type: 'thread.unsubscribe', subscriptionId: uuid() },
       { type: 'thread.lease', subscriptionIds: [uuid()] },
     ])
@@ -232,25 +261,60 @@ describe('thread operations through access/execute', () => {
   test('a response is read by what was asked', () => {
     const requestId = uuid();
     const accepted = {
-      action: 'thread.response',
+      action: 'operation.response',
       requestId,
       outcome: { ok: true, result: { accepted: true, journalSeq: 4, duplicate: false } },
     };
-    expect(threadResponseEnvelopeSchema.safeParse(accepted).success).toBe(true);
-    expect(threadResponseFrameSchema('thread.prompt').safeParse(accepted).success).toBe(true);
-    expect(threadResponseFrameSchema('thread.read').safeParse(accepted).success).toBe(false);
+    expect(operationResponseEnvelopeSchema.safeParse(accepted).success).toBe(true);
+    expect(operationResponseFrameSchema('thread.prompt').safeParse(accepted).success).toBe(true);
+    expect(operationResponseFrameSchema('thread.read').safeParse(accepted).success).toBe(false);
     const refused = {
-      action: 'thread.response',
+      action: 'operation.response',
       requestId,
       outcome: { ok: false, refusal: 'floor_denied' },
     };
-    expect(threadResponseFrameSchema('thread.read').safeParse(refused).success).toBe(true);
+    expect(operationResponseFrameSchema('thread.read').safeParse(refused).success).toBe(true);
     expect(
-      threadResponseFrameSchema('thread.read').safeParse({
+      operationResponseFrameSchema('thread.read').safeParse({
         ...refused,
         outcome: { ok: false, refusal: 'nope' },
       }).success,
     ).toBe(false);
+    expect(
+      operationResponseEnvelopeSchema.safeParse({
+        ...refused,
+        outcome: relayedOperationRefusal('nope', 'x'.repeat(600)),
+      }).success,
+    ).toBe(true);
+  });
+
+  test('every relayed operation has a whole contract, the threads as they were', () => {
+    expect(relayedOperationSchema.options).toEqual([
+      'thread.read',
+      'thread.prompt',
+      'thread.floor',
+      'prompt.resolve',
+      'thread.subscribe',
+    ]);
+    for (const operation of relayedOperationSchema.options) {
+      expect(relayedOperationInputSchemas[operation]).toBeDefined();
+      expect(relayedOperationContextSchemas[operation]).toBeDefined();
+      expect(relayedOperationResultSchemas[operation]).toBeDefined();
+      for (const common of relayedOperationCommonRefusals)
+        expect(relayedOperationRefusals[operation].options).toContain(common);
+      for (const denied of relayedOperationDeniedRefusals[operation]) {
+        expect(relayedOperationRefusals[operation].options).toContain(denied);
+        expect(relayedOperationCommonRefusals as readonly string[]).not.toContain(denied);
+      }
+      expect(relayedOperationTimeoutMs[operation]).toBe(15_000);
+    }
+    // A declared relayed operation's input is its declared input; `thread.subscribe` is not declared.
+    for (const operation of relayedOperationSchema.options)
+      if (declaredOperationSchema.safeParse(operation).success)
+        expect(relayedOperationInputSchemas[operation]).toBe(
+          operationInputSchemas[operation as 'thread.read'],
+        );
+    expect(declaredOperationSchema.safeParse('thread.subscribe').success).toBe(false);
   });
 
   // Kingdom's routes build OpenAPI with @hono/zod-openapi, i.e. @asteasolutions/zod-to-openapi 9.x:
@@ -292,7 +356,13 @@ describe('thread operations through access/execute', () => {
         conversationPermissionSchema,
         threadHostFrameSchema,
         threadAppendFrameSchema,
-        threadResponseEnvelopeSchema,
+        operationResponseEnvelopeSchema,
+        ...Object.fromEntries(
+          relayedOperationSchema.options.flatMap((operation) => [
+            [`request ${operation}`, operationRequestFrameSchema(operation)],
+            [`response ${operation}`, operationResponseFrameSchema(operation)],
+          ]),
+        ),
         authenticateSignetFrameSchema,
         accessThreadSnapshotSchema,
       }),

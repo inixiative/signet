@@ -16,9 +16,13 @@ import {
 import { lensNarrowingSchema } from './lens';
 import {
   foundryIdSchema,
+  threadDeniedRefusals,
   threadFloorActionSchema,
   threadInputSchemas,
+  threadOperationContextSchema,
   threadOperationSchema,
+  threadRefusalSchema,
+  threadResultSchemas,
   threadTextLimit,
 } from './threads';
 
@@ -529,8 +533,8 @@ export const operationInputKeys = <O extends DeclaredOperation>(operation: O) =>
 
 /**
  * A declared operation's input, taken from an `access/execute` input: exactly the keys that
- * operation takes (no `resourceId`, no `limit`). Kingdom builds `thread.request` frames and Archive
- * calls with it.
+ * operation takes (no `resourceId`, no `limit`). Kingdom builds `operation.request` frames and
+ * Archive calls with it.
  */
 export const operationInputFromAccess = <O extends DeclaredOperation>(
   operation: O,
@@ -544,6 +548,165 @@ export const operationInputFromAccess = <O extends DeclaredOperation>(
   );
   return schema.safeParse(picked) as z.ZodSafeParseResult<OperationInput<O>>;
 };
+
+/**
+ * The operations Kingdom relays to an Installation over its socket (a `delivery: 'installationSocket'`
+ * provider's), each with its contract below, keyed by operation as `operationInputSchemas` is. Kingdom
+ * admits the call, sends `operation.request`, waits `relayedOperationTimeoutMs` for the host's
+ * `operation.response` and reads it by the operation's result and refusals. A relayed operation is
+ * added here and nowhere else. `thread.subscribe` is relayed but not declared: it opens a member's
+ * live view of a thread and is admitted as `thread.read`.
+ */
+export const relayedOperationSchema = z.enum([
+  ...threadOperationSchema.options,
+  'thread.subscribe',
+]);
+export type RelayedOperation = z.infer<typeof relayedOperationSchema>;
+
+/** The `input` each relayed operation's request carries: a declared operation's own input. */
+export const relayedOperationInputSchemas = {
+  ...threadInputSchemas,
+  'thread.subscribe': z.strictObject({}),
+} as const satisfies Record<RelayedOperation, z.ZodObject>;
+export type RelayedOperationInput<O extends RelayedOperation> = z.infer<
+  (typeof relayedOperationInputSchemas)[O]
+>;
+
+/** The fields each relayed operation's request carries beside the common ones, flat on the frame. */
+export const relayedOperationContextSchemas = {
+  'thread.read': threadOperationContextSchema,
+  'thread.prompt': threadOperationContextSchema,
+  'thread.floor': threadOperationContextSchema,
+  'prompt.resolve': threadOperationContextSchema,
+  'thread.subscribe': threadOperationContextSchema,
+} as const satisfies Record<RelayedOperation, z.ZodObject>;
+export type RelayedOperationContext<O extends RelayedOperation> = z.infer<
+  (typeof relayedOperationContextSchemas)[O]
+>;
+
+/** What the host answers each relayed operation with. */
+export const relayedOperationResultSchemas = {
+  ...threadResultSchemas,
+} as const satisfies Record<RelayedOperation, z.ZodType>;
+export type RelayedOperationResult<O extends RelayedOperation> = z.infer<
+  (typeof relayedOperationResultSchemas)[O]
+>;
+
+/**
+ * The refusals every relayed operation has, because the socket answers them itself: a request it
+ * could not read (`invalid_request`) and an error inside the host, or no handler (`failed`). Kingdom
+ * records both as `failed`.
+ */
+export const relayedOperationCommonRefusals = ['invalid_request', 'failed'] as const;
+export type RelayedOperationCommonRefusal = (typeof relayedOperationCommonRefusals)[number];
+
+/** Why the host may refuse each relayed operation; each includes `relayedOperationCommonRefusals`. */
+export const relayedOperationRefusals = {
+  'thread.read': threadRefusalSchema,
+  'thread.prompt': threadRefusalSchema,
+  'thread.floor': threadRefusalSchema,
+  'prompt.resolve': threadRefusalSchema,
+  'thread.subscribe': threadRefusalSchema,
+} as const satisfies Record<
+  RelayedOperation,
+  z.ZodEnum<{ [C in RelayedOperationCommonRefusal]: C } & Record<string, string>>
+>;
+export type RelayedOperationRefusalCode<O extends RelayedOperation = RelayedOperation> = z.infer<
+  (typeof relayedOperationRefusals)[O]
+>;
+
+/**
+ * The refusals Kingdom records as `AccessExecution.status = 'denied'`, per relayed operation; any
+ * other refusal is `failed`.
+ */
+export const relayedOperationDeniedRefusals = {
+  'thread.read': threadDeniedRefusals,
+  'thread.prompt': threadDeniedRefusals,
+  'thread.floor': threadDeniedRefusals,
+  'prompt.resolve': threadDeniedRefusals,
+  'thread.subscribe': threadDeniedRefusals,
+} as const satisfies { [O in RelayedOperation]: readonly RelayedOperationRefusalCode<O>[] };
+
+/**
+ * How long Kingdom waits for each relayed operation's answer, and so the lease its execution row is
+ * admitted with. Past it the call is `unknown` (`host_timeout`, 504) and a late answer is dropped;
+ * the host has no deadline of its own.
+ */
+export const relayedOperationTimeoutMs: Record<RelayedOperation, number> = {
+  'thread.read': 15_000,
+  'thread.prompt': 15_000,
+  'thread.floor': 15_000,
+  'prompt.resolve': 15_000,
+  'thread.subscribe': 15_000,
+};
+
+/**
+ * Kingdom → host over the Installation socket: one admitted call of a relayed operation, keyed by
+ * `type` as every Kingdom → host frame is. Flat: the common fields, the operation's context fields,
+ * the operation and its input. The host trusts it (Kingdom's admission is the membership check) and
+ * answers with `operation.response` carrying the same `requestId`.
+ */
+export const operationRequestFrameSchema = <O extends RelayedOperation>(operation: O) =>
+  z.strictObject({
+    type: z.literal('operation.request'),
+    /** The `AccessExecution` id: one per admitted call, and the id the answer carries back. */
+    requestId: z.uuid(),
+    signetId: z.uuid(),
+    /** The Signet revision Kingdom admitted the call under. */
+    acceptedRevision: z.number().int().min(1),
+    ...relayedOperationContextSchemas[operation].shape,
+    operation: z.literal(operation),
+    input: relayedOperationInputSchemas[operation],
+  });
+export type OperationRequestFrame<O extends RelayedOperation> = z.infer<
+  ReturnType<typeof operationRequestFrameSchema<O>>
+>;
+
+const operationOutcomeSchema = <R extends z.ZodType, C extends z.ZodType<string>>(
+  result: R,
+  refusal: C,
+) =>
+  z.discriminatedUnion('ok', [
+    z.strictObject({ ok: z.literal(true), result }),
+    z.strictObject({
+      ok: z.literal(false),
+      refusal,
+      message: z.string().max(500).optional(),
+    }),
+  ]);
+
+/**
+ * Host → Kingdom: the answer to one `operation.request`, keyed by `action` as every host → Kingdom
+ * frame is, read by the operation that was asked.
+ */
+export const operationResponseFrameSchema = <O extends RelayedOperation>(operation: O) =>
+  z.strictObject({
+    action: z.literal('operation.response'),
+    requestId: z.uuid(),
+    outcome: operationOutcomeSchema(
+      relayedOperationResultSchemas[operation],
+      relayedOperationRefusals[operation],
+    ),
+  });
+/** The response envelope before Kingdom knows which request it answers. */
+export const operationResponseEnvelopeSchema = z.strictObject({
+  action: z.literal('operation.response'),
+  requestId: z.uuid(),
+  outcome: operationOutcomeSchema(z.unknown(), z.string().min(1).max(80)),
+});
+export type OperationResponseEnvelope = z.infer<typeof operationResponseEnvelopeSchema>;
+export type RelayedOperationOutcome<O extends RelayedOperation> =
+  | { ok: true; result: RelayedOperationResult<O> }
+  | { ok: false; refusal: RelayedOperationRefusalCode<O>; message?: string };
+
+/** A host's answer to a relayed operation: its result. */
+export const relayedOperationResult = <R>(result: R) => ({ ok: true as const, result });
+/** A host's refusal of a relayed operation, its message cut to 500 characters. */
+export const relayedOperationRefusal = <C extends string>(refusal: C, message?: string) => ({
+  ok: false as const,
+  refusal,
+  ...(message ? { message: message.slice(0, 500) } : {}),
+});
 
 /** What Kingdom pushes over the Installation socket, and what a poll of both reads assembles. */
 export const installationSnapshotSchema = installationInquiriesResponseSchema.extend(

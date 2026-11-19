@@ -6,7 +6,8 @@ adds a verb only where json-rules has none for the job. `test/verbs.test.ts` enf
 function `src/lens.ts` exports, and every exported function that takes or returns a lens, a
 `GrantLens` or a `LensBody`, must appear here, and every name here must be exported.
 
-This file covers the lens surface. The rest of the package is the next change.
+This file covers the lens surface and the relayed-operation contract. The rest of the package is
+the next change.
 
 ## Lens: public API
 
@@ -34,6 +35,28 @@ Nouns: `LensBody` is a json-rules narrowing without its `parent` (json-rules nam
 `GrantLens` is `{ lens, narrowed }`; `grantLensChainLimit` is the most lenses a chain composes;
 `operationsMapName` names the field map every operations lens is created under. `GrantLensError`
 says a chain doesn't parse, is too long, doesn't compose, or filters above an operation's branch.
+
+## Relayed operations: public API
+
+Kingdom relays an admitted call to an Installation as one `operation.request` and reads the host's
+`operation.response` (`src/contracts.ts`, beside `declaredOperationSchema`). These four are nouns
+built per operation or per answer, so the verb column names what they make.
+
+| Verb | Name | json-rules verb it wraps | What it does |
+| --- | --- | --- | --- |
+| — (noun: a frame schema) | `operationRequestFrameSchema` | — | The schema of one relayed operation's `operation.request`: the common fields, the operation's context fields flat beside them, the operation and its input. |
+| — (noun: a frame schema) | `operationResponseFrameSchema` | — | The schema of the `operation.response` answering one relayed operation, its outcome read by that operation's result and refusals. |
+| — (noun: an outcome) | `relayedOperationResult` | — | A host's answer to a relayed operation: `{ ok: true, result }`. |
+| — (noun: an outcome) | `relayedOperationRefusal` | — | A host's refusal of a relayed operation: `{ ok: false, refusal, message? }`, the message cut to 500 characters. |
+
+Nouns: `relayedOperationSchema` is every operation Kingdom relays (`RelayedOperation`);
+`relayedOperationInputSchemas`, `relayedOperationContextSchemas`, `relayedOperationResultSchemas`,
+`relayedOperationRefusals`, `relayedOperationDeniedRefusals` and `relayedOperationTimeoutMs` are its
+contract, keyed by operation; `relayedOperationCommonRefusals` are the two refusals every relayed
+operation has (`invalid_request`, `failed`); `operationResponseEnvelopeSchema` is a response before
+Kingdom knows which request it answers; `RelayedOperationHandler` and `RelayedOperationHandlers` are
+the host side (`InstallationSocketOptions.operations`); `threadOperationContextSchema` is the threads'
+context fields (`member`, `threadId`, `permissions`).
 
 ## New verbs
 

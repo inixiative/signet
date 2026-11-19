@@ -2,6 +2,45 @@ This file starts at 0.17.0. Earlier releases are described in their pull request
 terms `posts`, `act` and `agent`, #33) and 0.16.0 (a hosted request carries its requester's
 audience, #35).
 
+## 0.25.0 — one Installation-socket relay for every operation
+
+Aron, 2026-11-19 (R-2026-11-19-01, "Yes, seems fine."): Kingdom's thread-only relay becomes one
+relay any operation can use, so Chorus, which will run on an Installation as a Foundry's
+conversations do, reaches its host the same way. Spec: `chorus/docs/GENERAL-RELAY.md` rev 2.
+Breaking, hard cut, no behaviour change for conversations:
+
+- **The relay contract is keyed by operation, beside `declaredOperationSchema`.**
+  `relayedOperationSchema` (the thread calls and `thread.subscribe`), `relayedOperationInputSchemas`,
+  `relayedOperationContextSchemas`, `relayedOperationResultSchemas`, `relayedOperationRefusals`
+  (each including `relayedOperationCommonRefusals`: `invalid_request`, `failed`),
+  `relayedOperationDeniedRefusals` and `relayedOperationTimeoutMs` (15 s for every thread
+  operation, as before). The threads' `threadResultSchemas`, `threadRefusalSchema` and
+  `threadDeniedRefusals` are their entries, unchanged. No `provider` on any frame: operation names
+  are unique, and providers are Kingdom's. No deadline: the host has none, as before.
+- **Frames: `operation.request` (Kingdom → host, keyed by `type`) and `operation.response`
+  (host → Kingdom, keyed by `action`)** replace `thread.request`, `thread.subscribe` and
+  `thread.response`. The request stays flat: `requestId`, `signetId`, `acceptedRevision`, the
+  operation's context fields (threads: `member`, `threadId`, `permissions`,
+  `threadOperationContextSchema`), `operation`, `input`. `thread.subscribe` is a relayed request
+  on that frame with `input: {}`, admitted by Kingdom as `thread.read`. `thread.append`,
+  `thread.unsubscribe`, `thread.lease` and `HolderStreams` are streams and unchanged;
+  `threadHostFrameSchema` is now those two Kingdom → host stream frames.
+- **Schemas and values:** `operationRequestFrameSchema(operation)`,
+  `operationResponseFrameSchema(operation)`, `operationResponseEnvelopeSchema`,
+  `relayedOperationResult(result)` and `relayedOperationRefusal(code, message?)` replace
+  `threadRequestFrameSchema`, `threadSubscribeFrameSchema`, `threadResponseFrameSchema`,
+  `threadResponseEnvelopeSchema`, `threadResult` and `threadRefused`; `OperationRequestFrame<O>`,
+  `RelayedOperationOutcome<O>` and `RelayedOperationResult<O>` replace `ThreadRequestOf<O>`,
+  `ThreadSubscribeFrame`, `ThreadOutcome<O>` and `ThreadResult<O>`.
+- **Host side:** `InstallationSocketOptions.operations` (`RelayedOperationHandlers`, one handler per
+  relayed operation) replaces `threads?: ThreadHost`, and `onThreadSubscriptionEnded` replaces its
+  `ended`. A missing handler is answered `failed` with "This host serves no `<operation>`". The
+  `thread.subscribe` hold-and-replay is unchanged.
+- **One behaviour change at the edge:** the response envelope Kingdom reads before it knows the
+  request takes any refusal code (it was the threads' enum), so a host outside signet answering a
+  code its operation does not declare is now `failed` ("outside the contract", 502) at once, not a
+  15 s `host_timeout`. A host built on signet cannot send one: its socket checks every outcome.
+- The relay exports are the first non-lens rows in `docs/VERBS.md`.
 ## 0.24.0 — an ask to change a Signet's entitlements is Kingdom's one `changeEntitlements` inquiry
 
 Aron, 2026-11-18: "we only want one change entitlements system… if you're asking, it should just

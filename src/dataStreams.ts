@@ -61,7 +61,7 @@ export type DataStreamHandlers<Key extends object, Snapshot, Append> = {
 
 export type DataStreamOptions = {
   retryBaseMs?: number;
-  /** An open Kingdom never answers is sent again after this long (a relay waits up to 15 s). */
+  /** An open Kingdom never answers is sent again after this long (a relay waits up to `relayedOperationTimeoutMs`, 15 s for threads). */
   openTimeoutMs?: number;
   /** Kingdom closed a stream because the socket's presentation lapsed: re-present, then reopen. */
   onPresentationExpired?: () => void;

@@ -72,6 +72,14 @@ describe('the lens API', () => {
     expect(lensSignatures.filter((name) => !documented.includes(name))).toEqual([]);
   });
 
+  test('every relayed-operation function is in the verb catalog', () => {
+    const relay = functionsOf(api).filter((name) =>
+      /^(relayedOperation|operation(Request|Response))/.test(name),
+    );
+    expect(relay.length).toBeGreaterThan(0);
+    expect(relay.filter((name) => !documented.includes(name))).toEqual([]);
+  });
+
   test('every name in the catalog is an exported function', () => {
     const exported = functionsOf(api);
     expect(documented.filter((name) => !exported.includes(name))).toEqual([]);
