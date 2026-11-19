@@ -2,6 +2,13 @@ This file starts at 0.17.0. Earlier releases are described in their pull request
 terms `posts`, `act` and `agent`, #33) and 0.16.0 (a hosted request carries its requester's
 audience, #35).
 
+## Unreleased — task settlement is task completion
+
+- **Breaking: the `SignetClient` action `settleTask` is `completeTask`**, posting to Kingdom's
+  `/api/v1/access/completeTask` (Kingdom #283; Aron, 2026-11-18: "We should just call it 'complete
+  task' then"). It still never renews or retries. Why: "settle" was a metaphor only its author
+  read; the call completes a task grant with a receipt. Hard cut, no alias.
+
 ## 0.22.0 — json-rules 4.2; the row models are field-map's
 
 - **Requires `@inixiative/json-rules@^4.2.0`** (peer) and depends on `@inixiative/field-map@^0.1.0`.
