@@ -2,7 +2,7 @@ This file starts at 0.17.0. Earlier releases are described in their pull request
 terms `posts`, `act` and `agent`, #33) and 0.16.0 (a hosted request carries its requester's
 audience, #35).
 
-## Unreleased — task settlement is task completion
+## 0.23.0 — task settlement is task completion
 
 - **Breaking: the `SignetClient` action `settleTask` is `completeTask`**, posting to Kingdom's
   `/api/v1/access/completeTask` (Kingdom #283; Aron, 2026-11-18: "We should just call it 'complete
