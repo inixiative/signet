@@ -6,7 +6,7 @@ import { z } from 'zod';
  * resource per shared thread, its `externalId` the thread's id (which a holder reads on its grant
  * row and uses to open the thread's stream). A member reaches it through a Signet
  * entitlement on that resource. Kingdom admits each call and relays it over the host's Installation
- * socket; the host answers. Kingdom stores no post.
+ * socket as an `operation.request` (`relayedOperationSchema`); the host answers. Kingdom stores no post.
  */
 export const conversationResourceKind = 'conversation';
 
@@ -194,7 +194,10 @@ export const parseThreadView = (value: unknown) => {
 
 export const floorModeSchema = z.enum(['talk', 'speak-when-spoken-to', 'conch']);
 
-/** What the host answers per operation (and to `thread.subscribe`). */
+/**
+ * What the host answers per operation (and to `thread.subscribe`): the threads' entries of
+ * `relayedOperationResultSchemas`.
+ */
 export const threadResultSchemas = {
   'thread.read': threadViewResultSchema,
   /** `duplicate`: the same `(signetId, postId)` was already admitted; `journalSeq` is the original's. */
@@ -211,15 +214,12 @@ export const threadResultSchemas = {
   'prompt.resolve': z.strictObject({ resolved: z.literal(true) }),
   'thread.subscribe': threadViewResultSchema,
 } as const satisfies Record<ThreadOperation | 'thread.subscribe', z.ZodType>;
-export type ThreadResult<O extends keyof typeof threadResultSchemas> = z.infer<
-  (typeof threadResultSchemas)[O]
->;
 
 /**
  * Why the host refused. The first five are the design's refusals, which Kingdom records as
  * `AccessExecution.status = 'denied'` with this `errorCode` (§5.4). `invalid_request` is a frame the
  * host could not read for any other reason, and `failed` an error inside the host; Kingdom records
- * both as `failed`.
+ * both as `failed` (every relayed operation has these two, `relayedOperationCommonRefusals`).
  */
 export const threadRefusalSchema = z.enum([
   'unknown_thread',
@@ -245,12 +245,12 @@ export const threadMemberSchema = z.strictObject({
   displayName: z.string().min(1).max(200),
 });
 
-const relayed = {
-  /** The `AccessExecution` id: one per admitted call, and the id the answer carries back. */
-  requestId: z.uuid(),
-  signetId: z.uuid(),
-  /** The Signet revision Kingdom admitted the call under. */
-  acceptedRevision: z.number().int().min(1),
+/**
+ * The fields a thread operation's `operation.request` carries beside the common ones
+ * (`relayedOperationContextSchemas`), flat on the frame. A `thread.subscribe` request's `requestId`
+ * is also the subscription's id for appends, leases and unsubscribe.
+ */
+export const threadOperationContextSchema = z.strictObject({
   member: threadMemberSchema,
   /** The conversation's thread: its resource's `externalId`. */
   threadId: threadIdSchema,
@@ -259,37 +259,8 @@ const relayed = {
    * admits each event leaf. A subscription's are read again on every lease sweep.
    */
   permissions: z.array(conversationPermissionSchema),
-};
-const requestFrame = <O extends ThreadOperation>(operation: O) =>
-  z.strictObject({
-    type: z.literal('thread.request'),
-    ...relayed,
-    operation: z.literal(operation),
-    input: threadInputSchemas[operation],
-  });
-
-/**
- * Kingdom → host over the Installation socket: one admitted call. The host trusts it (Kingdom's
- * admission is the membership check) and answers with `thread.response` within 15 s.
- */
-export const threadRequestFrameSchema = z.discriminatedUnion('operation', [
-  requestFrame('thread.read'),
-  requestFrame('thread.prompt'),
-  requestFrame('thread.floor'),
-  requestFrame('prompt.resolve'),
-]);
-export type ThreadRequestFrame = z.infer<typeof threadRequestFrameSchema>;
-
-/**
- * Kingdom → host: open a member's live view, atomically. The answer (`thread.response` with
- * `requestId`) is the view and the `journalSeq` it was taken at, and the subscription starts at that
- * same point. `requestId` is also the subscription's id for appends, leases and unsubscribe.
- */
-export const threadSubscribeFrameSchema = z.strictObject({
-  type: z.literal('thread.subscribe'),
-  ...relayed,
 });
-export type ThreadSubscribeFrame = z.infer<typeof threadSubscribeFrameSchema>;
+export type ThreadOperationContext = z.infer<typeof threadOperationContextSchema>;
 
 /** Kingdom → host: the member's stream closed (leave, revocation, any revision, …). */
 export const threadUnsubscribeFrameSchema = z.strictObject({
@@ -312,52 +283,14 @@ export const threadLeaseFrameSchema = z.strictObject({
  */
 export const threadSubscriptionLeaseMs = 90_000;
 
-/** Every frame Kingdom sends a host for conversations. */
+/**
+ * The stream frames Kingdom sends a host for conversations. Calls, `thread.subscribe` included,
+ * arrive as `operation.request` (`operationRequestFrameSchema`).
+ */
 export const threadHostFrameSchema = z.discriminatedUnion('type', [
-  threadRequestFrameSchema,
-  threadSubscribeFrameSchema,
   threadUnsubscribeFrameSchema,
   threadLeaseFrameSchema,
 ]);
-
-const refusedOutcome = z.strictObject({
-  ok: z.literal(false),
-  refusal: threadRefusalSchema,
-  message: z.string().max(500).optional(),
-});
-const responseFrame = <R extends z.ZodType>(result: R) =>
-  z.strictObject({
-    action: z.literal('thread.response'),
-    requestId: z.uuid(),
-    outcome: z.discriminatedUnion('ok', [
-      z.strictObject({ ok: z.literal(true), result }),
-      refusedOutcome,
-    ]),
-  });
-
-/** Host → Kingdom: the answer to a `thread.request` or `thread.subscribe`, read by what was asked. */
-export const threadResponseFrameSchema = <O extends keyof typeof threadResultSchemas>(
-  operation: O,
-) => responseFrame(threadResultSchemas[operation]);
-/** The response envelope before Kingdom knows which request it answers. */
-export const threadResponseEnvelopeSchema = responseFrame(z.unknown());
-export type ThreadOutcome<O extends keyof typeof threadResultSchemas> =
-  | { ok: true; result: ThreadResult<O> }
-  | { ok: false; refusal: ThreadRefusal; message?: string };
-export type ThreadResponseFrame<O extends keyof typeof threadResultSchemas> = {
-  action: 'thread.response';
-  requestId: string;
-  outcome: ThreadOutcome<O>;
-};
-
-/** A host's answer: the operation's result. */
-export const threadResult = <R>(result: R) => ({ ok: true as const, result });
-/** A host's refusal. */
-export const threadRefused = (refusal: ThreadRefusal, message?: string) => ({
-  ok: false as const,
-  refusal,
-  ...(message ? { message: message.slice(0, 500) } : {}),
-});
 
 /**
  * Host → Kingdom: an entry for one subscription, already filtered to that member's view. `seq` counts

@@ -7,14 +7,15 @@ import {
   accessThreadStreamName,
   generateSignetKey,
   InstallationSocket,
+  type InstallationSocketOptions,
+  operationResponseFrameSchema,
+  type RelayedOperationHandlers,
+  relayedOperationRefusal,
+  relayedOperationResult,
   type ThreadEntry,
-  type ThreadHost,
   type ThreadSubscription,
   threadAppendFrameSchema,
   threadInputSchemas,
-  threadRefused,
-  threadResponseFrameSchema,
-  threadResult,
   writePrivateJson,
 } from '../src';
 
@@ -92,39 +93,53 @@ afterEach(() => {
 });
 afterAll(() => server.stop(true));
 
-const host = (overrides: Partial<ThreadHost> = {}): ThreadHost => ({
-  'thread.read': () => threadResult({ journalSeq: 3, entries: [entry(3)], truncated: false }),
-  'thread.prompt': () => threadResult({ accepted: true, journalSeq: 7, duplicate: false }),
-  'thread.floor': () => threadResult({ mode: 'talk', holder: null, expiresAt: null }),
-  'prompt.resolve': () => threadResult({ resolved: true }),
-  'thread.subscribe': () => threadResult({ journalSeq: 5, entries: [entry(5)], truncated: false }),
+const host = (overrides: RelayedOperationHandlers = {}): RelayedOperationHandlers => ({
+  'thread.read': () =>
+    relayedOperationResult({ journalSeq: 3, entries: [entry(3)], truncated: false }),
+  'thread.prompt': () =>
+    relayedOperationResult({ accepted: true, journalSeq: 7, duplicate: false }),
+  'thread.floor': () => relayedOperationResult({ mode: 'talk', holder: null, expiresAt: null }),
+  'prompt.resolve': () => relayedOperationResult({ resolved: true }),
+  'thread.subscribe': () =>
+    relayedOperationResult({ journalSeq: 5, entries: [entry(5)], truncated: false }),
   ...overrides,
 });
-const connect = async (threads?: ThreadHost, leaseMs?: number) => {
-  socket = new InstallationSocket({ url, keyFile, threads, leaseMs, onSnapshot: () => {} });
+const connect = async (
+  operations?: RelayedOperationHandlers,
+  leaseMs?: number,
+  onThreadSubscriptionEnded?: InstallationSocketOptions['onThreadSubscriptionEnded'],
+) => {
+  socket = new InstallationSocket({
+    url,
+    keyFile,
+    operations,
+    leaseMs,
+    onThreadSubscriptionEnded,
+    onSnapshot: () => {},
+  });
   socket.start();
   await waitFor(() => socket?.connected === true && kingdom !== null);
   return socket;
 };
 
-test('thread.request round-trips, typed by its operation', async () => {
+test('operation.request round-trips, typed by its operation', async () => {
   const seen: unknown[] = [];
   await connect(
     host({
       'thread.prompt': (frame) => {
         seen.push(frame.input.text, frame.threadId, frame.permissions);
-        return threadResult({ accepted: true, journalSeq: 7, duplicate: false });
+        return relayedOperationResult({ accepted: true, journalSeq: 7, duplicate: false });
       },
     }),
   );
   const frame = relayed();
   sendHost({
-    type: 'thread.request',
+    type: 'operation.request',
     ...frame,
     operation: 'thread.prompt',
     input: { postId: uuid(), text: 'Watching for X' },
   });
-  const response = threadResponseFrameSchema('thread.prompt').parse(
+  const response = operationResponseFrameSchema('thread.prompt').parse(
     await responseTo(frame.requestId),
   );
   expect(response.outcome).toEqual({
@@ -140,13 +155,14 @@ test('refusals: a host refusal, an unknown term, an unreadable frame, a broken h
     host({
       'thread.prompt': () => {
         calls++;
-        return threadRefused('floor_denied');
+        return relayedOperationRefusal('floor_denied');
       },
       'thread.read': () => {
         throw Error('journal unavailable');
       },
       // A result the contract doesn't allow is never sent as-is.
-      'thread.floor': () => threadResult({ mode: 'talk', holder: null, expiresAt: 'soon' }),
+      'thread.floor': () =>
+        relayedOperationResult({ mode: 'talk', holder: null, expiresAt: 'soon' }),
     }),
   );
   const outcome = async (frame: Record<string, unknown>) => {
@@ -157,21 +173,21 @@ test('refusals: a host refusal, an unknown term, an unreadable frame, a broken h
     operation: 'thread.prompt',
     input: { postId: uuid(), text: 'hi' },
   };
-  expect(await outcome({ type: 'thread.request', ...relayed(), ...prompt })).toEqual({
+  expect(await outcome({ type: 'operation.request', ...relayed(), ...prompt })).toEqual({
     ok: false,
     refusal: 'floor_denied',
   });
   expect(calls).toBe(1);
   expect(
     await outcome({
-      type: 'thread.request',
+      type: 'operation.request',
       ...relayed({ permissions: ['thread.stream'] }),
       ...prompt,
     }),
   ).toMatchObject({ ok: false, refusal: 'invalid_request' });
   expect(
     await outcome({
-      type: 'thread.request',
+      type: 'operation.request',
       ...relayed(),
       operation: 'thread.prompt',
       input: {},
@@ -180,7 +196,7 @@ test('refusals: a host refusal, an unknown term, an unreadable frame, a broken h
   expect(calls).toBe(1);
   expect(
     await outcome({
-      type: 'thread.request',
+      type: 'operation.request',
       ...relayed(),
       operation: 'thread.read',
       input: {},
@@ -188,7 +204,7 @@ test('refusals: a host refusal, an unknown term, an unreadable frame, a broken h
   ).toMatchObject({ ok: false, refusal: 'failed' });
   expect(
     await outcome({
-      type: 'thread.request',
+      type: 'operation.request',
       ...relayed(),
       operation: 'thread.floor',
       input: { floor: { action: 'request' } },
@@ -196,14 +212,36 @@ test('refusals: a host refusal, an unknown term, an unreadable frame, a broken h
   ).toMatchObject({ ok: false, refusal: 'failed' });
 });
 
-test('a host that serves no threads answers failed at once', async () => {
-  await connect();
+test('an operation the host has no handler for is answered failed at once, naming it', async () => {
+  await connect({ 'thread.prompt': host()['thread.prompt'] });
+  for (const operation of ['thread.read', 'thread.subscribe']) {
+    const frame = relayed();
+    sendHost({ type: 'operation.request', ...frame, operation, input: {} });
+    expect((await responseTo(frame.requestId)).outcome).toEqual({
+      ok: false,
+      refusal: 'failed',
+      message: `This host serves no ${operation}`,
+    });
+  }
+  expect(socket?.threadSubscriptions()).toEqual([]);
+});
+
+test('an operation outside the relay contract is answered invalid_request; no requestId, nothing', async () => {
+  await connect(host());
   const frame = relayed();
-  sendHost({ type: 'thread.request', ...frame, operation: 'thread.read', input: {} });
+  sendHost({ type: 'operation.request', ...frame, operation: 'sessions.search', input: {} });
   expect((await responseTo(frame.requestId)).outcome).toMatchObject({
     ok: false,
-    refusal: 'failed',
+    refusal: 'invalid_request',
   });
+  sendHost({
+    type: 'operation.request',
+    ...relayed({ requestId: 'nope' }),
+    operation: 'thread.read',
+    input: {},
+  });
+  await Bun.sleep(30);
+  expect(received).toHaveLength(1);
 });
 
 test('subscribe is atomic: entries written while the snapshot is taken follow it, none twice', async () => {
@@ -215,12 +253,12 @@ test('subscribe is atomic: entries written while the snapshot is taken follow it
     host({
       'thread.subscribe': async () => {
         await subscribed;
-        return threadResult({ journalSeq: 5, entries: [entry(5)], truncated: false });
+        return relayedOperationResult({ journalSeq: 5, entries: [entry(5)], truncated: false });
       },
     }),
   );
   const frame = relayed();
-  sendHost({ type: 'thread.subscribe', ...frame });
+  sendHost({ type: 'operation.request', ...frame, operation: 'thread.subscribe', input: {} });
   await waitFor(() => live.threadSubscriptions().length === 1);
   // Written while the host takes the view: 5 is in the snapshot, 6 and 7 come after it.
   expect(live.appendThread(frame.requestId, entry(7))).toBe(true);
@@ -229,7 +267,7 @@ test('subscribe is atomic: entries written while the snapshot is taken follow it
   expect(received).toEqual([]);
   release();
   await waitFor(() => received.length === 3);
-  expect(received[0]).toMatchObject({ action: 'thread.response', requestId: frame.requestId });
+  expect(received[0]).toMatchObject({ action: 'operation.response', requestId: frame.requestId });
   const appends = received.slice(1).map((sent) => threadAppendFrameSchema.parse(sent));
   expect(appends.map((append) => append.journalSeq)).toEqual([6, 7]);
   expect(appends[0]).toMatchObject({
@@ -262,13 +300,14 @@ test('entries overflowing a slow subscribe end it, and the subscribe is refused,
     host({
       'thread.subscribe': async () => {
         await subscribed;
-        return threadResult({ journalSeq: 0, entries: [], truncated: false });
+        return relayedOperationResult({ journalSeq: 0, entries: [], truncated: false });
       },
-      ended: (_subscription, reason) => void ended.push(reason),
     }),
+    undefined,
+    (_subscription, reason) => void ended.push(reason),
   );
   const frame = relayed();
-  sendHost({ type: 'thread.subscribe', ...frame });
+  sendHost({ type: 'operation.request', ...frame, operation: 'thread.subscribe', input: {} });
   await waitFor(() => live.threadSubscriptions().length === 1);
   for (let seq = 1; seq <= 1000; seq++) live.appendThread(frame.requestId, entry(seq));
   expect(live.appendThread(frame.requestId, entry(1001))).toBe(false);
@@ -283,9 +322,11 @@ test('entries overflowing a slow subscribe end it, and the subscribe is refused,
 });
 
 test('a refused subscribe leaves no subscription', async () => {
-  const live = await connect(host({ 'thread.subscribe': () => threadRefused('unknown_thread') }));
+  const live = await connect(
+    host({ 'thread.subscribe': () => relayedOperationRefusal('unknown_thread') }),
+  );
   const frame = relayed();
-  sendHost({ type: 'thread.subscribe', ...frame });
+  sendHost({ type: 'operation.request', ...frame, operation: 'thread.subscribe', input: {} });
   expect((await responseTo(frame.requestId)).outcome).toEqual({
     ok: false,
     refusal: 'unknown_thread',
@@ -297,12 +338,13 @@ test('a refused subscribe leaves no subscription', async () => {
 test('unsubscribe, the lease, and a dropped socket each end a subscription', async () => {
   const ended: [ThreadSubscription, string][] = [];
   const live = await connect(
-    host({ ended: (subscription, reason) => void ended.push([subscription, reason]) }),
+    host(),
     150,
+    (subscription, reason) => void ended.push([subscription, reason]),
   );
   const subscribe = async () => {
     const frame = relayed();
-    sendHost({ type: 'thread.subscribe', ...frame });
+    sendHost({ type: 'operation.request', ...frame, operation: 'thread.subscribe', input: {} });
     await responseTo(frame.requestId);
     return frame.requestId;
   };

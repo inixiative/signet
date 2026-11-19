@@ -3,7 +3,15 @@ import { installationInquiries, installationSignets, kingdomUrl, signetProof } f
 import {
   type InstallationSnapshot,
   installationSocketAction,
+  type OperationRequestFrame,
+  operationRequestFrameSchema,
+  operationResponseFrameSchema,
   parseInstallationSnapshot,
+  type RelayedOperation,
+  type RelayedOperationCommonRefusal,
+  type RelayedOperationOutcome,
+  relayedOperationRefusal,
+  relayedOperationSchema,
 } from './contracts';
 import type { EventStreamHandlers, EventStreamKey } from './eventStreams';
 import { HolderStreams } from './holderStreams';
@@ -12,25 +20,12 @@ import {
   type ConversationPermission,
   type ThreadAppendFrame,
   type ThreadEntry,
-  type ThreadOperation,
-  type ThreadOutcome,
-  type ThreadRefusal,
-  type ThreadRequestFrame,
-  type ThreadSubscribeFrame,
+  type ThreadOperationContext,
   threadAppendFrameSchema,
   threadLeaseFrameSchema,
-  threadRefused,
-  threadRequestFrameSchema,
-  threadResponseFrameSchema,
-  threadSubscribeFrameSchema,
   threadSubscriptionLeaseMs,
   threadUnsubscribeFrameSchema,
 } from './threads';
-
-export type ThreadRequestOf<O extends ThreadOperation> = Extract<
-  ThreadRequestFrame,
-  { operation: O }
->;
 
 /** A member's live view this host is pushing, from the moment its snapshot was taken. */
 export type ThreadSubscription = {
@@ -38,34 +33,32 @@ export type ThreadSubscription = {
   signetId: string;
   threadId: string;
   acceptedRevision: number;
-  member: ThreadSubscribeFrame['member'];
+  member: ThreadOperationContext['member'];
   permissions: ConversationPermission[];
 };
 /** `overflow`: too many entries arrived while the snapshot was taken; the subscribe is refused and retried. */
 export type ThreadSubscriptionEnd = 'unsubscribed' | 'lease' | 'disconnected' | 'overflow';
 
 /**
- * A host Foundry's side of agent conversations: one handler per operation, typed by what Kingdom
- * relays and what it reads back. Each answers within Kingdom's 15 s wait, with `threadResult(...)`
- * or `threadRefused(code)`. A handler that throws, or answers with something the contract doesn't
- * allow, is answered `failed`.
+ * The host's handler for one relayed operation, typed by what Kingdom relays and what it reads back.
+ * It answers within `relayedOperationTimeoutMs[operation]`, with `relayedOperationResult(...)` or
+ * `relayedOperationRefusal(code)`. A handler that throws, or answers with something the contract
+ * doesn't allow, is answered `failed`.
  */
-export type ThreadHost = {
-  [O in ThreadOperation]: (
-    frame: ThreadRequestOf<O>,
-  ) => ThreadOutcome<O> | Promise<ThreadOutcome<O>>;
-} & {
-  /**
-   * The member's view and the `journalSeq` it was taken at. The subscription is registered before
-   * this runs, and appends pushed meanwhile are held and sent after the answer, minus those at or
-   * below `journalSeq`: snapshot and subscription start at the same point (review V3).
-   */
-  'thread.subscribe': (
-    frame: ThreadSubscribeFrame,
-  ) => ThreadOutcome<'thread.subscribe'> | Promise<ThreadOutcome<'thread.subscribe'>>;
-  /** A subscription ended: Kingdom unsubscribed, its lease lapsed, or this socket dropped. */
-  ended?: (subscription: ThreadSubscription, reason: ThreadSubscriptionEnd) => void;
-};
+export type RelayedOperationHandler<O extends RelayedOperation> = (
+  frame: OperationRequestFrame<O>,
+) => RelayedOperationOutcome<O> | Promise<RelayedOperationOutcome<O>>;
+
+/**
+ * The relayed operations this Installation serves, one handler each; an operation with none is
+ * answered `failed`. `thread.subscribe` answers with the member's view and the `journalSeq` it was
+ * taken at: the subscription is registered before it runs, and appends pushed meanwhile are held and
+ * sent after the answer, minus those at or below `journalSeq`, so snapshot and subscription start at
+ * the same point (review V3).
+ */
+export type RelayedOperationHandlers = Partial<{
+  [O in RelayedOperation]: RelayedOperationHandler<O>;
+}>;
 
 export type InstallationSocketOptions = {
   url: string;
@@ -80,8 +73,13 @@ export type InstallationSocketOptions = {
   viewerUrl?: string | null;
   /** Reported on every ping so Kingdom can show how busy this installation is. */
   sessionCount?: () => number;
-  /** Serve conversations on this installation's Foundry integrations (the host side). */
-  threads?: ThreadHost;
+  /** The relayed operations this installation serves (a Foundry's conversations: the host side). */
+  operations?: RelayedOperationHandlers;
+  /** A thread subscription ended: Kingdom unsubscribed, its lease lapsed, or this socket dropped. */
+  onThreadSubscriptionEnded?: (
+    subscription: ThreadSubscription,
+    reason: ThreadSubscriptionEnd,
+  ) => void;
   /** Hold live views of threads on other Foundries through Signets this installation holds. */
   threadStreams?: ThreadStreamHandlers;
   /** Hold event channels of the Signets this installation holds (their `eventChannels`). */
@@ -121,7 +119,7 @@ const OPEN = 1;
  * Kingdom's live line to an Installation. It proves the installation's key, then receives a
  * snapshot of its inquiries and Signets on connect and again whenever one changes. While the
  * socket is down it polls the same reads, so nothing waits on the socket coming back. A Foundry
- * also answers its members' calls over it (`threads`) and holds its own memberships (`threadStreams`).
+ * also answers its members' calls over it (`operations`) and holds its own memberships (`threadStreams`).
  * The event channels of the Signets it holds are held here too (`eventStreams`), live only.
  */
 export class InstallationSocket {
@@ -323,12 +321,13 @@ export class InstallationSocket {
         case 'advertiseRejected':
           this.options.onError?.(Error(`Kingdom refused viewer URL ${this.viewerUrl}`));
           return;
-        case 'thread.request':
-        case 'thread.subscribe':
+        case 'operation.request':
+          // Only an authenticated Installation socket carries relayed calls and conversation frames.
+          if (this.authenticated) await this.operationRequest(socket, frame);
+          return;
         case 'thread.unsubscribe':
         case 'thread.lease':
-          // Only an authenticated Installation socket carries conversation frames.
-          if (this.authenticated) await this.threadFrame(socket, frame);
+          if (this.authenticated) this.threadFrame(frame);
           return;
       }
     } catch (error) {
@@ -337,14 +336,8 @@ export class InstallationSocket {
     }
   }
 
-  private async threadFrame(socket: WebSocket, frame: Record<string, unknown>) {
+  private threadFrame(frame: Record<string, unknown>) {
     switch (frame.type) {
-      case 'thread.request':
-        await this.threadRequest(socket, frame);
-        return;
-      case 'thread.subscribe':
-        await this.threadSubscribe(socket, frame);
-        return;
       case 'thread.unsubscribe': {
         const { subscriptionId } = threadUnsubscribeFrameSchema.parse(frame);
         this.endSubscription(subscriptionId, 'unsubscribed');
@@ -362,64 +355,54 @@ export class InstallationSocket {
     }
   }
 
-  private async threadRequest(socket: WebSocket, raw: Record<string, unknown>) {
+  private async operationRequest(socket: WebSocket, raw: Record<string, unknown>) {
     const requestId = z.uuid().safeParse(raw.requestId);
     if (!requestId.success) return this.options.onError?.(requestId.error);
-    const frame = threadRequestFrameSchema.safeParse(raw);
-    if (!frame.success) {
-      this.options.onError?.(frame.error);
+    const operation = relayedOperationSchema.safeParse(raw.operation);
+    if (!operation.success) {
+      this.options.onError?.(operation.error);
       return this.refuse(socket, requestId.data, 'invalid_request');
     }
-    const host = this.options.threads;
-    if (!host) return this.refuse(socket, requestId.data, 'failed', 'This host serves no threads');
+    if (operation.data === 'thread.subscribe')
+      return this.threadSubscribe(socket, requestId.data, raw);
+    return this.serve(socket, requestId.data, operation.data, raw);
+  }
+
+  private async serve<O extends Exclude<RelayedOperation, 'thread.subscribe'>>(
+    socket: WebSocket,
+    requestId: string,
+    operation: O,
+    raw: Record<string, unknown>,
+  ) {
+    const frame = operationRequestFrameSchema(operation).safeParse(raw);
+    if (!frame.success) {
+      this.options.onError?.(frame.error);
+      return this.refuse(socket, requestId, 'invalid_request');
+    }
+    const handler: RelayedOperationHandler<O> | undefined = this.options.operations?.[operation];
+    if (!handler)
+      return this.refuse(socket, requestId, 'failed', `This host serves no ${operation}`);
     try {
-      const request = frame.data;
-      switch (request.operation) {
-        case 'thread.read':
-          return this.respond(
-            socket,
-            request.requestId,
-            request.operation,
-            await host[request.operation](request),
-          );
-        case 'thread.prompt':
-          return this.respond(
-            socket,
-            request.requestId,
-            request.operation,
-            await host[request.operation](request),
-          );
-        case 'thread.floor':
-          return this.respond(
-            socket,
-            request.requestId,
-            request.operation,
-            await host[request.operation](request),
-          );
-        case 'prompt.resolve':
-          return this.respond(
-            socket,
-            request.requestId,
-            request.operation,
-            await host[request.operation](request),
-          );
-      }
+      this.respond(socket, requestId, operation, await handler(frame.data));
     } catch (error) {
       this.options.onError?.(error);
-      return this.refuse(socket, requestId.data, 'failed');
+      this.refuse(socket, requestId, 'failed');
     }
   }
 
-  private async threadSubscribe(socket: WebSocket, raw: Record<string, unknown>) {
-    const requestId = z.uuid().safeParse(raw.requestId);
-    if (!requestId.success) return this.options.onError?.(requestId.error);
-    const parsed = threadSubscribeFrameSchema.safeParse(raw);
+  private async threadSubscribe(
+    socket: WebSocket,
+    requestId: string,
+    raw: Record<string, unknown>,
+  ) {
+    const parsed = operationRequestFrameSchema('thread.subscribe').safeParse(raw);
     if (!parsed.success) {
       this.options.onError?.(parsed.error);
-      return this.refuse(socket, requestId.data, 'invalid_request');
+      return this.refuse(socket, requestId, 'invalid_request');
     }
-    const host = this.options.threads;
-    if (!host) return this.refuse(socket, requestId.data, 'failed', 'This host serves no threads');
+    const handler = this.options.operations?.['thread.subscribe'];
+    if (!handler)
+      return this.refuse(socket, requestId, 'failed', 'This host serves no thread.subscribe');
     const frame = parsed.data;
     const subscription: HeldSubscription = {
       subscriptionId: frame.requestId,
@@ -435,12 +418,12 @@ export class InstallationSocket {
     };
     // Registered before the snapshot is taken, so nothing written meanwhile is lost (review V3).
     this.subscriptions.set(subscription.subscriptionId, subscription);
-    let outcome: ThreadOutcome<'thread.subscribe'>;
+    let outcome: RelayedOperationOutcome<'thread.subscribe'>;
     try {
-      outcome = await host['thread.subscribe'](frame);
+      outcome = await handler(frame);
     } catch (error) {
       this.options.onError?.(error);
-      outcome = threadRefused('failed');
+      outcome = relayedOperationRefusal('failed');
     }
     // Ended while the view was taken (overflow, unsubscribe, lease): a view no subscription will
     // follow would freeze the member, so refuse and let Kingdom's open fail and be retried.
@@ -465,14 +448,14 @@ export class InstallationSocket {
   }
 
   /** Answers a request; false (after answering `failed`) when the handler's outcome breaks the contract. */
-  private respond<O extends ThreadOperation | 'thread.subscribe'>(
+  private respond<O extends RelayedOperation>(
     socket: WebSocket,
     requestId: string,
     operation: O,
-    outcome: ThreadOutcome<O>,
+    outcome: RelayedOperationOutcome<O>,
   ) {
-    const frame = threadResponseFrameSchema(operation).safeParse({
-      action: 'thread.response',
+    const frame = operationResponseFrameSchema(operation).safeParse({
+      action: 'operation.response',
       requestId,
       outcome,
     });
@@ -485,11 +468,16 @@ export class InstallationSocket {
     return true;
   }
 
-  private refuse(socket: WebSocket, requestId: string, refusal: ThreadRefusal, message?: string) {
+  private refuse(
+    socket: WebSocket,
+    requestId: string,
+    refusal: RelayedOperationCommonRefusal,
+    message?: string,
+  ) {
     this.sendOn(socket, {
-      action: 'thread.response',
+      action: 'operation.response',
       requestId,
-      outcome: threadRefused(refusal, message),
+      outcome: relayedOperationRefusal(refusal, message),
     });
   }
 
@@ -509,7 +497,7 @@ export class InstallationSocket {
     if (!subscription) return;
     this.subscriptions.delete(subscriptionId);
     const { leaseUntil: _lease, sentSeq: _sent, seq: _seq, held: _held, ...ended } = subscription;
-    this.options.threads?.ended?.(ended, reason);
+    this.options.onThreadSubscriptionEnded?.(ended, reason);
   }
 
   private endSubscriptions(reason: ThreadSubscriptionEnd) {
