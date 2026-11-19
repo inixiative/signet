@@ -8,8 +8,8 @@ import {
   installationInquiries,
   keyThumbprint,
   registerInstallation,
+  requestEntitlementChange,
   requestRegistration,
-  requestSignetEntitlement,
   SignetClient,
   SignetHttpError,
   saveCollectedSignet,
@@ -83,13 +83,13 @@ beforeAll(() => {
             reviewUrl: 'https://kingdom.example/dashboard?reviewSignet=ABC123ABC123',
           });
         }
-        if (action === 'requestSignetEntitlement') {
+        if (action === 'requestEntitlementChange') {
           await verify(request, action);
           return ok({
             inquiryId,
             status: 'sent',
             expiresAt: new Date(Date.now() + 7 * 86400000).toISOString(),
-            reviewUrl: `https://kingdom.example/dashboard?signetEntitlement=${inquiryId}`,
+            reviewUrl: 'https://kingdom.example/communications/inquiries/received',
           });
         }
         if (action === 'installationInquiries') {
@@ -198,15 +198,14 @@ describe('pairing and presentation', () => {
       hostedSignetRequests: [],
       dropped: [],
     });
-    const asked = await requestSignetEntitlement(url, keyFile, {
+    const asked = await requestEntitlementChange(url, keyFile, {
       signetId,
       add: [{ resourceKind: 'subscription', operations: { picks: ['subscription.use'] } }],
-      reason: 'No capacity',
     });
     expect(asked).toMatchObject({ inquiryId, status: 'sent' });
     expect(calls.at(-1)).toMatchObject({
-      action: 'requestSignetEntitlement',
-      body: { signetId, reason: 'No capacity' },
+      action: 'requestEntitlementChange',
+      body: { signetId },
     });
     expect(await collectSignet(url, keyFile, inquiryId)).toBeNull();
     approved = true;
