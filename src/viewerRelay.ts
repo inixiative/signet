@@ -302,10 +302,16 @@ export class ViewerRelay {
     const open = () => this.sockets.has(socketId);
     // why: Kingdom must hear `opened` before anything the viewer sends while it is still accepting
     let early: string[] | null = [];
+    let handlers: ViewerSocketHandlers | null = null;
     const peer: ViewerSocketPeer = {
       send: (data) => {
         if (!open()) return;
-        if (data.length > viewerMaxSocketMessageChars) return peer.close(1009, 'message too long');
+        if (data.length > viewerMaxSocketMessageChars) {
+          // why: this close is the relay's own, so the viewer has to be told its socket is gone
+          const viewer = handlers;
+          peer.close(1009, 'message too long');
+          return this.quietly(() => viewer?.close(1009, 'message too long'));
+        }
         if (early) return void early.push(data);
         this.send({ action: 'viewer.socket.message', socketId, data });
       },
@@ -319,7 +325,6 @@ export class ViewerRelay {
         });
       },
     };
-    let handlers: ViewerSocketHandlers | null = null;
     try {
       handlers = await this.handlers.socket(
         new Request(new URL(frame.path, frame.origin).href, { headers: frame.headers }),

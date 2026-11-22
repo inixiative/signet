@@ -728,7 +728,11 @@ export const viewerMaxRequestBodyBytes = 8 * 1024 * 1024;
 export const viewerMaxSocketMessageChars = 1024 * 1024;
 
 const viewerHeadersSchema = z.record(z.string().min(1).max(200), z.string().max(16_384));
-const viewerPathSchema = z.string().startsWith('/').max(8_192);
+/** A path on the viewer's own address: one leading slash, so it can never name another host. */
+const viewerPathSchema = z
+  .string()
+  .max(8_192)
+  .regex(/^\/(?![/\\])/);
 const viewerBodyShape = {
   requestId: z.uuid(),
   /** Base64 of at most `viewerBodyChunkBytes` bytes. */

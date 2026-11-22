@@ -2,6 +2,18 @@ This file starts at 0.17.0. Earlier releases are described in their pull request
 terms `posts`, `act` and `agent`, #33) and 0.16.0 (a hosted request carries its requester's
 audience, #35).
 
+## 0.26.2 — the viewer relay closes both sides, and a viewer path cannot name another host
+
+Found reviewing Foundry's side of R-2026-11-22-03 (Foundry #453). Additive fixes to 0.26.0's
+`ViewerRelay`; no contract a 0.26.0 host or Kingdom relied on changes.
+
+- **A socket the relay closes itself tells the viewer.** A message past
+  `viewerMaxSocketMessageChars` closed the socket towards Kingdom only, so the viewer kept the
+  connection, and what it was streaming, until its own stale sweep five minutes later.
+- **A viewer path has exactly one leading slash.** `//host/x` and `/\host/x` resolved against the
+  origin to another host, so the `Request` handed to the viewer could carry a host the browser never
+  used. Such a frame is now answered 400, or its socket closed.
+
 ## 0.26.1 — Chorus is an Installation kind
 
 Aron, 2026-11-22 (R-2026-11-22-02): orgs run shared Chorus boxes per project, so a Chorus host pairs

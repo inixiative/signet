@@ -410,3 +410,53 @@ test('what the viewer sends is made fit for Kingdom: no set-cookie, close codes 
   });
   expect(errors).toEqual([]);
 });
+
+test('a path that would name another host is refused, for requests and sockets', async () => {
+  const urls: string[] = [];
+  const { relay, sent } = line({
+    request: (request) => {
+      urls.push(request.url);
+      return new Response('ok');
+    },
+    socket: () => ({ message: () => {}, close: () => {} }),
+  });
+  for (const path of ['//evil.example/x', '/\\evil.example/x', 'evil.example']) {
+    const requestId = Bun.randomUUIDv7();
+    relay.receive({ ...head(requestId), path });
+    expect(sent.at(-1)).toEqual({
+      action: 'viewer.response',
+      requestId,
+      status: 400,
+      headers: {},
+      hasBody: false,
+    });
+  }
+  const socketId = Bun.randomUUIDv7();
+  relay.receive({
+    type: 'viewer.socket.open',
+    socketId,
+    origin,
+    path: '//evil.example/ws',
+    headers: {},
+  });
+  expect(sent.at(-1)).toMatchObject({ action: 'viewer.socket.close', socketId, code: 1008 });
+  expect(urls).toEqual([]);
+});
+
+test('a message too long for the line closes the socket on both sides', async () => {
+  const closes: (number | undefined)[] = [];
+  let peer: ViewerSocketPeer | undefined;
+  const { sent, receive } = line({
+    request: () => new Response(null, { status: 404 }),
+    socket: (_request, browser) => {
+      peer = browser;
+      return { message: () => {}, close: (code) => void closes.push(code) };
+    },
+  });
+  const socketId = Bun.randomUUIDv7();
+  receive({ type: 'viewer.socket.open', socketId, origin, path: '/ws', headers: {} });
+  await until(() => sent.some((frame) => frame.action === 'viewer.socket.opened'));
+  peer?.send('x'.repeat(1024 * 1024 + 1));
+  expect(sent.at(-1)).toMatchObject({ action: 'viewer.socket.close', socketId, code: 1009 });
+  expect(closes).toEqual([1009]);
+});
