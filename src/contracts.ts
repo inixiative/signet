@@ -714,6 +714,12 @@ export const relayedOperationRefusal = <C extends string>(refusal: C, message?: 
  * (whoever may manage the integration); the frames carry HTTP as it is and nothing of Kingdom's.
  * A body travels after its head in `…body` frames of at most `viewerBodyChunkBytes`, the last one
  * marked, so a large or streamed body never holds the socket's other frames behind one message.
+ *
+ * Headers are one value per name. The host sends its response's headers as they are, less
+ * `set-cookie` (the viewer sets no cookie through Kingdom); Kingdom chooses which reach the browser
+ * and sets the transfer headers itself (`content-length`, `transfer-encoding`, `connection`).
+ * Kingdom holds a browser's socket messages until `viewer.socket.opened`. A host that serves no
+ * viewer ignores these frames, so Kingdom sends them only after `viewer.serving` said true.
  */
 export const viewerBodyChunkBytes = 192 * 1024;
 /** The largest request body Kingdom forwards; past it the browser is answered 413. */
@@ -729,10 +735,20 @@ const viewerBodyShape = {
   data: z.string().max(Math.ceil(viewerBodyChunkBytes / 3) * 4),
   last: z.boolean(),
 };
+/** The close codes an endpoint may send: 1000–1003, 1007–1014 and 3000–4999. */
+export const viewerSocketCloseCodeSent = (code: number) =>
+  (code >= 1000 && code <= 1003) ||
+  (code >= 1007 && code <= 1014) ||
+  (code >= 3000 && code <= 4999);
+/** A close reason is at most 123 bytes of UTF-8 on the wire. */
+export const viewerSocketCloseReasonBytes = 123;
 const viewerSocketCloseShape = {
   socketId: z.uuid(),
-  code: z.number().int().min(1000).max(4999).optional(),
-  reason: z.string().max(120).optional(),
+  code: z.number().int().refine(viewerSocketCloseCodeSent).optional(),
+  reason: z
+    .string()
+    .refine((reason) => Buffer.byteLength(reason) <= viewerSocketCloseReasonBytes)
+    .optional(),
 };
 const viewerSocketMessageShape = {
   socketId: z.uuid(),
@@ -740,16 +756,18 @@ const viewerSocketMessageShape = {
 };
 
 /** Kingdom → host: the head of one browser request. `origin` is the address the browser used. */
-export const viewerRequestFrameSchema = z.strictObject({
-  type: z.literal('viewer.request'),
-  requestId: z.uuid(),
-  origin: z.url(),
-  method: z.string().min(1).max(16),
-  path: viewerPathSchema,
-  headers: viewerHeadersSchema,
-  /** Whether `viewer.request.body` frames follow. */
-  hasBody: z.boolean(),
-});
+export const viewerRequestFrameSchema = z
+  .strictObject({
+    type: z.literal('viewer.request'),
+    requestId: z.uuid(),
+    origin: z.url(),
+    method: z.string().min(1).max(16),
+    path: viewerPathSchema,
+    headers: viewerHeadersSchema,
+    /** Whether `viewer.request.body` frames follow; never on GET or HEAD. */
+    hasBody: z.boolean(),
+  })
+  .refine((frame) => !frame.hasBody || !['GET', 'HEAD'].includes(frame.method.toUpperCase()));
 export type ViewerRequestFrame = z.infer<typeof viewerRequestFrameSchema>;
 export const viewerRequestBodyFrameSchema = z.strictObject({
   type: z.literal('viewer.request.body'),
@@ -801,6 +819,8 @@ export type ViewerResponseFrame = z.infer<typeof viewerResponseFrameSchema>;
 export const viewerResponseBodyFrameSchema = z.strictObject({
   action: z.literal('viewer.response.body'),
   ...viewerBodyShape,
+  /** On the last frame: the body stopped before its end, so Kingdom breaks the browser's response off. */
+  cutShort: z.literal(true).optional(),
 });
 /** Host → Kingdom: the viewer accepted the socket; messages may flow. A refusal is a close. */
 export const viewerSocketOpenedFrameSchema = z.strictObject({
@@ -818,6 +838,7 @@ export const viewerSocketCloseToKingdomFrameSchema = z.strictObject({
 /**
  * Host → Kingdom: whether this Installation answers viewer frames now. Sent on every connect and
  * when the owner changes it on the machine; Kingdom offers to open the viewer only while it is true.
+ * False also ends every request and socket in flight: the host answers none of them further.
  */
 export const viewerServingFrameSchema = z.strictObject({
   action: z.literal('viewer.serving'),

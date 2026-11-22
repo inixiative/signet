@@ -27,6 +27,12 @@ Additive; nothing existing changes.
   connect and on every change (`viewer.serving`); while it does not, requests are answered 403 and
   sockets refused. Body frames wait while more than 1 MB sits in the socket's send buffer. A
   dropped socket aborts requests in flight and closes the viewer's sockets.
+- **Nothing is left waiting.** A frame that breaks the contract is answered at once (400 for a
+  request, a close for a socket); a request whose body stops arriving is answered 408 after 30 s;
+  a body that fails part way ends with a last frame marked `cutShort`, so Kingdom breaks the
+  browser's response off instead of finishing it; a cancel ends a response stream that has gone
+  quiet. What the host sends is checked against the contract first: no `set-cookie`, only close
+  codes an endpoint may send (others become 1011), close reasons cut to 123 bytes.
 - `viewerUrl` / `advertise` stay until Kingdom and Foundry cut over; the release that follows the
   cutover removes them.
 

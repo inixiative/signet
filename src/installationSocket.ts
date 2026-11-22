@@ -12,7 +12,6 @@ import {
   type RelayedOperationOutcome,
   relayedOperationRefusal,
   relayedOperationSchema,
-  viewerHostFrameSchema,
 } from './contracts';
 import type { EventStreamHandlers, EventStreamKey } from './eventStreams';
 import { HolderStreams } from './holderStreams';
@@ -163,7 +162,7 @@ export class InstallationSocket {
             buffered: () => this.socket?.bufferedAmount ?? 0,
             onError: options.onError,
           },
-          options.viewerServing ?? true,
+          { serving: options.viewerServing ?? true },
         )
       : null;
   }
@@ -360,7 +359,7 @@ export class InstallationSocket {
         case 'viewer.socket.open':
         case 'viewer.socket.message':
         case 'viewer.socket.close':
-          if (this.authenticated) this.viewer?.receive(viewerHostFrameSchema.parse(frame));
+          if (this.authenticated) this.viewer?.receive(frame);
           return;
       }
     } catch (error) {
