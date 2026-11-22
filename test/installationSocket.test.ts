@@ -133,3 +133,57 @@ test('proves its key, takes snapshots, polls while down and stops when revoked',
   expect(sockets.size).toBe(0);
   expect(socket.connected).toBe(false);
 });
+
+test('serves its viewer over the socket: says so on connect, answers a forwarded request, and stops when switched off', async () => {
+  frames.length = 0;
+  const socket = new InstallationSocket({
+    url,
+    keyFile,
+    onSnapshot: () => {},
+    viewer: {
+      request: (request) =>
+        Response.json({ path: new URL(request.url).pathname, host: new URL(request.url).host }),
+    },
+    retryBaseMs: 20,
+    pollMs: 10_000,
+  });
+  socket.start();
+  await waitFor(() => frames.some((frame) => frame.action === 'viewer.serving'));
+  expect(frames.find((frame) => frame.action === 'viewer.serving')).toEqual({
+    action: 'viewer.serving',
+    serving: true,
+  });
+  const requestId = Bun.randomUUIDv7();
+  for (const ws of sockets)
+    ws.send(
+      JSON.stringify({
+        type: 'viewer.request',
+        requestId,
+        origin: 'https://studio.foundry.example.test',
+        method: 'GET',
+        path: '/api/health',
+        headers: {},
+        hasBody: false,
+      }),
+    );
+  await waitFor(() =>
+    frames.some((frame) => frame.action === 'viewer.response.body' && frame.last === true),
+  );
+  expect(frames.find((frame) => frame.action === 'viewer.response')).toMatchObject({
+    requestId,
+    status: 200,
+    hasBody: true,
+  });
+  const body = frames
+    .filter((frame) => frame.action === 'viewer.response.body')
+    .map((frame) => Buffer.from(String(frame.data), 'base64').toString('utf8'))
+    .join('');
+  expect(JSON.parse(body)).toEqual({ path: '/api/health', host: 'studio.foundry.example.test' });
+
+  socket.serveViewer(false);
+  await waitFor(
+    () => frames.at(-1)?.action === 'viewer.serving' && frames.at(-1)?.serving === false,
+  );
+  socket.close();
+  await waitFor(() => sockets.size === 0);
+});

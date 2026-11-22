@@ -26,6 +26,7 @@ import {
   threadSubscriptionLeaseMs,
   threadUnsubscribeFrameSchema,
 } from './threads';
+import { type ViewerHandlers, ViewerRelay } from './viewerRelay';
 
 /** A member's live view this host is pushing, from the moment its snapshot was taken. */
 export type ThreadSubscription = {
@@ -75,6 +76,10 @@ export type InstallationSocketOptions = {
   sessionCount?: () => number;
   /** The relayed operations this installation serves (a Foundry's conversations: the host side). */
   operations?: RelayedOperationHandlers;
+  /** This installation's own web viewer, served to whoever Kingdom lets open it. */
+  viewer?: ViewerHandlers;
+  /** Whether the viewer is served from the start; `serveViewer` changes it. Default: true. */
+  viewerServing?: boolean;
   /** A thread subscription ended: Kingdom unsubscribed, its lease lapsed, or this socket dropped. */
   onThreadSubscriptionEnded?: (
     subscription: ThreadSubscription,
@@ -137,6 +142,7 @@ export class InstallationSocket {
   private viewerUrl: string | null;
   private readonly subscriptions = new Map<string, HeldSubscription>();
   private readonly streams: HolderStreams;
+  private readonly viewer: ViewerRelay | null;
 
   constructor(private readonly options: InstallationSocketOptions) {
     this.viewerUrl = options.viewerUrl ?? null;
@@ -148,6 +154,17 @@ export class InstallationSocket {
       // Reconnecting authenticates afresh, and `up()` then reopens everything held.
       onPresentationExpired: () => this.socket?.close(),
     });
+    this.viewer = options.viewer
+      ? new ViewerRelay(
+          options.viewer,
+          {
+            send: (frame) => this.send(frame),
+            buffered: () => this.socket?.bufferedAmount ?? 0,
+            onError: options.onError,
+          },
+          { serving: options.viewerServing ?? true },
+        )
+      : null;
   }
 
   get connected() {
@@ -171,6 +188,11 @@ export class InstallationSocket {
     if (this.authenticated) this.send({ action: 'advertise', viewerUrl });
   }
 
+  /** Start or stop answering Kingdom's viewer frames (the owner's switch, changed on the machine). */
+  serveViewer(serving: boolean) {
+    this.viewer?.serve(serving);
+  }
+
   close() {
     this.stopped = true;
     this.clearTimers();
@@ -179,6 +201,7 @@ export class InstallationSocket {
     this.authenticated = false;
     this.endSubscriptions('disconnected');
     this.streams.down();
+    this.viewer?.down();
   }
 
   /** The members' views this host is pushing now. */
@@ -303,6 +326,7 @@ export class InstallationSocket {
             Math.min(this.leaseMs() / 3, 5_000),
           );
           if (this.viewerUrl) this.send({ action: 'advertise', viewerUrl: this.viewerUrl });
+          this.viewer?.announce();
           this.streams.up();
           return;
         case 'installation.snapshot':
@@ -328,6 +352,14 @@ export class InstallationSocket {
         case 'thread.unsubscribe':
         case 'thread.lease':
           if (this.authenticated) this.threadFrame(frame);
+          return;
+        case 'viewer.request':
+        case 'viewer.request.body':
+        case 'viewer.request.cancel':
+        case 'viewer.socket.open':
+        case 'viewer.socket.message':
+        case 'viewer.socket.close':
+          if (this.authenticated) this.viewer?.receive(frame);
           return;
       }
     } catch (error) {
@@ -505,11 +537,13 @@ export class InstallationSocket {
   }
 
   private send(frame: Record<string, unknown>) {
-    if (this.socket) this.sendOn(this.socket, frame);
+    return this.socket ? this.sendOn(this.socket, frame) : false;
   }
 
   private sendOn(socket: WebSocket, frame: Record<string, unknown>) {
-    if (socket === this.socket && socket.readyState === OPEN) socket.send(JSON.stringify(frame));
+    if (socket !== this.socket || socket.readyState !== OPEN) return false;
+    socket.send(JSON.stringify(frame));
+    return true;
   }
 
   private disconnected(socket: WebSocket) {
@@ -525,6 +559,7 @@ export class InstallationSocket {
     // Kingdom re-subscribes members after a reconnect; nothing pushes into a dead line meanwhile.
     this.endSubscriptions('disconnected');
     this.streams.down();
+    this.viewer?.down();
     if (this.stopped) return;
     this.options.onDisconnected?.();
     if (!this.polling) void this.poll();

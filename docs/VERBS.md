@@ -6,7 +6,7 @@ adds a verb only where json-rules has none for the job. `test/verbs.test.ts` enf
 function `src/lens.ts` exports, and every exported function that takes or returns a lens, a
 `GrantLens` or a `LensBody`, must appear here, and every name here must be exported.
 
-This file covers the lens surface and the relayed-operation contract. The rest of the package is
+This file covers the lens surface, the relayed-operation contract and the viewer frames. The rest of the package is
 the next change.
 
 ## Lens: public API
@@ -77,3 +77,13 @@ operation)` and `walkLensPath(grant.lens, `${operation}.${field}`).outcome === '
 | split an operation into its branch segments | `src/lens.ts` (`branchOf`) | No `operation.split('.')` elsewhere. |
 | build an array rule over an operation's rows | `src/lens.ts` (`conditionOverOperationRows`) | No `arrayOperator: 'any'` elsewhere. |
 | project rows through a lens | `src/lens.ts` (`projectOperationRows`) | No `projectRows(` call elsewhere. |
+
+## Viewer frames: public API
+
+No verbs: the frames carry a browser's HTTP and WebSocket traffic for an Installation's own web
+viewer, unread. Nouns: `ViewerHandlers` is what an Installation gives `InstallationSocket` to serve
+its viewer (`request` answers a web `Request` with a `Response`; `socket` accepts the viewer's
+WebSocket); `ViewerRelay` turns Kingdom's `viewer.*` frames into those calls and back;
+`viewerHostFrameSchema` and `viewerKingdomFrameSchema` are every viewer frame in each direction;
+`viewerBodyChunkBytes`, `viewerMaxRequestBodyBytes` and `viewerMaxSocketMessageChars` are the limits
+both sides hold. `InstallationSocket.serveViewer(serving)` is the owner's switch.

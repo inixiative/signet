@@ -18,3 +18,4 @@ export * from './installationSocket';
 export * from './proof';
 export * from './signetSocket';
 export * from './threadStreams';
+export * from './viewerRelay';
