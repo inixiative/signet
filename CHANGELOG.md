@@ -36,6 +36,10 @@ Additive; nothing existing changes.
 - `viewerUrl` / `advertise` stay until Kingdom and Foundry cut over; the release that follows the
   cutover removes them.
 
+**Also in 0.26.0: Chorus is an Installation kind.** Aron, 2026-11-22 (R-2026-11-22-02): orgs run shared Chorus boxes per project, so a Chorus host pairs
+with Kingdom as a Foundry, Archive or Oracle does. `installationKindSchema` adds `chorus`. Kingdom
+already lists `chorus` as a provider with a catalog row; its operations come with the Chorus contract.
+
 ## 0.25.0 — one Installation-socket relay for every operation
 
 Aron, 2026-11-19 (R-2026-11-19-01, "Yes, seems fine."): Kingdom's thread-only relay becomes one
