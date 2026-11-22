@@ -170,7 +170,7 @@ const signetTerms = {
   maxRequests: z.number().int().min(1).max(100000).nullable(),
 };
 /** A local Foundry, Archive or Oracle known to Kingdom by its key. */
-export const installationKindSchema = z.enum(['foundry', 'archive', 'oracle']);
+export const installationKindSchema = z.enum(['foundry', 'archive', 'oracle', 'chorus']);
 export type InstallationKind = z.infer<typeof installationKindSchema>;
 /**
  * What a party asks for: resources by id, or by kind on the integration each names (review R8). A
