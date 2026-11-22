@@ -2,6 +2,12 @@ This file starts at 0.17.0. Earlier releases are described in their pull request
 terms `posts`, `act` and `agent`, #33) and 0.16.0 (a hosted request carries its requester's
 audience, #35).
 
+## 0.26.1 — Chorus is an Installation kind
+
+Aron, 2026-11-22 (R-2026-11-22-02): orgs run shared Chorus boxes per project, so a Chorus host pairs
+with Kingdom as a Foundry, Archive or Oracle does. `installationKindSchema` adds `chorus`. Kingdom
+already lists `chorus` as a provider with a catalog row; its operations come with the Chorus contract.
+
 ## 0.26.0 — an Installation serves its own web viewer over its socket
 
 Aron, 2026-11-22 (R-2026-11-22-03): "We should be building this through Kingdom as first class.
@@ -35,10 +41,6 @@ Additive; nothing existing changes.
   codes an endpoint may send (others become 1011), close reasons cut to 123 bytes.
 - `viewerUrl` / `advertise` stay until Kingdom and Foundry cut over; the release that follows the
   cutover removes them.
-
-**Also in 0.26.0: Chorus is an Installation kind.** Aron, 2026-11-22 (R-2026-11-22-02): orgs run shared Chorus boxes per project, so a Chorus host pairs
-with Kingdom as a Foundry, Archive or Oracle does. `installationKindSchema` adds `chorus`. Kingdom
-already lists `chorus` as a provider with a catalog row; its operations come with the Chorus contract.
 
 ## 0.25.0 — one Installation-socket relay for every operation
 
