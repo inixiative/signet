@@ -2,6 +2,34 @@ This file starts at 0.17.0. Earlier releases are described in their pull request
 terms `posts`, `act` and `agent`, #33) and 0.16.0 (a hosted request carries its requester's
 audience, #35).
 
+## 0.26.0 — an Installation serves its own web viewer over its socket
+
+Aron, 2026-11-22 (R-2026-11-22-03): "We should be building this through Kingdom as first class.
+No, no other tools"; "I really would love to just put traffic through Kingdom... I want to be able
+to launch this thing from Kingdom and use it on any random machine"; "It's just a wrapper, pretty
+blind." A Foundry's viewer was reached through a public tunnel behind one shared token; it will be
+shown in a frame on Kingdom, with the browser's traffic forwarded over the socket the Installation
+already holds open. Spec: workspace `docs/plans/2026-11-22-open-foundry-through-kingdom.md`.
+Additive; nothing existing changes.
+
+- **Viewer frames** (`contracts`), HTTP as it is, nothing of Kingdom's. Kingdom → host (`type`):
+  `viewer.request`, `viewer.request.body`, `viewer.request.cancel`, `viewer.socket.open`,
+  `viewer.socket.message`, `viewer.socket.close` (`viewerHostFrameSchema`). Host → Kingdom
+  (`action`): `viewer.response`, `viewer.response.body`, `viewer.socket.opened`,
+  `viewer.socket.message`, `viewer.socket.close`, `viewer.serving` (`viewerKingdomFrameSchema`).
+  A body follows its head in frames of at most `viewerBodyChunkBytes` (192 KB), the last marked, so
+  a large or streamed body never holds thread frames behind one message. Kingdom forwards request
+  bodies up to `viewerMaxRequestBodyBytes` (8 MB); the host answers 413 past it.
+- **`InstallationSocket` options `viewer` and `viewerServing`, and `serveViewer(serving)`.**
+  `viewer.request(request)` takes a web `Request` whose URL is the address the browser used and
+  returns a `Response`; `viewer.socket(request, peer)` accepts the viewer's WebSocket. The host
+  never sees a frame (`ViewerRelay`). It tells Kingdom whether it serves the viewer on every
+  connect and on every change (`viewer.serving`); while it does not, requests are answered 403 and
+  sockets refused. Body frames wait while more than 1 MB sits in the socket's send buffer. A
+  dropped socket aborts requests in flight and closes the viewer's sockets.
+- `viewerUrl` / `advertise` stay until Kingdom and Foundry cut over; the release that follows the
+  cutover removes them.
+
 ## 0.25.0 — one Installation-socket relay for every operation
 
 Aron, 2026-11-19 (R-2026-11-19-01, "Yes, seems fine."): Kingdom's thread-only relay becomes one
