@@ -101,7 +101,6 @@ test('proves its key, takes snapshots, polls while down and stops when revoked',
   const socket = new InstallationSocket({
     url,
     keyFile,
-    viewerUrl: 'https://studio.trycloudflare.com',
     onSnapshot: (snapshot) => void snapshots.push(snapshot),
     onRevoked: () => {
       revoked = true;
@@ -114,7 +113,6 @@ test('proves its key, takes snapshots, polls while down and stops when revoked',
   socket.start();
   await waitFor(() => snapshots.length === 1);
   expect(snapshots[0]!.signets).toEqual([signet]);
-  await waitFor(() => frames.some((frame) => frame.action === 'advertise'));
   expect(socket.connected).toBe(true);
   await waitFor(() => frames.some((frame) => frame.action === 'ping' && frame.sessionCount === 2));
   socket.start();

@@ -2,6 +2,20 @@ This file starts at 0.17.0. Earlier releases are described in their pull request
 terms `posts`, `act` and `agent`, #33) and 0.16.0 (a hosted request carries its requester's
 audience, #35).
 
+## 0.28.0 — The tunnel's calls are removed
+
+Breaking. A Foundry opens through Kingdom (R-2026-11-22-03): Kingdom forwards the viewer's requests
+over the Installation socket (`viewer`, 0.26.0), and Foundry's tunnel is gone (Foundry #454,
+Kingdom #317). What only the tunnel used is removed, with no replacement:
+
+- `InstallationSocket`: the `viewerUrl` option, `advertise()`, and the `advertise` /
+  `advertiseRejected` frames. Kingdom no longer reads an advertised address.
+- `setInstallationCredential`, `setInstallationCredentialSchema` and
+  `setInstallationCredentialResponseSchema`: Kingdom holds no credential for a Foundry.
+
+Why: one way in, admitted by Kingdom's own permission check, instead of a second public address
+with a token to hand around.
+
 ## 0.27.0 — Chorus relayed operation contracts
 
 Adds the `chorus.*` relayed operation family (`src/chorus.ts`) as the second user of the general
