@@ -20,7 +20,6 @@ import {
   renewalCredentialPattern,
   requestRegistrationResponseSchema,
   type SignetRequestResponse,
-  setInstallationCredentialResponseSchema,
   signetCredentialsSchema,
   signetKeySchema,
   signetLifecycleSchema,
@@ -453,23 +452,6 @@ export const enrollInstallationSignet = (
   options: SignetRequestOptions = {},
 ) =>
   keyPost(url, keyFile, 'enrollInstallationSignet', { signetId }, collectedSignetSchema, options);
-
-/** Give Kingdom the credential it uses to reach this installation's integration (Foundry's tunnel token). */
-export const setInstallationCredential = (
-  url: string,
-  keyFile: string,
-  integrationId: string,
-  token: string,
-  options: SignetRequestOptions = {},
-) =>
-  keyPost(
-    url,
-    keyFile,
-    'setInstallationCredential',
-    { integrationId, token },
-    setInstallationCredentialResponseSchema,
-    options,
-  );
 
 /** Move this installation to a new key; both keys sign, the new proof bound to the current key. */
 export async function rotateInstallationKey(

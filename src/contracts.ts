@@ -1164,9 +1164,3 @@ export const signetPresentedFrameSchema = z.object({
   expiresAt: z.iso.datetime(),
 });
 export const signetRejectedFrameSchema = z.object({ type: z.literal('signetRejected') });
-/** An installation hands Kingdom the credential Kingdom uses to reach it (a Foundry's tunnel token). */
-export const setInstallationCredentialSchema = z.strictObject({
-  integrationId: z.uuid(),
-  token: z.string().min(16).max(4096),
-});
-export const setInstallationCredentialResponseSchema = z.object({ credentialId: z.uuid() });

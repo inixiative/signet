@@ -70,8 +70,6 @@ export type InstallationSocketOptions = {
   /** The connection was lost; the socket reconnects and reopens what it held. */
   onDisconnected?: () => void;
   onError?: (error: unknown) => void;
-  /** Where Kingdom can reach this installation's viewer (Foundry's tunnel); re-advertised on every connect. */
-  viewerUrl?: string | null;
   /** Reported on every ping so Kingdom can show how busy this installation is. */
   sessionCount?: () => number;
   /** The relayed operations this installation serves (a Foundry's conversations: the host side). */
@@ -139,13 +137,11 @@ export class InstallationSocket {
   private authenticated = false;
   private polling = false;
   private pollGeneration = 0;
-  private viewerUrl: string | null;
   private readonly subscriptions = new Map<string, HeldSubscription>();
   private readonly streams: HolderStreams;
   private readonly viewer: ViewerRelay | null;
 
   constructor(private readonly options: InstallationSocketOptions) {
-    this.viewerUrl = options.viewerUrl ?? null;
     this.streams = new HolderStreams((frame) => this.send(frame), options, {
       retryBaseMs: options.retryBaseMs,
       openBurst: options.openBurst,
@@ -181,11 +177,6 @@ export class InstallationSocket {
   restarting() {
     this.send({ action: 'restarting' });
     this.close();
-  }
-
-  advertise(viewerUrl: string | null) {
-    this.viewerUrl = viewerUrl;
-    if (this.authenticated) this.send({ action: 'advertise', viewerUrl });
   }
 
   /** Start or stop answering Kingdom's viewer frames (the owner's switch, changed on the machine). */
@@ -325,7 +316,6 @@ export class InstallationSocket {
             () => this.expireLeases(),
             Math.min(this.leaseMs() / 3, 5_000),
           );
-          if (this.viewerUrl) this.send({ action: 'advertise', viewerUrl: this.viewerUrl });
           this.viewer?.announce();
           this.streams.up();
           return;
@@ -341,9 +331,6 @@ export class InstallationSocket {
           return;
         case 'reconnect':
           socket.close();
-          return;
-        case 'advertiseRejected':
-          this.options.onError?.(Error(`Kingdom refused viewer URL ${this.viewerUrl}`));
           return;
         case 'operation.request':
           // Only an authenticated Installation socket carries relayed calls and conversation frames.
