@@ -13,6 +13,8 @@ import {
   archiveOperationNames,
   archiveOperationSchema,
   archiveSourceOperations,
+  chorusOperationNames,
+  chorusOperationSchema,
   conditionOverArchiveCallFilters,
   declaredOperationSchema,
   githubOperationNames,
@@ -47,23 +49,18 @@ describe('the Archive operation contract', () => {
   });
 
   test('operation names are unique across contracts, and every declared one is named', () => {
-    const threads: readonly string[] = threadOperationSchema.options;
-    const github: readonly string[] = githubOperationSchema.options;
-    expect(
-      archiveOperationSchema.options.filter(
-        (operation) => threads.includes(operation) || github.includes(operation),
-      ),
-    ).toEqual([]);
-    expect(threadOperationSchema.options.filter((operation) => github.includes(operation))).toEqual(
-      [],
-    );
-    expect(declaredOperationSchema.options).toHaveLength(
-      threadOperationSchema.options.length +
-        archiveOperationSchema.options.length +
-        githubOperationSchema.options.length,
-    );
+    const groups: readonly (readonly string[])[] = [
+      threadOperationSchema.options,
+      chorusOperationSchema.options,
+      archiveOperationSchema.options,
+      githubOperationSchema.options,
+    ];
+    const all = groups.flat();
+    expect(new Set(all).size).toBe(all.length);
+    expect(declaredOperationSchema.options).toHaveLength(all.length);
     const names: Record<string, string> = {
       ...threadOperationNames,
+      ...chorusOperationNames,
       ...archiveOperationNames,
       ...githubOperationNames,
     };

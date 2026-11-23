@@ -289,13 +289,14 @@ describe('thread operations through access/execute', () => {
   });
 
   test('every relayed operation has a whole contract, the threads as they were', () => {
-    expect(relayedOperationSchema.options).toEqual([
+    const threadRelayed = [
       'thread.read',
       'thread.prompt',
       'thread.floor',
       'prompt.resolve',
       'thread.subscribe',
-    ]);
+    ] as const;
+    for (const op of threadRelayed) expect(relayedOperationSchema.options).toContain(op);
     for (const operation of relayedOperationSchema.options) {
       expect(relayedOperationInputSchemas[operation]).toBeDefined();
       expect(relayedOperationContextSchemas[operation]).toBeDefined();
@@ -306,8 +307,9 @@ describe('thread operations through access/execute', () => {
         expect(relayedOperationRefusals[operation].options).toContain(denied);
         expect(relayedOperationCommonRefusals as readonly string[]).not.toContain(denied);
       }
-      expect(relayedOperationTimeoutMs[operation]).toBe(15_000);
+      expect(relayedOperationTimeoutMs[operation]).toBeGreaterThanOrEqual(15_000);
     }
+    for (const op of threadRelayed) expect(relayedOperationTimeoutMs[op]).toBe(15_000);
     // A declared relayed operation's input is its declared input; `thread.subscribe` is not declared.
     for (const operation of relayedOperationSchema.options)
       if (declaredOperationSchema.safeParse(operation).success)

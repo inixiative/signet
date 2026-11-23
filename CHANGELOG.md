@@ -2,6 +2,24 @@ This file starts at 0.17.0. Earlier releases are described in their pull request
 terms `posts`, `act` and `agent`, #33) and 0.16.0 (a hosted request carries its requester's
 audience, #35).
 
+## 0.27.0 — Chorus relayed operation contracts
+
+Adds the `chorus.*` relayed operation family (`src/chorus.ts`) as the second user of the general
+Installation-socket relay (`R-2026-11-18-09`, `R-2026-11-18-20`, `R-2026-11-19-01`,
+`R-2026-11-19-03`).
+
+- **Resource kind:** `chorusResourceKind` (`'chorus'`), with `chorusOperationContextSchema`
+  carrying flat `projectId`.
+- **Operations (`chorusOperationSchema`):** `chorus.advise`, `chorus.guard`, `chorus.brief`,
+  `chorus.consumed`, `chorus.milestone`, `chorus.handBack`, `chorus.review`, `chorus.conventions`,
+  `chorus.debugReason`, and `chorus.projectActivity`, each registered in `declaredOperationSchema`,
+  `relayedOperationSchema`, `operationInputSchemas`, `relayedOperationResultSchemas`,
+  `relayedOperationRefusals`, `relayedOperationDeniedRefusals`, `relayedOperationTimeoutMs`, and
+  `accessInputSchema`.
+- **Correlated relay frame types:** `OperationRequestFrame<O>` and `OperationResponseFrame<O>`
+  now preserve the exact context, input, and result types per operation when multiple relayed
+  operation families share `relayedOperationSchema`.
+
 ## 0.26.2 — the viewer relay closes both sides, and a viewer path cannot name another host
 
 Found reviewing Foundry's side of R-2026-11-22-03 (Foundry #453). Additive fixes to 0.26.0's

@@ -5,6 +5,24 @@ import {
   archiveInputSchemas,
   archiveOperationSchema,
 } from './archive';
+import {
+  chorusContextLimit,
+  chorusDeniedRefusals,
+  chorusDomainCountLimit,
+  chorusDomainIdSchema,
+  chorusEarlierMessagesSchema,
+  chorusInputSchemas,
+  chorusMaxDeadlineMs,
+  chorusMomentLimit,
+  chorusOperationContextSchema,
+  chorusOperationSchema,
+  chorusOperationTimeoutMs,
+  chorusProjectActivityActionSchema,
+  chorusRefusalSchema,
+  chorusResultSchemas,
+  chorusThreadKnowledgeSchema,
+  chorusToolObservationSchema,
+} from './chorus';
 import { type EventChannelMap, eventChannelMapSchema, eventChannelSchema } from './events';
 import { githubInputSchemas, githubOperationSchema, gitObjectIdSchema } from './github';
 import {
@@ -27,6 +45,7 @@ import {
 } from './threads';
 
 export * from './archive';
+export * from './chorus';
 export * from './events';
 export * from './github';
 export * from './grants';
@@ -494,6 +513,19 @@ export const accessInputSchema = z.strictObject({
   promptId: foundryIdSchema.optional(),
   answer: threadInputSchemas['prompt.resolve'].shape.answer.optional(),
   objectId: gitObjectIdSchema.optional(),
+  sourceThreadId: foundryIdSchema.optional(),
+  moment: z.string().min(1).max(chorusMomentLimit).optional(),
+  threadState: z.string().max(chorusContextLimit).optional(),
+  threadKnowledge: chorusThreadKnowledgeSchema.optional(),
+  domains: z.array(chorusDomainIdSchema).min(1).max(chorusDomainCountLimit).optional(),
+  earlier: chorusEarlierMessagesSchema.optional(),
+  deadlineMs: z.number().int().min(1_000).max(chorusMaxDeadlineMs).optional(),
+  rosterRevision: z.string().min(1).max(128).optional(),
+  observations: z.array(chorusToolObservationSchema).max(chorusDomainCountLimit).optional(),
+  workSummary: z.string().min(1).max(chorusMomentLimit).optional(),
+  domain: chorusDomainIdSchema.optional(),
+  callId: z.uuid().optional(),
+  activity: chorusProjectActivityActionSchema.optional(),
 });
 export const accessRequestSchema = z.strictObject({
   requestId: z.uuid(),
@@ -508,18 +540,21 @@ export type AccessRequest = z.infer<typeof accessRequestSchema>;
 export const accessResultSchema = z.object({ executionId: z.uuid(), result: z.unknown() });
 
 /**
- * Every operation a contract in this package declares (`threads.ts`, `archive.ts`, `github.ts`), and the input
- * each takes. Kingdom's `access/execute` check, its catalog and its dispatch read these, so a new
- * operation is added here and nowhere else. Operation names are unique across contracts.
+ * Every operation a contract in this package declares (`threads.ts`, `chorus.ts`, `archive.ts`,
+ * `github.ts`), and the input each takes. Kingdom's `access/execute` check, its catalog and its
+ * dispatch read these, so a new operation is added here and nowhere else. Operation names are
+ * unique across contracts.
  */
 export const declaredOperationSchema = z.enum([
   ...threadOperationSchema.options,
+  ...chorusOperationSchema.options,
   ...archiveOperationSchema.options,
   ...githubOperationSchema.options,
 ]);
 export type DeclaredOperation = z.infer<typeof declaredOperationSchema>;
 export const operationInputSchemas = {
   ...threadInputSchemas,
+  ...chorusInputSchemas,
   ...archiveInputSchemas,
   ...githubInputSchemas,
 } as const satisfies Record<DeclaredOperation, z.ZodObject>;
@@ -560,6 +595,7 @@ export const operationInputFromAccess = <O extends DeclaredOperation>(
 export const relayedOperationSchema = z.enum([
   ...threadOperationSchema.options,
   'thread.subscribe',
+  ...chorusOperationSchema.options,
 ]);
 export type RelayedOperation = z.infer<typeof relayedOperationSchema>;
 
@@ -567,6 +603,7 @@ export type RelayedOperation = z.infer<typeof relayedOperationSchema>;
 export const relayedOperationInputSchemas = {
   ...threadInputSchemas,
   'thread.subscribe': z.strictObject({}),
+  ...chorusInputSchemas,
 } as const satisfies Record<RelayedOperation, z.ZodObject>;
 export type RelayedOperationInput<O extends RelayedOperation> = z.infer<
   (typeof relayedOperationInputSchemas)[O]
@@ -579,6 +616,16 @@ export const relayedOperationContextSchemas = {
   'thread.floor': threadOperationContextSchema,
   'prompt.resolve': threadOperationContextSchema,
   'thread.subscribe': threadOperationContextSchema,
+  'chorus.advise': chorusOperationContextSchema,
+  'chorus.guard': chorusOperationContextSchema,
+  'chorus.brief': chorusOperationContextSchema,
+  'chorus.consumed': chorusOperationContextSchema,
+  'chorus.milestone': chorusOperationContextSchema,
+  'chorus.handBack': chorusOperationContextSchema,
+  'chorus.review': chorusOperationContextSchema,
+  'chorus.conventions': chorusOperationContextSchema,
+  'chorus.debugReason': chorusOperationContextSchema,
+  'chorus.projectActivity': chorusOperationContextSchema,
 } as const satisfies Record<RelayedOperation, z.ZodObject>;
 export type RelayedOperationContext<O extends RelayedOperation> = z.infer<
   (typeof relayedOperationContextSchemas)[O]
@@ -587,6 +634,7 @@ export type RelayedOperationContext<O extends RelayedOperation> = z.infer<
 /** What the host answers each relayed operation with. */
 export const relayedOperationResultSchemas = {
   ...threadResultSchemas,
+  ...chorusResultSchemas,
 } as const satisfies Record<RelayedOperation, z.ZodType>;
 export type RelayedOperationResult<O extends RelayedOperation> = z.infer<
   (typeof relayedOperationResultSchemas)[O]
@@ -607,6 +655,16 @@ export const relayedOperationRefusals = {
   'thread.floor': threadRefusalSchema,
   'prompt.resolve': threadRefusalSchema,
   'thread.subscribe': threadRefusalSchema,
+  'chorus.advise': chorusRefusalSchema,
+  'chorus.guard': chorusRefusalSchema,
+  'chorus.brief': chorusRefusalSchema,
+  'chorus.consumed': chorusRefusalSchema,
+  'chorus.milestone': chorusRefusalSchema,
+  'chorus.handBack': chorusRefusalSchema,
+  'chorus.review': chorusRefusalSchema,
+  'chorus.conventions': chorusRefusalSchema,
+  'chorus.debugReason': chorusRefusalSchema,
+  'chorus.projectActivity': chorusRefusalSchema,
 } as const satisfies Record<
   RelayedOperation,
   z.ZodEnum<{ [C in RelayedOperationCommonRefusal]: C } & Record<string, string>>
@@ -625,6 +683,16 @@ export const relayedOperationDeniedRefusals = {
   'thread.floor': threadDeniedRefusals,
   'prompt.resolve': threadDeniedRefusals,
   'thread.subscribe': threadDeniedRefusals,
+  'chorus.advise': chorusDeniedRefusals,
+  'chorus.guard': chorusDeniedRefusals,
+  'chorus.brief': chorusDeniedRefusals,
+  'chorus.consumed': chorusDeniedRefusals,
+  'chorus.milestone': chorusDeniedRefusals,
+  'chorus.handBack': chorusDeniedRefusals,
+  'chorus.review': chorusDeniedRefusals,
+  'chorus.conventions': chorusDeniedRefusals,
+  'chorus.debugReason': chorusDeniedRefusals,
+  'chorus.projectActivity': chorusDeniedRefusals,
 } as const satisfies { [O in RelayedOperation]: readonly RelayedOperationRefusalCode<O>[] };
 
 /**
@@ -638,7 +706,19 @@ export const relayedOperationTimeoutMs: Record<RelayedOperation, number> = {
   'thread.floor': 15_000,
   'prompt.resolve': 15_000,
   'thread.subscribe': 15_000,
+  ...chorusOperationTimeoutMs,
 };
+
+export type OperationRequestFrame<O extends RelayedOperation> = {
+  type: 'operation.request';
+  /** The `AccessExecution` id: one per admitted call, and the id the answer carries back. */
+  requestId: string;
+  signetId: string;
+  /** The Signet revision Kingdom admitted the call under. */
+  acceptedRevision: number;
+  operation: O;
+  input: RelayedOperationInput<O>;
+} & RelayedOperationContext<O>;
 
 /**
  * Kingdom → host over the Installation socket: one admitted call of a relayed operation, keyed by
@@ -646,21 +726,18 @@ export const relayedOperationTimeoutMs: Record<RelayedOperation, number> = {
  * the operation and its input. The host trusts it (Kingdom's admission is the membership check) and
  * answers with `operation.response` carrying the same `requestId`.
  */
-export const operationRequestFrameSchema = <O extends RelayedOperation>(operation: O) =>
+export const operationRequestFrameSchema = <O extends RelayedOperation>(
+  operation: O,
+): z.ZodType<OperationRequestFrame<O>> =>
   z.strictObject({
     type: z.literal('operation.request'),
-    /** The `AccessExecution` id: one per admitted call, and the id the answer carries back. */
     requestId: z.uuid(),
     signetId: z.uuid(),
-    /** The Signet revision Kingdom admitted the call under. */
     acceptedRevision: z.number().int().min(1),
     ...relayedOperationContextSchemas[operation].shape,
     operation: z.literal(operation),
     input: relayedOperationInputSchemas[operation],
-  });
-export type OperationRequestFrame<O extends RelayedOperation> = z.infer<
-  ReturnType<typeof operationRequestFrameSchema<O>>
->;
+  }) as unknown as z.ZodType<OperationRequestFrame<O>>;
 
 const operationOutcomeSchema = <R extends z.ZodType, C extends z.ZodType<string>>(
   result: R,
@@ -675,11 +752,19 @@ const operationOutcomeSchema = <R extends z.ZodType, C extends z.ZodType<string>
     }),
   ]);
 
+export type OperationResponseFrame<O extends RelayedOperation> = {
+  action: 'operation.response';
+  requestId: string;
+  outcome: RelayedOperationOutcome<O>;
+};
+
 /**
  * Host → Kingdom: the answer to one `operation.request`, keyed by `action` as every host → Kingdom
  * frame is, read by the operation that was asked.
  */
-export const operationResponseFrameSchema = <O extends RelayedOperation>(operation: O) =>
+export const operationResponseFrameSchema = <O extends RelayedOperation>(
+  operation: O,
+): z.ZodType<OperationResponseFrame<O>> =>
   z.strictObject({
     action: z.literal('operation.response'),
     requestId: z.uuid(),
@@ -687,7 +772,7 @@ export const operationResponseFrameSchema = <O extends RelayedOperation>(operati
       relayedOperationResultSchemas[operation],
       relayedOperationRefusals[operation],
     ),
-  });
+  }) as unknown as z.ZodType<OperationResponseFrame<O>>;
 /** The response envelope before Kingdom knows which request it answers. */
 export const operationResponseEnvelopeSchema = z.strictObject({
   action: z.literal('operation.response'),

@@ -56,7 +56,9 @@ contract, keyed by operation; `relayedOperationCommonRefusals` are the two refus
 operation has (`invalid_request`, `failed`); `operationResponseEnvelopeSchema` is a response before
 Kingdom knows which request it answers; `RelayedOperationHandler` and `RelayedOperationHandlers` are
 the host side (`InstallationSocketOptions.operations`); `threadOperationContextSchema` is the threads'
-context fields (`member`, `threadId`, `permissions`).
+context fields (`member`, `threadId`, `permissions`); `chorusOperationContextSchema` is Chorus's
+(`projectId`), beside `chorusOperationSchema`, `chorusInputSchemas`, `chorusResultSchemas`,
+`chorusRefusalSchema` and `chorusResourceKind`.
 
 ## New verbs
 
