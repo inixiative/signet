@@ -537,6 +537,8 @@ export const accessRequestSchema = z.strictObject({
   input: accessInputSchema,
 });
 export type AccessRequest = z.infer<typeof accessRequestSchema>;
+/** What a caller sends: fields with a default (`input.limit`) may be left out. */
+export type AccessRequestInput = z.input<typeof accessRequestSchema>;
 export const accessResultSchema = z.object({ executionId: z.uuid(), result: z.unknown() });
 
 /**
