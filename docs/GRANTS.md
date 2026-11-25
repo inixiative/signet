@@ -20,17 +20,19 @@ A Signet revision is a list of grant rows (`grantResourceSchema`). Each row is f
 
 | Who asks | Schema | Names resources by |
 | --- | --- | --- |
-| A party asking for a Signet | `signetResourceSchema` | id |
+| A party asking for a Signet | `signetResourceSchema` | a resource by id, an `Integration` scope (`integrationId`, `resourceKind`, optional `projectId`), or a `Project` |
 | A party asking for a Signet or a change | `requestedResourceSchema` | id, or kind on the integration it names with `integrationId` |
 | An Installation registering | `registeredResourceSchema` | id, or kind alone (the integration it will become does not exist yet) |
 
 By kind, `externalId` names one resource of that kind (a conversation's thread id). Without it, the ask reaches every resource of that kind on the integration.
 
-Every ask carries operation picks and its own lens narrowing.
+Every resource ask carries operation picks and its own lens narrowing. An ask says `resourceKind`; a stored row says `kind`.
 
 **Naming an owner.** A request may name the one owner it asks (`namedOwnerSchema`): the ids its model is keyed by (`ownerIdFields`), with every other id among `userId`, `organizationId`, `spaceId` and `integrationId` present and null. A Signet's owner is one of the five owner models or an Integration in its own right (`signetOwnerModelSchema`, keyed by `integrationId` alone). The owner a holder reads back on a collected or held Signet (`ownerRefSchema`) is one of the five.
 
 ## What a holder reads
+
+`describe` and the installation snapshot read each resource on its own: one this package can't read is dropped and listed in `dropped`, and the Signet is kept. The snapshot's held Signets carry their `resources`.
 
 `signetGrantSchema` is the stored row plus the resource's `kind`, its `integrationId`, and, where the holder acts by it, its `externalId`. A call names that integration: `execute({ integrationId, … })`.
 
@@ -65,7 +67,7 @@ const { lens, narrowed } = composeGrantLensChain(base, chain); // a GrantLens
 const visible = projectOperationRows(lens, 'documents.read', rows);
 ```
 
-- An absent lens (null or undefined), `{}` and `{ root: { relations: {} } }` add nothing. A chain of only those reads every branch (`narrowed: false`).
+- An absent lens (null or undefined), `{}` and `{ root: { relations: {} } }` add nothing. A chain whose lenses are all null or undefined reads every branch with `narrowed: false`; `{}` and the empty-relations form still count as a narrowing (`narrowed: true`).
 - json-rules validates each lens against the ones above it, so a later lens can only narrow.
 - A chain longer than `grantLensChainLimit` (20) is refused.
 - `GrantLensError` is thrown when a lens doesn't parse or the chain doesn't compose.

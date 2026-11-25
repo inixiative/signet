@@ -2,7 +2,7 @@
 
 How a holder gets a Signet, keeps its credential files current, and calls with it. There are two kinds of holder:
 
-- an **Installation**: a Foundry, Archive, Oracle, Chorus or KCP on a machine, known to Kingdom by its key. It holds Signets granted to the integration it became when it paired.
+- an **Installation**: a Foundry, Archive, Oracle or Chorus on a machine (`installationKindSchema`), known to Kingdom by its key. It holds Signets granted to the integration it became when it paired.
 - a **person or their agent**, acting as themselves with a Kingdom API token plus a proof from its own key.
 
 ## Pairing an installation
@@ -41,7 +41,7 @@ The result carries `keyFile`, `directory`, `credentialFile` and `integrationId`:
 
 It never deletes a file. A Signet missing from a snapshot (a paused integration) keeps its file.
 
-`holdPersonSignets` does the same for Signets issued to a person. Both run under one per-directory lock (`withHoldLock`), so a person login and an installation sync never enroll over each other.
+`holdPersonSignets(url, keyFile, directory, apiToken, signets, { name, replace? })` enrolls the key on Signets issued to a person (each with its `expectedRevision`). It keeps any file that already parses unless `replace` is set, and does not re-enroll a stale enrollment the way the installation hold does. Both run under one per-directory lock (`withHoldLock`), so a person login and an installation sync never enroll over each other.
 
 ## The installation socket
 
@@ -60,7 +60,7 @@ Entries are read one by one: an inquiry or Signet this package can't read is dro
 
 A Foundry's viewer opens inside Kingdom, with traffic forwarded over this socket. The installation passes `viewer` (`ViewerHandlers`): `request` answers a web `Request` with a `Response`, and `socket` accepts the viewer's WebSocket. `ViewerRelay` turns Kingdom's `viewer.*` frames into those calls and back, so the handlers never see a frame. `serveViewer(serving)` switches it on and off (`viewerServing`, default on).
 
-Limits both sides hold: `viewerBodyChunkBytes`, `viewerMaxRequestBodyBytes`, `viewerMaxSocketMessageChars`. A viewer path must have exactly one leading slash; anything else is answered 400.
+Limits both sides hold: `viewerBodyChunkBytes`, `viewerMaxRequestBodyBytes`, `viewerMaxSocketMessageChars`. A viewer path must have exactly one leading slash (`//host/x` and `/\host/x` are refused): a bad request is answered 400, and a bad socket open is closed with 1008.
 
 ## On-disk layout
 
@@ -91,7 +91,7 @@ Every installation uses one layout under a root per product (a Foundry's `kingdo
 `SignetClient.fromFile(credentialFile)` presents one enrolled Signet. It renews its access token and signs each call with the device key.
 
 - `describe()` returns what the Signet holds now.
-- `execute({ integrationId, operation, input })` runs one operation. Every call gets a new request id.
+- `execute({ integrationId, operation, input })` runs one operation. Every call gets a new request id. Event and permission leaves can't be executed, and neither can `inference.create`, which goes through the run actions.
 - `socketPresentation()` is what `SignetSocket` authenticates with.
 - `post(action, …)` sends the other actions:
 
@@ -105,4 +105,4 @@ Every installation uses one layout under a root per product (a Foundry's `kingdo
 | `reportSubscriptionLimits` | Reporting the provider's limits for that login. |
 | `reportCredentialRejected` | Reporting that the provider rejected the login a release handed out. |
 
-`SignetHolders` caches each held Signet's `access/describe` (with its `holder`), keyed by credential file or by the caller's own `keyOf`, and refreshes after `stale()`. Each view is `described`, `revoked` (Kingdom refused with 403) or `unavailable`.
+`SignetHolders` caches each held Signet's `access/describe` (with its `holder`), keyed by credential file or by the caller's own `keyOf`, and re-reads after `stale()` or once `ttlMs` (10 minutes by default) has passed. Each view is `described`, `revoked` (Kingdom refused with 403) or `unavailable`.

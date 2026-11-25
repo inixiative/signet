@@ -1,6 +1,6 @@
 # Operations
 
-An operation is a dotted leaf in a resource kind's catalog. Some Kingdom executes itself (declared operations). Others it relays to the installation that hosts the resource (relayed operations). Some leaves are never called at all: event kinds are streamed ([EVENTS.md](EVENTS.md)), and a conversation's permissions are picked like operations but only read ([CONVERSATIONS.md](CONVERSATIONS.md)).
+An operation is a dotted leaf in a resource kind's catalog. Every callable operation is declared here. Kingdom runs some itself (Archive, GitHub) and relays the rest to the installation that hosts the resource (conversations, Chorus). Some leaves are never called at all: event kinds are streamed ([EVENTS.md](EVENTS.md)), and a conversation's permissions are picked like operations but only read ([CONVERSATIONS.md](CONVERSATIONS.md)).
 
 A new operation is added here first: Kingdom's catalog, its input check and its dispatch all read these contracts.
 
@@ -13,7 +13,7 @@ Each contract is one module per resource kind. It declares the operation enum, d
 | `archive.ts` | `archiveLibrary` | `documents.read`, `documents.search`, `sessions.write`, `sessions.delete` |
 | `github.ts` | `repository` | `commits.read`, `trees.read`, `blobs.read` (reads by object id) |
 | `threads.ts` | `conversation` | `thread.read`, `thread.prompt`, `thread.floor`, `prompt.resolve` (relayed; see below) |
-| `chorus.ts` | `chorus` | ten `chorus.*` operations (relayed; see below) |
+| `chorus.ts` | `chorus` | ten `chorus.*` operations (relayed; see below; no host serves them yet) |
 
 Joining them:
 
@@ -70,7 +70,7 @@ The `thread.*` and `prompt.resolve` operations, plus `thread.subscribe`, are rel
 
 ### Chorus
 
-A `chorus` resource is one project served by a Chorus installation; its `externalId` is the Kingdom Project id, and the context is `chorusOperationContextSchema` (`projectId`). Each kind of call is its own operation, so each carries its own grant and meter.
+Contracts only: Kingdom has the relay context for these, but no Chorus host serves them and no caller sends them yet. A `chorus` resource is one project served by a Chorus installation; its `externalId` is the Kingdom Project id, and the context is `chorusOperationContextSchema` (`projectId`). Each kind of call is its own operation, so each carries its own grant and meter.
 
 | Operation | Asks the project's chorus to | Timeout |
 | --- | --- | --- |

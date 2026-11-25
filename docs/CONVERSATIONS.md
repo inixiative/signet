@@ -24,8 +24,8 @@ The resource's catalog has two parts.
 | --- | --- |
 | `thread.read` | Reads the member's view of the thread. |
 | `thread.prompt` | Posts to the thread. |
-| `thread.floor` | Requests, releases or passes the floor. |
-| `prompt.resolve` | Answers the host's held prompts (the owner's own client). |
+| `thread.floor` | Requests, releases or passes the floor, or takes it (`take` needs `member.take`). |
+| `prompt.resolve` | Answers the host's held prompts. The host honours it only from an `owner`-audience member. |
 
 **Permissions** (`conversationPermissionSchema`), picked like operations but never called, as event leaves aren't:
 
@@ -39,7 +39,7 @@ The resource's catalog has two parts.
 | `agent.read` | have the host's agent read files and data on its word without asking the host |
 | `agent.act` | have the host's agent act on its word, under the host's own rules |
 
-The permissions sit on their own branches (`member.`, `agent.`), so `thread.*` picks the calls alone. `conversationActLevel(permissions)` reads the act level from the highest held: `full` with `agent.act`, `read` with `agent.read`, else `ask`.
+Approving a request narrows the permissions like any operation selection. They sit on their own branches (`member.`, `agent.`), so `thread.*` picks the calls alone. `conversationActLevel(permissions)` reads the act level from the highest held: `full` with `agent.act`, `read` with `agent.read`, else `ask`.
 
 On every frame Kingdom sends the host the permissions the Signet holds on the conversation (`permissions`, each admitted on its own), beside its `threadId`. No call's input names the thread: the call's resource is the conversation.
 
@@ -59,7 +59,7 @@ The host Foundry serves the relayed operations through `InstallationSocket`'s `o
 
 - `appendThread(subscriptionId, entry)` holds entries pushed meanwhile and never sends one twice.
 - Each append carries a dense per-subscription `seq`. A filtered view skips journal entries, so `journalSeq` can't reveal loss. An entry that can't be sent still spends its `seq`, so Kingdom sees the gap and the member resyncs.
-- A subscription ends on `thread.unsubscribe`, when the socket drops, or when Kingdom stops renewing its lease (`thread.lease`). A lease is dropped 90 s after the last renewal, so one late 45 s sweep is survived. `onThreadSubscriptionEnded` hears each end.
+- A subscription ends on `thread.unsubscribe`, when the socket drops, when Kingdom stops renewing its lease (`thread.lease`), or on `overflow`: more than 1,000 entries arrived while the snapshot was taken, so the subscribe is refused and retried. A lease is dropped 90 s after the last renewal, so one late 45 s sweep is survived. `onThreadSubscriptionEnded` hears each end.
 
 **Who the members are.** The installation snapshot carries:
 

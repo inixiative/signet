@@ -9,13 +9,14 @@ A Signet is a revocable grant of authority, issued by an owner through Kingdom a
 | Data and tools behind an integration | read commits in a GitHub repository, search an Archive library, read a Slack channel |
 | A seat in a shared agent conversation | an outside agent joins a Foundry thread, with what it may post, read and ask the host's agent to do |
 | A live feed of integration events | GitHub, Slack or Linear events streamed to the holder as they arrive |
-| Inference capacity | run on the owner's Claude or Codex subscription (`subscription.use`) or API key (`inference.create`) |
-| A project's Chorus | the routing calls a Foundry makes for a project (`chorus.advise`, `chorus.guard`, …) |
-| Where it may be used | the Kingdom Projects the Signet is valid in |
+| Inference capacity, for a Foundry | run on the owner's Claude, Codex or Muse login (`subscription.use`) or API key (`inference.create`), through the run actions |
+| Project rows | the Kingdom Projects the Signet is tied to: Kingdom picks the project, and its capacity pool, for an inference run from them, and attributes usage. A Signet with none is valid in every project. |
 
-Each grant names exactly which operations it allows and what data comes back. The owner can widen, narrow or revoke it at any time, and the change applies on the next call. The holder never sees a credential behind it: it signs each call with its own device key, and Kingdom checks the grant, runs or relays the call, meters it and records it. The intent is for Signets to bound everything an agent may do (deploys, publishing, driving a browser), which is granted today through each harness's permission settings.
+Defined but not served yet: a project's Chorus. The `chorus.*` contracts are here ([docs/OPERATIONS.md](docs/OPERATIONS.md#chorus)); no Chorus host serves them today.
 
-This package is the one implementation of that protocol. Kingdom uses it to verify, and Foundry, Archive, Oracle, Chorus and [KCP](https://github.com/inixiative/kcp) use it to present. It holds the wire contracts, the DPoP proofs, device pairing, the credential files and a client that renews its own token.
+Each grant names exactly which operations it allows and what data comes back. The owner can widen, narrow or revoke it at any time, and the change applies on the next call. The holder signs each call with its own device key, and Kingdom checks the grant, runs or relays the call, meters it and records it. For data and tool calls the holder never sees the credential behind them. A subscription run is the one exception: Kingdom releases the login to the Foundry for that run (`releaseSubscription`). The intent is for Signets to bound everything an agent may do (deploys, publishing, driving a browser), which is granted today through each harness's permission settings.
+
+This package is the one implementation of that protocol. Kingdom uses it to verify, and Foundry, Archive and [KCP](https://github.com/inixiative/kcp) use it to present. Oracle and Chorus are Installation kinds here, ahead of their hosts. It holds the wire contracts, the DPoP proofs, device pairing, the credential files and a client that renews its own token.
 
 ```mermaid
 flowchart LR
@@ -23,7 +24,7 @@ flowchart LR
   holder[Holder: an installation or a person's agent] -- access token + DPoP proof --> kingdom[Kingdom]
   signet -. checked on every call .-> kingdom
   kingdom -- runs the call --> provider[Provider: GitHub, a hosted Archive, inference]
-  kingdom -- relays over the host's socket --> host[Host installation: Foundry, Chorus]
+  kingdom -- relays over the host's socket --> host[Host installation: Foundry]
 ```
 
 ## Install
@@ -36,10 +37,10 @@ The package ships TypeScript source (`src/index.ts`). Subpath exports: `@inixiat
 
 ## Concepts
 
-- **Signet.** A bundle of entitlements with an owner and a holder. It belongs to no single integration: its grant rows may name resources on any number of integrations, across every organization the owner works in. Each change is a new revision of the same Signet. The owner can grant only what they could do themselves, and a row stops working the moment the owner loses that access.
-- **Lifecycle.** An `ongoing` Signet lasts until it is revoked or expires. A `task` Signet ends when its task is completed or cancelled (`completeTask`, `closeTask`).
-- **Holder.** A user or an integration. An integration holder is usually an **Installation**: a Foundry, Archive, Oracle, Chorus or KCP running on a machine, known to Kingdom by its key.
-- **Grant row.** One resource, a scope of resources (every conversation on a Foundry, every repository in a project), or a project, with the operations it allows, one lens, and an optional `where`. Conversations, subscription logins and Chorus projects are granted the same way as a repository: by picking their operations. See [docs/GRANTS.md](docs/GRANTS.md).
+- **Signet.** A bundle of entitlements with an owner and a holder. It belongs to no single integration: its grant rows may name resources on any number of integrations. A person's Signet may span every organization and space they belong to; any other owner's covers its own resources. Each change is a new revision of the same Signet. The owner can grant only what they could do themselves, and a row stops working the moment the owner loses that access.
+- **Lifecycle.** An `ongoing` Signet lasts until it is revoked or expires, within its optional `maxRequests`. A `request` Signet is good for one call. A `task` Signet ends when its task is completed or cancelled (`completeTask`, `closeTask`).
+- **Holder.** A user or an integration. An integration holder is usually an **Installation**: a Foundry, Archive, Oracle or Chorus running on a machine, known to Kingdom by its key (`installationKindSchema`). KCP uses the same on-disk layout; until `kcp` is an Installation kind, it holds Signets as a person or from a copied credential file.
+- **Grant row.** One resource, a scope of resources (every conversation on a Foundry, every repository in a project), or a project, with the operations it allows, one lens, and an optional `where`. Conversations and subscription logins are granted the same way as a repository: by picking their operations. See [docs/GRANTS.md](docs/GRANTS.md).
 - **Operation.** A dotted leaf from the provider's catalog (`commits.read`, `thread.prompt`, `subscription.use`, `events.pull_request.opened`). Some leaves are calls; others are permissions nothing calls (`member.take`, `agent.act` in a conversation) or event kinds that are streamed. A grant picks leaves, or a branch with `.*`.
 - **Lens.** A json-rules narrowing that filters and trims what an operation returns. It never adds or removes operations.
 - **Where.** A positive json-rules condition over the call's input, checked by Kingdom before the call runs.
@@ -94,7 +95,7 @@ An agent acting for a person uses a Kingdom API token to ask, and its own key to
 import { awaitSignet, generateSignetKey, requestSignet, saveCollectedSignet, SignetClient, writePrivateJson } from '@inixiative/signet';
 
 await writePrivateJson(keyFile, generateSignetKey());
-const { requestId } = await requestSignet(kingdom, keyFile, apiToken, {
+const { requestId, reviewCode } = await requestSignet(kingdom, keyFile, apiToken, {
   name: 'Research agent', lifecycle: 'ongoing', expiresAt: null, maxRequests: null,
   resources: [{ resourceModel: 'IntegrationResource', integrationResourceId, operations: { picks: ['documents.read'] } }],
 });
@@ -105,7 +106,7 @@ const signet = await SignetClient.fromFile(credentialFile);
 await signet.describe();
 ```
 
-A Signet an owner granted directly is enrolled with `enrollSignet` instead of requested.
+The person approves `reviewCode` in Kingdom; `awaitSignet` returns once they do. A Signet an owner granted directly (`owner/grant`) is enrolled instead of requested: `enrollSignet(kingdom, keyFile, apiToken, { signetId, expectedRevision, name })`.
 
 ## What is in the package
 
@@ -123,7 +124,7 @@ A Signet an owner granted directly is enrolled with `enrollSignet` instead of re
 
 **Files.** `writePrivateJson` writes keys and credentials atomically as `0600` files in an owned `0700` directory. `readPrivateJson` refuses a file that is linked, shared or owned by another user.
 
-Kingdom's OpenAPI spec (`/openapi/docs`) documents each step's raw HTTP call. Release notes are in [CHANGELOG.md](CHANGELOG.md).
+Kingdom's OpenAPI spec (`/openapi/docs`) documents each step's raw HTTP call and the credentials it takes. Release notes are in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 

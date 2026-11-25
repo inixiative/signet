@@ -13,7 +13,7 @@ A channel is one resource a Signet holds event operations on.
 - per integration: `{ id, provider, name }`;
 - per channel: `{ resourceId, kind, name, events, stream }`.
 
-They are read per entry: an integration or channel this package can't read is dropped and listed in `dropped`, and the Signet is kept. The field is absent when Kingdom sent none, which says nothing about what the Signet holds.
+They are read per entry: an integration or channel this package can't read is dropped and listed in `dropped`, and the Signet is kept. The field is absent when Kingdom sent none (a Kingdom from before integration events), which says nothing about what the Signet holds.
 
 ## Holding a channel
 
@@ -51,7 +51,7 @@ A gap means one of two things this package can't tell apart:
 
 A reconnect reports no gap; it shows as `onOpened`.
 
-Frames are handled one at a time, so a slow handler holds back the ones behind it. Past `maxQueuedFrames` waiting (1,000 unless set on the socket), appends are dropped, reported once through `onError`, and show as a gap on a channel or a resync on a thread.
+Frames are handled one at a time, so a slow handler holds back the ones behind it. Past `maxQueuedFrames` waiting (1,000 unless set on the socket), appends are dropped, reported once through `onError`, and show as a gap on a channel or a resync on a thread, at the next append or once the handlers have caught up.
 
 ## Duplicates
 
