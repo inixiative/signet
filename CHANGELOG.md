@@ -2,6 +2,17 @@ This file starts at 0.17.0. Earlier releases are described in their pull request
 terms `posts`, `act` and `agent`, #33) and 0.16.0 (a hosted request carries its requester's
 audience, #35).
 
+## 0.28.1 — A readable README, and `execute` takes what a caller sends
+
+- The README is rewritten: what a Signet grants (integration data and tools, conversation seats,
+  event feeds, inference capacity, a project's Chorus, project scope), who uses this package, and
+  two quick starts. The reference it held moves, restructured, into `docs/GRANTS.md`,
+  `docs/INSTALLATIONS.md`, `docs/OPERATIONS.md` (now covering the `chorus.*` operations),
+  `docs/CONVERSATIONS.md` and `docs/EVENTS.md`. Every code sample was type-checked against `src/`.
+- `SignetClient.execute` takes `AccessRequestInput` (the schema's input type), so `input.limit`,
+  which defaults to 20, may be left out. It was typed with the parsed output, which made every caller
+  pass `limit`; the README's own examples did not compile.
+
 ## 0.28.0 — The tunnel's calls are removed
 
 Breaking. A Foundry opens through Kingdom (R-2026-11-22-03): Kingdom forwards the viewer's requests

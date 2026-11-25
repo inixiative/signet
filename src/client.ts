@@ -2,7 +2,7 @@ import { createPrivateKey, createPublicKey, generateKeyPairSync } from 'node:cry
 import { isAbsolute } from 'node:path';
 import { z } from 'zod';
 import {
-  type AccessRequest,
+  type AccessRequestInput,
   accessResultSchema,
   accessTokenPattern,
   collectedSignetSchema,
@@ -639,7 +639,7 @@ export class SignetClient {
   }
   /** Run one integration operation through the Signet; every call is a new request id. */
   async execute(
-    request: Omit<AccessRequest, 'requestId' | 'signetId'>,
+    request: Omit<AccessRequestInput, 'requestId' | 'signetId'>,
     options: SignetRequestOptions = {},
   ) {
     return accessResultSchema.parse(
