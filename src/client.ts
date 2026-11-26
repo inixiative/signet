@@ -93,6 +93,8 @@ export class SignetHttpError extends Error {
   constructor(
     readonly status: number,
     readonly detail?: string,
+    readonly refusal?: string,
+    readonly refusalMessage?: string,
   ) {
     super(`Signet request refused (${status})${detail ? `: ${detail}` : ''}`);
   }
@@ -120,17 +122,29 @@ function abortable<T>(pending: Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 
-/** Kingdom's JSON reason, else the start of the raw body (a proxy's page). */
-const errorDetail = async (response: Response) => {
+type ErrorInfo = { detail?: string; refusal?: string; refusalMessage?: string };
+
+/** Kingdom's JSON reason and optional structured refusal (`details[0].code`), else raw body text. */
+const errorInfo = async (response: Response): Promise<ErrorInfo> => {
   const text = (await response.text().catch(() => '')).slice(0, 65_536).trim();
   try {
-    const body = JSON.parse(text) as { message?: unknown; error?: unknown };
+    const body = JSON.parse(text) as { message?: unknown; error?: unknown; details?: unknown };
     const error = body.error as { message?: unknown } | string | undefined;
     const errorMessage = typeof error === 'string' ? error : error?.message;
     const message = typeof body.message === 'string' ? body.message : errorMessage;
-    if (typeof message === 'string') return message.slice(0, 500);
+    const detail = typeof message === 'string' ? message.slice(0, 500) : undefined;
+    const firstDetail = Array.isArray(body.details) ? body.details[0] : undefined;
+    const refusal =
+      firstDetail && typeof firstDetail === 'object' && typeof firstDetail.code === 'string'
+        ? firstDetail.code.slice(0, 128)
+        : undefined;
+    const refusalMessage =
+      firstDetail && typeof firstDetail === 'object' && typeof firstDetail.message === 'string'
+        ? firstDetail.message.slice(0, 500)
+        : undefined;
+    if (detail || refusal) return { detail, refusal, refusalMessage };
   } catch {}
-  return text.replace(/\s+/g, ' ').slice(0, 500) || undefined;
+  return { detail: text.replace(/\s+/g, ' ').slice(0, 500) || undefined };
 };
 
 /** POST to Kingdom's access API and return the response's `data`. */
@@ -167,7 +181,10 @@ export async function signetPost(
     void response.body?.cancel().catch(() => {});
     signal.throwIfAborted();
   }
-  if (!response.ok) throw new SignetHttpError(response.status, await errorDetail(response));
+  if (!response.ok) {
+    const info = await errorInfo(response);
+    throw new SignetHttpError(response.status, info.detail, info.refusal, info.refusalMessage);
+  }
   const reader = response.body?.getReader();
   if (!reader) throw Error('Signet response unavailable');
   const chunks: Uint8Array[] = [];
@@ -189,14 +206,16 @@ export async function signetPost(
     .data;
 }
 
-/** A DPoP proof for one call to `action`, bound to a fresh Kingdom nonce (and the token, if any). */
-export async function signetProof(
+/** A DPoP proof for an arbitrary Kingdom HTTP request (`method` + `path`, e.g. `/api/v1/systemFile`), bound to a fresh nonce. */
+export async function signetProofFor(
   url: string,
-  action: string,
+  method: string,
+  path: string,
   keyFile: string,
   token?: string,
   options: SignetRequestOptions = {},
 ): Promise<string> {
+  if (!path.startsWith('/') || path.startsWith('//')) throw Error('Invalid Signet request path');
   const signal = requestSignal(options);
   signal.throwIfAborted();
   const key = signetKeySchema.parse(await abortable(readPrivateJson(keyFile), signal));
@@ -209,11 +228,23 @@ export async function signetProof(
     privateKey: key,
     publicKey: signetPublicKey(key),
     nonce,
-    url: `${kingdomUrl(url)}/api/v1/access/${action}`,
-    method: 'POST',
+    url: `${kingdomUrl(url)}${path}`,
+    method: method.toUpperCase(),
     token,
   });
 }
+
+/** A DPoP proof for one call to `action`, bound to a fresh Kingdom nonce (and the token, if any). */
+export const signetProof = (
+  url: string,
+  action: string,
+  keyFile: string,
+  token?: string,
+  options: SignetRequestOptions = {},
+): Promise<string> => {
+  if (!/^[a-zA-Z]+$/.test(action)) throw Error('Invalid Signet action');
+  return signetProofFor(url, 'POST', `/api/v1/access/${action}`, keyFile, token, options);
+};
 
 /**
  * A call signed by the caller's key with no access token: an Installation acting as itself, or a
@@ -588,6 +619,27 @@ export class SignetClient {
     const signal = requestSignal(options);
     await this.credentials(true, signal);
     signal.throwIfAborted();
+  }
+  /** Renews the Signet access token if needed and returns `Authorization: DPoP …` + `DPoP` headers for any Kingdom endpoint. */
+  async authHeaders(
+    method: string,
+    path: string,
+    options: SignetRequestOptions = {},
+  ): Promise<{ authorization: string; DPoP: string }> {
+    const signal = requestSignal(options);
+    signal.throwIfAborted();
+    const credential = await this.credentials(false, signal);
+    signal.throwIfAborted();
+    const proof = await signetProofFor(
+      this.url,
+      method,
+      path,
+      credential.keyFile,
+      credential.accessToken,
+      { signal, timeoutMs: options.timeoutMs },
+    );
+    signal.throwIfAborted();
+    return { authorization: `DPoP ${credential.accessToken}`, DPoP: proof };
   }
   async post(
     action: SignetAction,
