@@ -31,14 +31,14 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "@inixiative/field-map": "^0.1.0",
+    "@inixiative/field-map": "^0.1.2",
     "jose": "^6.2.3"
   },
   "devDependencies": {
     "@asteasolutions/zod-to-openapi": "^9.1.0",
     "@biomejs/biome": "2.5.2",
-    "@inixiative/config": "^0.5.237",
-    "@inixiative/json-rules": "^4.2.0",
+    "@inixiative/config": "^0.5.252",
+    "@inixiative/json-rules": "^4.7.0",
     "@types/bun": "1.4.4",
     "lefthook": "2.1.9",
     "typescript": "6.0.3",
